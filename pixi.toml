@@ -1,0 +1,16 @@
+[workspace]
+name = "csv-utils"
+version = "0.1.0"
+description = "High-performance Zig CSV CLI + TUI explorer"
+channels = ["conda-forge"]
+platforms = ["linux-64"]
+
+[dependencies]
+zig = "*"
+ncurses = "*"
+
+[tasks]
+build = "zig build -Doptimize=ReleaseFast"
+run = "zig build run --"
+tui = "zig build run -- tui"
+test = "zig build test"
