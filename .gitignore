@@ -1,0 +1,10 @@
+# PIXI
+.pixi/
+
+# Zig
+.zig-cache/
+.zig-out/
+.zig-cache/
+
+# data
+*.csv
