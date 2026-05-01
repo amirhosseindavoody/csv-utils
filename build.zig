@@ -10,13 +10,13 @@ pub fn build(b: *std.Build) void {
             .root_source_file = b.path("src/main.zig"),
             .target = target,
             .optimize = optimize,
+            .link_libc = true,
         }),
     });
-    exe.linkLibC();
-    exe.addIncludePath(b.path(".pixi/envs/default/include"));
-    exe.addRPath(b.path(".pixi/envs/default/lib"));
-    exe.addObjectFile(b.path(".pixi/envs/default/lib/libncursesw.so.6.6"));
-    exe.addObjectFile(b.path(".pixi/envs/default/lib/libtinfow.so.6.6"));
+    exe.root_module.addIncludePath(b.path(".pixi/envs/default/include"));
+    exe.root_module.addRPath(b.path(".pixi/envs/default/lib"));
+    exe.root_module.addObjectFile(b.path(".pixi/envs/default/lib/libncursesw.so.6.6"));
+    exe.root_module.addObjectFile(b.path(".pixi/envs/default/lib/libtinfow.so.6.6"));
     b.installArtifact(exe);
 
     const run_cmd = b.addRunArtifact(exe);

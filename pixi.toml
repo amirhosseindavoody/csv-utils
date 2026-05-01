@@ -6,11 +6,17 @@ channels = ["conda-forge"]
 platforms = ["linux-64"]
 
 [dependencies]
-zig = "*"
-ncurses = "*"
+zig = ">=0.15.0,<0.16"
+ncurses = ">=6.6,<7"
+python = ">=3.14.4,<3.15"
+pandas = ">=3.0.2,<4"
+numpy = ">=2.4.3,<3"
 
 [tasks]
 build = "zig build -Doptimize=ReleaseFast"
 run = "zig build run --"
 tui = "zig build run -- tui"
+gen-test-data = "python scripts/generate_test_data.py"
+
 test = "zig build test"
+test-tui-small = "zig build run -- tui test-data/generated/test_1000x100.csv"

@@ -25,6 +25,26 @@ pixi run run -- json sample.csv 10
 pixi run tui sample.csv
 ```
 
+## Testing
+
+### Test TUI mode using Pixi tasks
+
+```bash
+# Generate all configured benchmark datasets
+pixi run gen-test-data
+
+# Optional: generate only smaller datasets for quick iteration
+pixi run gen-test-data --datasets 1000x100 10000x1000
+# Run TUI on generated test data
+pixi run tui test-data/generated/test_1000x100.csv
+```
+
+### Unit tests
+
+```bash
+pixi run test
+```
+
 ## Status
 
 - Project scaffolded.
