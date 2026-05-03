@@ -19,4 +19,9 @@ tui = "zig build run -- tui"
 gen-test-data = "python scripts/generate_test_data.py"
 
 test = "zig build test"
+
+bench-parse-small = "zig build bench-parse -- test-data/generated/test_1000x100.csv"
+bench-parse-large = "zig build bench-parse -- test-data/generated/test_10000x1000.csv"
+
 test-tui-small = "zig build run -- tui test-data/generated/test_1000x100.csv"
+test-tui-large = "zig build run -- tui test-data/generated/test_10000x1000.csv"

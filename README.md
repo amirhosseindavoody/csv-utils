@@ -45,6 +45,26 @@ pixi run tui test-data/generated/test_1000x100.csv
 pixi run test
 ```
 
+The `test` run also includes a **preview-load benchmark** test (prints timing when `test-data/generated/test_1000x100.csv` exists; otherwise skipped).
+
+### CSV preview load benchmark (sync header + N lines)
+
+Measures reading the header (parsed into columns) plus up to `limit` raw data lines in one pass (`loadPreviewLimited`). The TUI loads the header plus an initial screenful of rows before the first paint, then streams the rest on a background thread so the table fills in as you scroll. CLI commands like `stats` scan the whole file and parse every line with `splitRow`, which is heavier.
+
+```bash
+# No args: default file test-data/generated/test_1000x100.csv, limit 500 (generate it with gen-test-data first)
+pixi run bench-parse
+
+# Explicit path and limit
+pixi run bench-parse -- test-data/generated/test_1000x100.csv 500
+
+# Limit only (same default file)
+pixi run bench-parse -- 1000
+
+# Also time splitRow on every loaded row (closer to per-cell work when drawing)
+pixi run bench-parse -- --parse-fields
+```
+
 ## Status
 
 - Project scaffolded.

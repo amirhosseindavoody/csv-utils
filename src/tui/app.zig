@@ -1,38 +1,14 @@
 const std = @import("std");
 const schema = @import("../core/schema.zig");
+const pv = @import("../core/preview.zig");
 const c = @cImport({
     @cInclude("ncurses.h");
 });
 
-const detail_panel_height: c_int = 5;
 const row_marker_width: c_int = 2;
 const col_width: c_int = 16;
 
-const PreviewData = struct {
-    allocator: std.mem.Allocator,
-    headers: [][]u8,
-    rows: [][]u8,
-
-    fn deinit(self: *PreviewData) void {
-        for (self.headers) |h| self.allocator.free(h);
-        for (self.rows) |r| self.allocator.free(r);
-        self.allocator.free(self.headers);
-        self.allocator.free(self.rows);
-    }
-};
-
-const ScanState = struct {
-    mutex: std.Thread.Mutex = .{},
-    rows_seen: usize = 0,
-    bytes_seen: usize = 0,
-    done: bool = false,
-    has_error: bool = false,
-};
-
 pub fn run(file_path: ?[]const u8) !void {
-    var preview = try loadPreview(std.heap.page_allocator, file_path, 500);
-    defer preview.deinit();
-
     _ = c.initscr();
     defer _ = c.endwin();
     _ = c.cbreak();
@@ -45,12 +21,20 @@ pub fn run(file_path: ?[]const u8) !void {
         _ = c.start_color();
         _ = c.use_default_colors();
         _ = c.init_pair(1, c.COLOR_CYAN, -1);
+        // Opaque panel: explicit background so underlying cells do not show through.
+        _ = c.init_pair(2, c.COLOR_WHITE, c.COLOR_BLUE);
     }
 
-    var state = ScanState{};
+    var csv = if (file_path) |p|
+        try pv.loadPreviewHeaderAndInitialRows(std.heap.page_allocator, p, initialSyncBodyLines())
+    else
+        try pv.empty(std.heap.page_allocator);
+    defer csv.deinit();
+
     var scan_thread: ?std.Thread = null;
     if (file_path) |path| {
-        scan_thread = try std.Thread.spawn(.{}, backgroundScanLoop, .{ path, &state });
+        const skip_synced_body: usize = csv.rows.items.len;
+        scan_thread = try std.Thread.spawn(.{}, pv.streamAppendBodyLinesAfterSkip, .{ &csv, path, skip_synced_body });
     }
     defer if (scan_thread) |t| t.join();
 
@@ -58,98 +42,152 @@ pub fn run(file_path: ?[]const u8) !void {
     var selected_col: usize = 0;
     var row_offset: usize = 0;
     var col_offset: usize = 0;
+    var show_row_panel = false;
+    var panel_scroll_row: usize = 0;
+    var panel_scroll_col: usize = 0;
     var running = true;
     while (running) {
         var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
         defer arena.deinit();
-        drawUi(file_path, &preview, selected_row, selected_col, row_offset, col_offset, &state, arena.allocator());
+        drawUi(
+            file_path,
+            &csv,
+            selected_row,
+            selected_col,
+            row_offset,
+            col_offset,
+            show_row_panel,
+            panel_scroll_row,
+            panel_scroll_col,
+            arena.allocator(),
+        );
         const ch = c.getch();
 
-        const max_rows: usize = if (preview.rows.len == 0) 0 else preview.rows.len - 1;
-        const max_cols: usize = if (preview.headers.len == 0) 0 else preview.headers.len - 1;
+        csv.mutex.lock();
+        const n_loaded = csv.rows.items.len;
+        csv.mutex.unlock();
+        const max_rows: usize = if (n_loaded == 0) 0 else n_loaded - 1;
+        const max_cols: usize = if (csv.headers.len == 0) 0 else csv.headers.len - 1;
         switch (ch) {
             'q' => running = false,
+            'r' => {
+                show_row_panel = !show_row_panel;
+                panel_scroll_row = 0;
+                panel_scroll_col = 0;
+            },
             c.KEY_UP => {
-                if (selected_row > 0) selected_row -= 1;
+                if (show_row_panel) {
+                    panel_scroll_row = panel_scroll_row -| 1;
+                } else if (selected_row > 0) {
+                    selected_row -= 1;
+                }
             },
             c.KEY_DOWN => {
-                if (selected_row < max_rows) selected_row += 1;
+                if (show_row_panel) {
+                    panel_scroll_row += 1;
+                } else if (selected_row < max_rows) {
+                    selected_row += 1;
+                }
             },
             c.KEY_LEFT => {
-                if (selected_col > 0) selected_col -= 1;
+                if (show_row_panel) {
+                    panel_scroll_col = panel_scroll_col -| 1;
+                } else if (selected_col > 0) {
+                    selected_col -= 1;
+                }
             },
             c.KEY_RIGHT => {
-                if (selected_col < max_cols) selected_col += 1;
+                if (show_row_panel) {
+                    panel_scroll_col += 1;
+                } else if (selected_col < max_cols) {
+                    selected_col += 1;
+                }
             },
             c.KEY_NPAGE => {
-                const page = visibleBodyRows();
-                selected_row = @min(max_rows, selected_row + page);
+                if (show_row_panel) {
+                    panel_scroll_row += 10;
+                } else {
+                    const page = visibleBodyRows();
+                    selected_row = @min(max_rows, selected_row + page);
+                }
             },
             c.KEY_PPAGE => {
-                const page = visibleBodyRows();
-                selected_row = selected_row -| page;
+                if (show_row_panel) {
+                    panel_scroll_row = panel_scroll_row -| 10;
+                } else {
+                    const page = visibleBodyRows();
+                    selected_row = selected_row -| page;
+                }
             },
             c.KEY_HOME => {
-                selected_row = 0;
-                selected_col = 0;
+                if (show_row_panel) {
+                    panel_scroll_row = 0;
+                    panel_scroll_col = 0;
+                } else {
+                    selected_row = 0;
+                    selected_col = 0;
+                }
             },
             c.KEY_END => {
-                selected_row = max_rows;
+                if (!show_row_panel) selected_row = max_rows;
             },
             else => {},
         }
 
-        const visible_rows = visibleBodyRows();
-        if (selected_row < row_offset) row_offset = selected_row;
-        if (visible_rows > 0 and selected_row >= row_offset + visible_rows) {
-            row_offset = selected_row - visible_rows + 1;
-        }
+        if (!show_row_panel) {
+            const visible_rows = visibleBodyRows();
+            if (selected_row < row_offset) row_offset = selected_row;
+            if (visible_rows > 0 and selected_row >= row_offset + visible_rows) {
+                row_offset = selected_row - visible_rows + 1;
+            }
 
-        const visible_cols = visibleColumnCount();
-        if (selected_col < col_offset) col_offset = selected_col;
-        if (visible_cols > 0 and selected_col >= col_offset + visible_cols) {
-            col_offset = selected_col - visible_cols + 1;
+            const visible_cols = visibleColumnCount();
+            if (selected_col < col_offset) col_offset = selected_col;
+            if (visible_cols > 0 and selected_col >= col_offset + visible_cols) {
+                col_offset = selected_col - visible_cols + 1;
+            }
         }
     }
 }
 
 fn drawUi(
     file_path: ?[]const u8,
-    preview: *const PreviewData,
+    preview: *pv.PreviewData,
     selected_row: usize,
     selected_col: usize,
     row_offset: usize,
     col_offset: usize,
-    state: *ScanState,
+    show_row_panel: bool,
+    panel_scroll_row: usize,
+    panel_scroll_col: usize,
     temp_allocator: std.mem.Allocator,
 ) void {
+    preview.mutex.lock();
+    defer preview.mutex.unlock();
+
     _ = c.erase();
 
     const h = c.getmaxy(c.stdscr);
     const w = c.getmaxx(c.stdscr);
 
-    _ = c.mvaddstr(0, 0, "csv-utils TUI (q quit, arrows navigate)");
+    _ = c.mvaddstr(0, 0, "csv-utils TUI (q quit, arrows navigate, r row panel)");
 
-    var buffer: [256]u8 = undefined;
-    state.mutex.lock();
-    const rows = state.rows_seen;
-    const done = state.done;
-    const has_error = state.has_error;
-    state.mutex.unlock();
-
-    const status = if (has_error)
+    var buffer: [320]u8 = undefined;
+    const loaded = preview.rows.items.len;
+    const bytes_l = preview.bytes_loaded;
+    const status = if (preview.scan_error)
         "error"
-    else if (done)
+    else if (preview.scan_done)
         "complete"
     else if (file_path != null)
-        "running"
+        "loading"
     else
         "idle";
     const path = file_path orelse "<not provided>";
     const summary = std.fmt.bufPrintZ(
         &buffer,
-        "file={s} scan={s} rows={d} preview={d} cell=[r{d},c{d}] col_off={d}",
-        .{ path, status, rows, preview.rows.len, selected_row + 1, selected_col + 1, col_offset },
+        "file={s} scan={s} rows={d} bytes={d} cell=[r{d},c{d}] col_off={d}",
+        .{ path, status, loaded, bytes_l, selected_row + 1, selected_col + 1, col_offset },
     ) catch "status unavailable";
     _ = c.mvaddstr(1, 0, summary.ptr);
     _ = c.mvhline(2, 0, '-', w);
@@ -158,13 +196,13 @@ fn drawUi(
     const visible_rows = visibleBodyRows();
     var screen_row: c_int = 4;
     var i: usize = 0;
-    while (i < visible_rows and row_offset + i < preview.rows.len) : (i += 1) {
+    while (i < visible_rows and row_offset + i < loaded) : (i += 1) {
         const row_idx = row_offset + i;
         drawDataRow(
             screen_row,
             w,
             preview.headers.len,
-            preview.rows[row_idx],
+            preview.rows.items[row_idx],
             row_idx == selected_row,
             selected_col,
             col_offset,
@@ -173,15 +211,15 @@ fn drawUi(
         screen_row += 1;
     }
 
-    const detail_top = h - detail_panel_height;
-    if (detail_top > 4) {
-        _ = c.mvhline(detail_top, 0, '-', w);
-        drawDetailPanel(
-            detail_top + 1,
+    if (show_row_panel) {
+        drawRowPanel(
+            h,
             w,
             preview,
             selected_row,
             selected_col,
+            panel_scroll_row,
+            panel_scroll_col,
             temp_allocator,
         );
     }
@@ -264,72 +302,155 @@ fn formatCell(allocator: std.mem.Allocator, input: []const u8, width: usize) ![]
     return out;
 }
 
-fn drawDetailPanel(
-    y: c_int,
-    max_width: c_int,
-    preview: *const PreviewData,
+fn drawRowPanel(
+    screen_h: c_int,
+    screen_w: c_int,
+    preview: *pv.PreviewData,
     selected_row: usize,
     selected_col: usize,
+    scroll_row: usize,
+    scroll_col: usize,
     temp_allocator: std.mem.Allocator,
 ) void {
-    _ = c.mvaddstr(y, 0, "Selected row (JSON) / selected cell:");
-    if (preview.rows.len == 0 or selected_row >= preview.rows.len) {
-        _ = c.mvaddstr(y + 1, 0, "{}");
+    const panel_h: c_int = if (screen_h > 8) screen_h - 6 else 3;
+    const panel_w: c_int = if (screen_w > 8) screen_w - 4 else screen_w;
+    const panel_y: c_int = 3;
+    const panel_x: c_int = 2;
+
+    const inner_w = panel_w - 2;
+    if (inner_w <= 0 or panel_h < 2) return;
+
+    // Solid opaque layer: fill interior first so table/grid underneath never bleeds through.
+    if (c.has_colors()) {
+        _ = c.attron(c.COLOR_PAIR(2));
+    } else {
+        _ = c.attron(c.A_REVERSE);
+    }
+    var fill_y: c_int = panel_y + 1;
+    while (fill_y < panel_y + panel_h - 1) : (fill_y += 1) {
+        _ = c.mvhline(fill_y, panel_x + 1, ' ', inner_w);
+    }
+    if (c.has_colors()) {
+        _ = c.attroff(c.COLOR_PAIR(2));
+    } else {
+        _ = c.attroff(c.A_REVERSE);
+    }
+
+    // Borders and chrome use the same opaque styling.
+    if (c.has_colors()) {
+        _ = c.attron(c.COLOR_PAIR(2));
+    } else {
+        _ = c.attron(c.A_REVERSE);
+    }
+    _ = c.mvhline(panel_y, panel_x, '=', panel_w);
+    _ = c.mvhline(panel_y + panel_h - 1, panel_x, '=', panel_w);
+    var i: c_int = 0;
+    while (i < panel_h) : (i += 1) {
+        _ = c.mvaddch(panel_y + i, panel_x, '|');
+        _ = c.mvaddch(panel_y + i, panel_x + panel_w - 1, '|');
+    }
+    _ = c.mvaddstr(panel_y, panel_x + 2, "Row View Panel (r to close)");
+
+    const content_h: usize = @intCast(if (panel_h > 2) panel_h - 2 else 0);
+    const content_w: usize = @intCast(if (panel_w > 4) panel_w - 4 else 0);
+
+    if (preview.rows.items.len == 0 or selected_row >= preview.rows.items.len) {
+        if (content_w > 0 and content_h > 0) {
+            _ = c.mvaddnstr(panel_y + 1, panel_x + 2, "{}", @intCast(@min(2, content_w)));
+            _ = c.mvhline(panel_y + 1, panel_x + 2 + 2, ' ', @intCast(@max(0, @as(c_int, @intCast(content_w)) - 2)));
+        }
+        if (c.has_colors()) {
+            _ = c.attroff(c.COLOR_PAIR(2));
+        } else {
+            _ = c.attroff(c.A_REVERSE);
+        }
         return;
     }
 
-    var fields = schema.splitRow(temp_allocator, preview.rows[selected_row]) catch return;
+    var fields = schema.splitRow(temp_allocator, preview.rows.items[selected_row]) catch {
+        if (c.has_colors()) {
+            _ = c.attroff(c.COLOR_PAIR(2));
+        } else {
+            _ = c.attroff(c.A_REVERSE);
+        }
+        return;
+    };
     defer fields.deinit();
 
-    const col_name = if (selected_col < preview.headers.len) preview.headers[selected_col] else "<none>";
-    const cell_value = if (selected_col < fields.items.len) fields.items[selected_col] else "";
-    var selected_cell_buf: [512]u8 = undefined;
-    const selected_cell_txt = std.fmt.bufPrintZ(
-        &selected_cell_buf,
-        "col={s} value={s}",
-        .{ col_name, cell_value },
-    ) catch "selected cell unavailable";
-    _ = c.mvaddstr(y + 1, 0, selected_cell_txt.ptr);
+    var lines = std.ArrayList([]const u8){};
+    defer lines.deinit(temp_allocator);
+    buildRowPanelLines(&lines, preview, fields.items, selected_row, selected_col, temp_allocator) catch {
+        if (c.has_colors()) {
+            _ = c.attroff(c.COLOR_PAIR(2));
+        } else {
+            _ = c.attroff(c.A_REVERSE);
+        }
+        return;
+    };
 
-    var json = std.ArrayList(u8){};
-    defer json.deinit(temp_allocator);
-    tryAppendJson(&json, preview.headers, fields.items, temp_allocator) catch return;
+    var row_i: usize = 0;
+    while (row_i < content_h) : (row_i += 1) {
+        const cy = panel_y + 1 + @as(c_int, @intCast(row_i));
+        const cx = panel_x + 2;
+        if (scroll_row + row_i < lines.items.len) {
+            const raw = lines.items[scroll_row + row_i];
+            const line = if (scroll_col < raw.len) raw[scroll_col..] else "";
+            const take = @min(content_w, line.len);
+            if (take > 0) {
+                _ = c.mvaddnstr(cy, cx, line.ptr, @intCast(take));
+            }
+            if (take < content_w) {
+                _ = c.mvhline(cy, cx + @as(c_int, @intCast(take)), ' ', @intCast(content_w - take));
+            }
+        } else {
+            _ = c.mvhline(cy, cx, ' ', @intCast(content_w));
+        }
+    }
 
-    const max_line: usize = @intCast(if (max_width > 0) max_width else 0);
-    const total_lines: usize = @intCast(if (detail_panel_height > 3) detail_panel_height - 3 else 0);
-    var line_idx: usize = 0;
-    var offset: usize = 0;
-    while (line_idx < total_lines and offset < json.items.len) : (line_idx += 1) {
-        const remaining = json.items.len - offset;
-        const take = @min(max_line, remaining);
-        _ = c.mvaddnstr(y + 2 + @as(c_int, @intCast(line_idx)), 0, json.items[offset..].ptr, @intCast(take));
-        offset += take;
+    if (c.has_colors()) {
+        _ = c.attroff(c.COLOR_PAIR(2));
+    } else {
+        _ = c.attroff(c.A_REVERSE);
     }
 }
 
-fn tryAppendJson(
-    json: *std.ArrayList(u8),
-    headers: [][]u8,
+fn buildRowPanelLines(
+    lines: *std.ArrayList([]const u8),
+    preview: *pv.PreviewData,
     values: []const []const u8,
+    selected_row: usize,
+    selected_col: usize,
     allocator: std.mem.Allocator,
 ) !void {
-    try json.append(allocator, '{');
+    const col_name = if (selected_col < preview.headers.len) preview.headers[selected_col] else "<none>";
+    const cell_value = if (selected_col < values.len) values[selected_col] else "";
+    try lines.append(allocator, try std.fmt.allocPrint(allocator, "row_index: {d}", .{selected_row}));
+    try lines.append(allocator, try std.fmt.allocPrint(allocator, "selected_column: {s}", .{col_name}));
+    try lines.append(allocator, try std.fmt.allocPrint(allocator, "selected_value: {s}", .{cell_value}));
+    try lines.append(allocator, try allocator.dupe(u8, "{"));
+
+    const headers = preview.headers;
     const limit = @min(headers.len, values.len);
     for (0..limit) |i| {
-        if (i != 0) try json.appendSlice(allocator, ", ");
-        try json.appendSlice(allocator, "\"");
-        try json.appendSlice(allocator, headers[i]);
-        try json.appendSlice(allocator, "\": \"");
-        try json.appendSlice(allocator, values[i]);
-        try json.appendSlice(allocator, "\"");
+        const suffix = if (i + 1 < limit) "," else "";
+        try lines.append(
+            allocator,
+            try std.fmt.allocPrint(allocator, "  \"{s}\": \"{s}\"{s}", .{ headers[i], values[i], suffix }),
+        );
     }
-    try json.append(allocator, '}');
+    try lines.append(allocator, try allocator.dupe(u8, "}"));
 }
 
 fn visibleBodyRows() usize {
     const h = c.getmaxy(c.stdscr);
-    const available = h - (4 + detail_panel_height + 1);
+    const available = h - 5;
     return @intCast(if (available > 0) available else 0);
+}
+
+/// Sync body lines loaded before the first frame so the grid is populated immediately; background appends the rest.
+fn initialSyncBodyLines() usize {
+    const v = visibleBodyRows();
+    return @max(128, v * 4);
 }
 
 fn visibleColumnCount() usize {
@@ -338,81 +459,3 @@ fn visibleColumnCount() usize {
     return @intCast(if (available > 0) @divFloor(available, col_width) else 0);
 }
 
-fn loadPreview(allocator: std.mem.Allocator, file_path: ?[]const u8, limit: usize) !PreviewData {
-    if (file_path == null) {
-        return .{
-            .allocator = allocator,
-            .headers = try allocator.alloc([]u8, 0),
-            .rows = try allocator.alloc([]u8, 0),
-        };
-    }
-
-    var file = try std.fs.cwd().openFile(file_path.?, .{});
-    defer file.close();
-    var reader = file.deprecatedReader();
-
-    const header_line = (try reader.readUntilDelimiterOrEofAlloc(allocator, '\n', 1024 * 1024)) orelse {
-        return .{
-            .allocator = allocator,
-            .headers = try allocator.alloc([]u8, 0),
-            .rows = try allocator.alloc([]u8, 0),
-        };
-    };
-    defer allocator.free(header_line);
-
-    var parsed_headers = try schema.splitRow(allocator, header_line);
-    defer parsed_headers.deinit();
-
-    var headers = std.ArrayList([]u8){};
-    defer headers.deinit(allocator);
-    for (parsed_headers.items) |h| {
-        try headers.append(allocator, try allocator.dupe(u8, h));
-    }
-
-    var rows = std.ArrayList([]u8){};
-    defer rows.deinit(allocator);
-    while (rows.items.len < limit) {
-        const line = try reader.readUntilDelimiterOrEofAlloc(allocator, '\n', 1024 * 1024);
-        if (line == null) break;
-        try rows.append(allocator, line.?);
-    }
-
-    return .{
-        .allocator = allocator,
-        .headers = try headers.toOwnedSlice(allocator),
-        .rows = try rows.toOwnedSlice(allocator),
-    };
-}
-
-fn backgroundScanLoop(file_path: []const u8, state: *ScanState) void {
-    var file = std.fs.cwd().openFile(file_path, .{}) catch {
-        state.mutex.lock();
-        state.has_error = true;
-        state.done = true;
-        state.mutex.unlock();
-        return;
-    };
-    defer file.close();
-
-    var reader = file.deprecatedReader();
-    while (true) {
-        const line = reader.readUntilDelimiterOrEofAlloc(std.heap.page_allocator, '\n', 1024 * 1024) catch {
-            state.mutex.lock();
-            state.has_error = true;
-            state.done = true;
-            state.mutex.unlock();
-            return;
-        };
-        if (line == null) break;
-        defer std.heap.page_allocator.free(line.?);
-
-        state.mutex.lock();
-        state.rows_seen += 1;
-        state.bytes_seen += line.?.len;
-        state.mutex.unlock();
-    }
-
-    state.mutex.lock();
-    state.done = true;
-    state.mutex.unlock();
-}
