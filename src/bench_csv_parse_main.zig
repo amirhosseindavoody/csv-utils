@@ -25,17 +25,18 @@ fn printUsage() void {
     , .{default_csv_path});
 }
 
-pub fn main() !void {
+pub fn main(init: std.process.Init) !void {
     const allocator = std.heap.page_allocator;
 
     var parse_fields = false;
     var pos1: ?[]const u8 = null;
     var pos2: ?[]const u8 = null;
 
-    const argv = std.os.argv;
-    var ai: usize = 1;
-    while (ai < argv.len) : (ai += 1) {
-        const arg = std.mem.span(argv[ai]);
+    var args = try std.process.Args.Iterator.initAllocator(init.minimal.args, allocator);
+    defer args.deinit();
+    _ = args.next();
+    while (args.next()) |arg_z| {
+        const arg: []const u8 = arg_z;
         if (std.mem.eql(u8, arg, "--parse-fields")) {
             parse_fields = true;
             continue;
@@ -70,16 +71,19 @@ pub fn main() !void {
         unreachable;
     };
 
-    var timer = try std.time.Timer.start();
-    var data = try pv.loadPreviewLimited(allocator, file_path, limit);
+    const io = init.io;
+    const start = std.Io.Timestamp.now(io, .awake);
+    var data = try pv.loadPreviewLimited(io, allocator, file_path, limit);
     defer data.deinit();
-    const load_ns = timer.lap();
+    const after_load = std.Io.Timestamp.now(io, .awake);
+    const load_ns: u64 = @intCast(start.durationTo(after_load).toNanoseconds());
 
     var parse_ns: u64 = 0;
     if (parse_fields) {
-        timer.reset();
+        const parse_start = std.Io.Timestamp.now(io, .awake);
         try pv.parseAllLoadedRows(allocator, data.rows.items);
-        parse_ns = timer.read();
+        const parse_end = std.Io.Timestamp.now(io, .awake);
+        parse_ns = @intCast(parse_start.durationTo(parse_end).toNanoseconds());
     }
 
     var raw_bytes: u64 = 0;

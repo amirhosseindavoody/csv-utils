@@ -3,6 +3,10 @@ const std = @import("std");
 pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
+    const vaxis_dep = b.dependency("vaxis", .{
+        .target = target,
+        .optimize = optimize,
+    });
 
     const exe = b.addExecutable(.{
         .name = "csv-utils",
@@ -10,15 +14,9 @@ pub fn build(b: *std.Build) void {
             .root_source_file = b.path("src/main.zig"),
             .target = target,
             .optimize = optimize,
-            .link_libc = true,
         }),
     });
-    exe.root_module.addIncludePath(b.path(".pixi/envs/default/include"));
-    exe.root_module.addLibraryPath(b.path(".pixi/envs/default/lib"));
-    exe.root_module.addRPath(b.path(".pixi/envs/default/lib"));
-    // `libncursesw.so` in conda is a linker script (ASCII); Zig expects ELF. Link the versioned .so.* files.
-    exe.root_module.addObjectFile(b.path(".pixi/envs/default/lib/libncursesw.so.6.6"));
-    exe.root_module.addObjectFile(b.path(".pixi/envs/default/lib/libtinfow.so.6.6"));
+    exe.root_module.addImport("vaxis", vaxis_dep.module("vaxis"));
     b.installArtifact(exe);
 
     const run_cmd = b.addRunArtifact(exe);
@@ -36,6 +34,7 @@ pub fn build(b: *std.Build) void {
             .optimize = optimize,
         }),
     });
+    tests.root_module.addImport("vaxis", vaxis_dep.module("vaxis"));
     const run_tests = b.addRunArtifact(tests);
     const test_step = b.step("test", "Run unit tests");
     test_step.dependOn(&run_tests.step);
@@ -54,4 +53,19 @@ pub fn build(b: *std.Build) void {
     if (b.args) |ba| run_bench.addArgs(ba);
     const bench_step = b.step("bench-parse", "Benchmark CSV preview load (same as TUI initial load)");
     bench_step.dependOn(&run_bench.step);
+
+    const debug_preview_exe = b.addExecutable(.{
+        .name = "debug-preview-dump",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/debug_preview_dump.zig"),
+            .target = target,
+            .optimize = optimize,
+        }),
+    });
+    b.installArtifact(debug_preview_exe);
+
+    const run_debug_preview = b.addRunArtifact(debug_preview_exe);
+    if (b.args) |da| run_debug_preview.addArgs(da);
+    const debug_preview_step = b.step("debug-preview", "Dump first parsed preview header/row");
+    debug_preview_step.dependOn(&run_debug_preview.step);
 }

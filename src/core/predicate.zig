@@ -26,7 +26,7 @@ pub fn eq(lhs: []const u8, rhs: []const u8) bool {
 }
 
 pub fn parseConditions(allocator: std.mem.Allocator, text: []const u8) ![]Condition {
-    var out = std.ArrayList(Condition){};
+    var out: std.ArrayList(Condition) = .empty;
     defer out.deinit(allocator);
 
     var parts = std.mem.splitScalar(u8, text, ',');

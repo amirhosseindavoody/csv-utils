@@ -23,13 +23,14 @@ pub fn printHelp() !void {
 }
 
 pub fn runCommand(
+    io: std.Io,
     allocator: std.mem.Allocator,
     command: []const u8,
-    args: *std.process.ArgIterator,
+    args: *std.process.Args.Iterator,
 ) !void {
     if (std.mem.eql(u8, command, "stats")) {
         const parsed = try parse_args.requireFileArg(args);
-        try engine.printBasicStats(allocator, parsed.file_path);
+        try engine.printBasicStats(io, allocator, parsed.file_path);
         return;
     }
 
@@ -41,7 +42,7 @@ pub fn runCommand(
             try std.fmt.parseInt(usize, txt, 10)
         else
             50;
-        try engine.printUniqueValues(allocator, parsed.file_path, cols, limit);
+        try engine.printUniqueValues(io, allocator, parsed.file_path, cols, limit);
         return;
     }
 
@@ -52,7 +53,7 @@ pub fn runCommand(
             try std.fmt.parseInt(usize, txt, 10)
         else
             20;
-        try engine.printRowsAsJson(allocator, parsed.file_path, limit);
+        try engine.printRowsAsJson(io, allocator, parsed.file_path, limit);
         return;
     }
 
@@ -64,7 +65,7 @@ pub fn runCommand(
             try std.fmt.parseInt(usize, txt, 10)
         else
             50;
-        try engine.printFilteredRows(allocator, parsed.file_path, expr, limit);
+        try engine.printFilteredRows(io, allocator, parsed.file_path, expr, limit);
         return;
     }
 

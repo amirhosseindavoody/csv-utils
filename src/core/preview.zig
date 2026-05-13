@@ -6,7 +6,7 @@ const std = @import("std");
 const schema = @import("schema.zig");
 
 pub const PreviewData = struct {
-    mutex: std.Thread.Mutex = .{},
+    mutex: std.atomic.Mutex = .unlocked,
     allocator: std.mem.Allocator,
     headers: [][]u8,
     rows: std.ArrayList([]u8),
@@ -23,12 +23,20 @@ pub const PreviewData = struct {
     }
 };
 
+fn lock(m: *std.atomic.Mutex) void {
+    while (!m.tryLock()) std.Thread.yield() catch {};
+}
+
+fn unlock(m: *std.atomic.Mutex) void {
+    m.unlock();
+}
+
 pub fn empty(allocator: std.mem.Allocator) !PreviewData {
     return .{
-        .mutex = .{},
+        .mutex = .unlocked,
         .allocator = allocator,
         .headers = try allocator.alloc([]u8, 0),
-        .rows = std.ArrayList([]u8){},
+        .rows = .empty,
         .scan_done = true,
         .scan_error = false,
         .bytes_loaded = 0,
@@ -39,7 +47,7 @@ fn parseHeaderRow(allocator: std.mem.Allocator, header_slice: []const u8) ![][]u
     var parsed_headers = try schema.splitRow(allocator, header_slice);
     defer parsed_headers.deinit();
 
-    var headers = std.ArrayList([]u8){};
+    var headers: std.ArrayList([]u8) = .empty;
     defer headers.deinit(allocator);
     for (parsed_headers.items) |h| {
         try headers.append(allocator, try allocator.dupe(u8, h));
@@ -49,16 +57,17 @@ fn parseHeaderRow(allocator: std.mem.Allocator, header_slice: []const u8) ![][]u
 
 /// Shared path reader: header + up to `max_body_lines` body rows. `scan_done` reflects whether the file is fully read.
 fn loadFromPath(
+    io: std.Io,
     allocator: std.mem.Allocator,
     file_path: []const u8,
     max_body_lines: usize,
     scan_done_flag: bool,
 ) !PreviewData {
-    var file = try std.fs.cwd().openFile(file_path, .{});
-    defer file.close();
+    var file = try std.Io.Dir.cwd().openFile(io, file_path, .{});
+    defer file.close(io);
 
     var io_buf: [1024 * 1024]u8 = undefined;
-    var file_reader = file.reader(&io_buf);
+    var file_reader = file.reader(io, &io_buf);
 
     const header_slice = (try std.Io.Reader.takeDelimiter(&file_reader.interface, '\n')) orelse {
         return try empty(allocator);
@@ -66,7 +75,7 @@ fn loadFromPath(
 
     const headers = try parseHeaderRow(allocator, header_slice);
 
-    var rows = std.ArrayList([]u8){};
+    var rows: std.ArrayList([]u8) = .empty;
     errdefer {
         for (rows.items) |r| allocator.free(r);
         rows.deinit(allocator);
@@ -80,7 +89,7 @@ fn loadFromPath(
     }
 
     return .{
-        .mutex = .{},
+        .mutex = .unlocked,
         .allocator = allocator,
         .headers = headers,
         .rows = rows,
@@ -91,67 +100,70 @@ fn loadFromPath(
 }
 
 /// Header only; body filled later on a thread.
-pub fn loadPreviewHeaderOnly(allocator: std.mem.Allocator, file_path: []const u8) !PreviewData {
-    return loadFromPath(allocator, file_path, 0, false);
+pub fn loadPreviewHeaderOnly(io: std.Io, allocator: std.mem.Allocator, file_path: []const u8) !PreviewData {
+    return loadFromPath(io, allocator, file_path, 0, false);
 }
 
 /// Header plus the first `initial_body_lines` body rows (sync). Rest via `streamAppendBodyLinesAfterSkip`.
 pub fn loadPreviewHeaderAndInitialRows(
+    io: std.Io,
     allocator: std.mem.Allocator,
     file_path: []const u8,
     initial_body_lines: usize,
 ) !PreviewData {
-    return loadFromPath(allocator, file_path, initial_body_lines, false);
+    return loadFromPath(io, allocator, file_path, initial_body_lines, false);
 }
 
 /// Load header and up to `limit` body lines in one shot (benchmark / tests).
 pub fn loadPreviewLimited(
+    io: std.Io,
     allocator: std.mem.Allocator,
     file_path: []const u8,
     limit: usize,
 ) !PreviewData {
-    return loadFromPath(allocator, file_path, limit, true);
+    return loadFromPath(io, allocator, file_path, limit, true);
 }
 
 /// Background thread: open file, skip header + `skip_body_lines` data lines, append the rest to `preview.rows`.
 pub fn streamAppendBodyLinesAfterSkip(
+    io: std.Io,
     preview: *PreviewData,
     file_path: []const u8,
     skip_body_lines: usize,
 ) void {
-    var file = std.fs.cwd().openFile(file_path, .{}) catch {
-        preview.mutex.lock();
+    var file = std.Io.Dir.cwd().openFile(io, file_path, .{}) catch {
+        lock(&preview.mutex);
         preview.scan_error = true;
         preview.scan_done = true;
-        preview.mutex.unlock();
+        unlock(&preview.mutex);
         return;
     };
-    defer file.close();
+    defer file.close(io);
 
     var io_buf: [1024 * 1024]u8 = undefined;
-    var file_reader = file.reader(&io_buf);
+    var file_reader = file.reader(io, &io_buf);
 
     _ = std.Io.Reader.takeDelimiter(&file_reader.interface, '\n') catch {
-        preview.mutex.lock();
+        lock(&preview.mutex);
         preview.scan_error = true;
         preview.scan_done = true;
-        preview.mutex.unlock();
+        unlock(&preview.mutex);
         return;
     };
 
     var skipped: usize = 0;
     while (skipped < skip_body_lines) : (skipped += 1) {
         const discard = (std.Io.Reader.takeDelimiter(&file_reader.interface, '\n') catch {
-            preview.mutex.lock();
+            lock(&preview.mutex);
             preview.scan_error = true;
             preview.scan_done = true;
-            preview.mutex.unlock();
+            unlock(&preview.mutex);
             return;
         }) orelse {
             // EOF: sync path already consumed the whole file.
-            preview.mutex.lock();
+            lock(&preview.mutex);
             preview.scan_done = true;
-            preview.mutex.unlock();
+            unlock(&preview.mutex);
             return;
         };
         _ = discard;
@@ -159,38 +171,38 @@ pub fn streamAppendBodyLinesAfterSkip(
 
     while (true) {
         const line = (std.Io.Reader.takeDelimiter(&file_reader.interface, '\n') catch {
-            preview.mutex.lock();
+            lock(&preview.mutex);
             preview.scan_error = true;
-            preview.mutex.unlock();
+            unlock(&preview.mutex);
             break;
         }) orelse break;
 
         const owned = preview.allocator.dupe(u8, line) catch {
-            preview.mutex.lock();
+            lock(&preview.mutex);
             preview.scan_error = true;
-            preview.mutex.unlock();
+            unlock(&preview.mutex);
             break;
         };
 
-        preview.mutex.lock();
+        lock(&preview.mutex);
         preview.rows.append(preview.allocator, owned) catch {
             preview.allocator.free(owned);
             preview.scan_error = true;
-            preview.mutex.unlock();
+            unlock(&preview.mutex);
             break;
         };
         preview.bytes_loaded += owned.len;
-        preview.mutex.unlock();
+        unlock(&preview.mutex);
     }
 
-    preview.mutex.lock();
+    lock(&preview.mutex);
     preview.scan_done = true;
-    preview.mutex.unlock();
+    unlock(&preview.mutex);
 }
 
 /// Same as `streamAppendBodyLinesAfterSkip(preview, path, 0)`.
-pub fn streamAppendBodyLines(preview: *PreviewData, file_path: []const u8) void {
-    streamAppendBodyLinesAfterSkip(preview, file_path, 0);
+pub fn streamAppendBodyLines(io: std.Io, preview: *PreviewData, file_path: []const u8) void {
+    streamAppendBodyLinesAfterSkip(io, preview, file_path, 0);
 }
 
 /// Optional: same as rendering each row — parse every loaded line with `splitRow` (extra CPU vs preview only).
@@ -203,11 +215,11 @@ pub fn parseAllLoadedRows(allocator: std.mem.Allocator, rows: []const []u8) !voi
 
 test "preview load smoke (optional fixture)" {
     const path = "test-data/generated/test_1000x100.csv";
-    std.fs.cwd().access(path, .{}) catch return error.SkipZigTest;
+    std.Io.Dir.cwd().access(std.testing.io, path, .{}) catch return error.SkipZigTest;
 
     const allocator = std.heap.page_allocator;
 
-    var data = try loadPreviewLimited(allocator, path, 500);
+    var data = try loadPreviewLimited(std.testing.io, allocator, path, 500);
     defer data.deinit();
 
     try std.testing.expect(data.headers.len > 0);
@@ -216,15 +228,16 @@ test "preview load smoke (optional fixture)" {
 
 test "benchmark preview load throughput" {
     const path = "test-data/generated/test_1000x100.csv";
-    std.fs.cwd().access(path, .{}) catch return error.SkipZigTest;
+    std.Io.Dir.cwd().access(std.testing.io, path, .{}) catch return error.SkipZigTest;
 
     const allocator = std.heap.page_allocator;
 
     const limit: usize = 500;
-    var timer = try std.time.Timer.start();
-    var data = try loadPreviewLimited(allocator, path, limit);
+    const start = std.Io.Timestamp.now(std.testing.io, .awake);
+    var data = try loadPreviewLimited(std.testing.io, allocator, path, limit);
     defer data.deinit();
-    const elapsed_ns = timer.read();
+    const end = std.Io.Timestamp.now(std.testing.io, .awake);
+    const elapsed_ns: u64 = @intCast(start.durationTo(end).toNanoseconds());
 
     const total_bytes: u64 = blk: {
         var sum: u64 = 0;

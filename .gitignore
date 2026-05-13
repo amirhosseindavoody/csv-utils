@@ -4,6 +4,10 @@
 # Zig
 .zig-cache/
 zig-out/
+zig-pkg/
 
 # data
 *.csv
+
+# Development artifacts
+artifacts/

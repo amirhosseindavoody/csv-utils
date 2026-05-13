@@ -6,11 +6,11 @@ const json_view = @import("json_view.zig");
 const unique_mod = @import("unique.zig");
 const predicate = @import("predicate.zig");
 
-pub fn printBasicStats(allocator: std.mem.Allocator, file_path: []const u8) !void {
-    var file = try std.fs.cwd().openFile(file_path, .{});
-    defer file.close();
+pub fn printBasicStats(io: std.Io, allocator: std.mem.Allocator, file_path: []const u8) !void {
+    var file = try std.Io.Dir.cwd().openFile(io, file_path, .{});
+    defer file.close(io);
 
-    var csv = reader_mod.CsvReader.init(allocator, file);
+    var csv = reader_mod.CsvReader.init(io, allocator, file);
     defer csv.deinit();
 
     const header_line = (try csv.nextLine()) orelse return error.EmptyCsv;
@@ -32,15 +32,16 @@ pub fn printBasicStats(allocator: std.mem.Allocator, file_path: []const u8) !voi
 }
 
 pub fn printUniqueValues(
+    io: std.Io,
     allocator: std.mem.Allocator,
     file_path: []const u8,
     columns_expr: []const u8,
     cap: usize,
 ) !void {
-    var file = try std.fs.cwd().openFile(file_path, .{});
-    defer file.close();
+    var file = try std.Io.Dir.cwd().openFile(io, file_path, .{});
+    defer file.close(io);
 
-    var csv = reader_mod.CsvReader.init(allocator, file);
+    var csv = reader_mod.CsvReader.init(io, allocator, file);
     defer csv.deinit();
 
     const header_line = (try csv.nextLine()) orelse return error.EmptyCsv;
@@ -49,7 +50,7 @@ pub fn printUniqueValues(
     defer headers.deinit();
 
     var parts = std.mem.splitScalar(u8, columns_expr, ',');
-    var indexes = std.ArrayList(usize){};
+    var indexes: std.ArrayList(usize) = .empty;
     defer indexes.deinit(allocator);
     while (parts.next()) |p| {
         const col = std.mem.trim(u8, p, " ");
@@ -61,11 +62,11 @@ pub fn printUniqueValues(
     try unique_mod.printUniqueForColumns(allocator, &csv, headers.items, indexes.items, cap);
 }
 
-pub fn printRowsAsJson(allocator: std.mem.Allocator, file_path: []const u8, limit: usize) !void {
-    var file = try std.fs.cwd().openFile(file_path, .{});
-    defer file.close();
+pub fn printRowsAsJson(io: std.Io, allocator: std.mem.Allocator, file_path: []const u8, limit: usize) !void {
+    var file = try std.Io.Dir.cwd().openFile(io, file_path, .{});
+    defer file.close(io);
 
-    var csv = reader_mod.CsvReader.init(allocator, file);
+    var csv = reader_mod.CsvReader.init(io, allocator, file);
     defer csv.deinit();
 
     const header_line = (try csv.nextLine()) orelse return error.EmptyCsv;
@@ -84,15 +85,16 @@ pub fn printRowsAsJson(allocator: std.mem.Allocator, file_path: []const u8, limi
 }
 
 pub fn printFilteredRows(
+    io: std.Io,
     allocator: std.mem.Allocator,
     file_path: []const u8,
     filter_expr: []const u8,
     limit: usize,
 ) !void {
-    var file = try std.fs.cwd().openFile(file_path, .{});
-    defer file.close();
+    var file = try std.Io.Dir.cwd().openFile(io, file_path, .{});
+    defer file.close(io);
 
-    var csv = reader_mod.CsvReader.init(allocator, file);
+    var csv = reader_mod.CsvReader.init(io, allocator, file);
     defer csv.deinit();
 
     const header_line = (try csv.nextLine()) orelse return error.EmptyCsv;

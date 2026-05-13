@@ -22,7 +22,7 @@ pub fn printUniqueForColumns(
         var fields = try schema.splitRow(allocator, line);
         defer fields.deinit();
 
-        var key_builder = std.ArrayList(u8){};
+        var key_builder: std.ArrayList(u8) = .empty;
         defer key_builder.deinit(allocator);
         for (indexes, 0..) |idx, i| {
             if (idx >= fields.items.len) continue;

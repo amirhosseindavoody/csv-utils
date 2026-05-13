@@ -12,9 +12,9 @@ pub const RowFields = struct {
 };
 
 pub fn splitRow(allocator: std.mem.Allocator, line: []const u8) !RowFields {
-    const trimmed = std.mem.trimRight(u8, line, "\r");
+    const trimmed = std.mem.trimEnd(u8, line, "\r");
     const storage = try allocator.dupe(u8, trimmed);
-    var fields = std.ArrayList([]const u8){};
+    var fields: std.ArrayList([]const u8) = .empty;
     defer fields.deinit(allocator);
 
     var in_quotes = false;
