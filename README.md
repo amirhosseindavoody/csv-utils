@@ -27,6 +27,8 @@ pixi run run -- json sample.csv 10
 pixi run tui sample.csv
 ```
 
+In the TUI, press `:` then `?` and Enter for help (all keys and `:` commands).
+
 ## Testing
 
 ### Test TUI mode using Pixi tasks

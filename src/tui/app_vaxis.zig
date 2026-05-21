@@ -17,6 +17,36 @@ const min_col_width: i32 = 6;
 const max_col_width: i32 = 64;
 const min_sidebar_width: i32 = 18;
 const max_sidebar_width: i32 = 60;
+const max_command_len: usize = 128;
+
+const help_lines = [_][]const u8{
+    "csv-utils TUI - help",
+    "",
+    "Normal mode",
+    "  q              quit",
+    "  Up/Down        previous/next row",
+    "  Left/Right     previous/next column",
+    "  t              toggle column types in sidebar",
+    "  :              enter command mode",
+    "",
+    "Mouse",
+    "  click cell     select row and column",
+    "  click header   select column",
+    "  drag |         resize column to the left",
+    "  drag <>        resize column sidebar",
+    "  wheel table    scroll rows",
+    "  wheel sidebar  scroll column list",
+    "",
+    "Command mode (press :, type command, Enter)",
+    "  :?             show this help",
+    "  :help          show this help",
+    "  :q             quit",
+    "  :quit          quit",
+    "  :close         close help panel",
+    "  Esc            cancel command / close help",
+    "",
+    "Press Esc or q to close this panel",
+};
 
 const ColumnKind = enum {
     str,
@@ -123,6 +153,69 @@ fn updateColumnWidthAtMouse(col: usize, mx: i32, widths: []i32, col_offset: usiz
     widths[col] = std.math.clamp(new_w, min_col_width, max_col_width);
 }
 
+fn trimCommand(cmd: []const u8) []const u8 {
+    var start: usize = 0;
+    while (start < cmd.len and cmd[start] == ' ') : (start += 1) {}
+    var end = cmd.len;
+    while (end > start and cmd[end - 1] == ' ') end -= 1;
+    return cmd[start..end];
+}
+
+fn executeCommand(cmd: []const u8, running: *bool, help_panel: *bool) void {
+    const trimmed = trimCommand(cmd);
+    if (std.mem.eql(u8, trimmed, "?") or std.mem.eql(u8, trimmed, "help")) {
+        help_panel.* = true;
+        return;
+    }
+    if (std.mem.eql(u8, trimmed, "q") or std.mem.eql(u8, trimmed, "quit")) {
+        running.* = false;
+        return;
+    }
+    if (std.mem.eql(u8, trimmed, "close")) {
+        help_panel.* = false;
+    }
+}
+
+fn appendCommandChar(buf: *std.ArrayList(u8), alloc: std.mem.Allocator, ch: u8) void {
+    if (buf.items.len >= max_command_len) return;
+    buf.append(alloc, ch) catch {};
+}
+
+fn commandKeyChar(k: vaxis.Key) ?u8 {
+    if (k.mods.ctrl or k.mods.alt) return null;
+    const cp = k.codepoint;
+    if (cp >= 32 and cp <= 126 and cp != ':' and cp != vaxis.Key.enter) {
+        return @intCast(cp);
+    }
+    return null;
+}
+
+fn handleCommandKey(
+    k: vaxis.Key,
+    cmd_buf: *std.ArrayList(u8),
+    alloc: std.mem.Allocator,
+    command_active: *bool,
+    help_panel: *bool,
+    running: *bool,
+) void {
+    if (k.matches(vaxis.Key.escape, .{})) {
+        command_active.* = false;
+        cmd_buf.clearRetainingCapacity();
+        return;
+    }
+    if (k.matches(vaxis.Key.enter, .{}) or k.matches(vaxis.Key.kp_enter, .{})) {
+        executeCommand(cmd_buf.items, running, help_panel);
+        command_active.* = false;
+        cmd_buf.clearRetainingCapacity();
+        return;
+    }
+    if (k.matches(vaxis.Key.backspace, .{})) {
+        _ = cmd_buf.pop();
+        return;
+    }
+    if (commandKeyChar(k)) |ch| appendCommandChar(cmd_buf, alloc, ch);
+}
+
 pub fn run(io: std.Io, env_map: *std.process.Environ.Map, file_path: ?[]const u8) !void {
     var preview = if (file_path) |p|
         try pv.loadPreviewHeaderAndInitialRows(io, std.heap.page_allocator, p, 128)
@@ -169,24 +262,101 @@ pub fn run(io: std.Io, env_map: *std.process.Environ.Map, file_path: ?[]const u8
     var show_column_types = false;
     var column_widths: std.ArrayList(i32) = .empty;
     defer column_widths.deinit(std.heap.page_allocator);
+    var cmd_buf: std.ArrayList(u8) = .empty;
+    defer cmd_buf.deinit(std.heap.page_allocator);
+    var command_active = false;
+    var help_panel = false;
+    var prev_help_panel = false;
     var running = true;
 
+    const renderFrame = struct {
+        fn render(
+            vx_ptr: *vaxis.Vaxis,
+            preview_ptr: *pv.PreviewData,
+            path: ?[]const u8,
+            sel_row: usize,
+            sel_col: usize,
+            row_off: usize,
+            col_off: usize,
+            widths: []const i32,
+            side_w: i32,
+            side_col_off: usize,
+            res_side: bool,
+            res_col: ?usize,
+            show_types: bool,
+            cmd_active: bool,
+            cmd: []const u8,
+            help: bool,
+            tty_wr: *std.Io.Writer,
+        ) !void {
+            var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+            defer arena.deinit();
+            draw(
+                vx_ptr,
+                preview_ptr,
+                path,
+                sel_row,
+                sel_col,
+                row_off,
+                col_off,
+                widths,
+                side_w,
+                side_col_off,
+                res_side,
+                res_col,
+                show_types,
+                cmd_active,
+                cmd,
+                help,
+                arena.allocator(),
+            );
+            try vx_ptr.render(tty_wr);
+        }
+    }.render;
+
+    lock(&preview.mutex);
+    const header_count0 = preview.headers.len;
+    unlock(&preview.mutex);
+    ensureColumnWidths(&column_widths, std.heap.page_allocator, header_count0) catch return;
+    try renderFrame(
+        &vx,
+        &preview,
+        file_path,
+        selected_row,
+        selected_col,
+        row_offset,
+        col_offset,
+        column_widths.items,
+        sidebar_width,
+        sidebar_col_offset,
+        resizing_sidebar,
+        resizing_col,
+        show_column_types,
+        command_active,
+        cmd_buf.items,
+        help_panel,
+        tty.writer(),
+    );
+
     while (running) {
-        lock(&preview.mutex);
-        const header_count = preview.headers.len;
-        unlock(&preview.mutex);
-        ensureColumnWidths(&column_widths, std.heap.page_allocator, header_count) catch break;
-
-        var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
-        defer arena.deinit();
-        draw(&vx, &preview, file_path, selected_row, selected_col, row_offset, col_offset, column_widths.items, sidebar_width, sidebar_col_offset, resizing_sidebar, resizing_col, show_column_types, arena.allocator());
-        try vx.render(tty.writer());
-
         const ev = try loop.nextEvent();
         switch (ev) {
             .winsize => |ws| try vx.resize(std.heap.page_allocator, tty.writer(), ws),
             .key_press => |k| {
+                if (help_panel) {
+                    if (k.matches('q', .{}) or k.matches(vaxis.Key.escape, .{})) help_panel = false;
+                    continue;
+                }
+                if (command_active) {
+                    handleCommandKey(k, &cmd_buf, std.heap.page_allocator, &command_active, &help_panel, &running);
+                    continue;
+                }
                 if (k.matches('q', .{})) running = false;
+                if (k.matches(':', .{})) {
+                    command_active = true;
+                    cmd_buf.clearRetainingCapacity();
+                    continue;
+                }
                 if (k.matches(vaxis.Key.up, .{})) selected_row = selected_row -| 1;
                 if (k.matches(vaxis.Key.down, .{})) selected_row += 1;
                 if (k.matches(vaxis.Key.left, .{})) selected_col = selected_col -| 1;
@@ -194,6 +364,7 @@ pub fn run(io: std.Io, env_map: *std.process.Environ.Map, file_path: ?[]const u8
                 if (k.matches('t', .{})) show_column_types = !show_column_types;
             },
             .mouse => |m| {
+                if (help_panel or command_active) continue;
                 const screen_w: i32 = @intCast(vx.screen.width);
                 const sidebar_x = screen_w - sidebar_width;
                 const splitter_x = sidebar_x - 1;
@@ -258,10 +429,59 @@ pub fn run(io: std.Io, env_map: *std.process.Environ.Map, file_path: ?[]const u8
         const max_sidebar_off = if (preview.headers.len > 0) preview.headers.len - 1 else 0;
         unlock(&preview.mutex);
         if (sidebar_col_offset > max_sidebar_off) sidebar_col_offset = max_sidebar_off;
+
+        lock(&preview.mutex);
+        const header_count = preview.headers.len;
+        unlock(&preview.mutex);
+        ensureColumnWidths(&column_widths, std.heap.page_allocator, header_count) catch break;
+
+        if (help_panel != prev_help_panel) {
+            vx.queueRefresh();
+            prev_help_panel = help_panel;
+        }
+        if (help_panel) vx.queueRefresh();
+
+        try renderFrame(
+            &vx,
+            &preview,
+            file_path,
+            selected_row,
+            selected_col,
+            row_offset,
+            col_offset,
+            column_widths.items,
+            sidebar_width,
+            sidebar_col_offset,
+            resizing_sidebar,
+            resizing_col,
+            show_column_types,
+            command_active,
+            cmd_buf.items,
+            help_panel,
+            tty.writer(),
+        );
     }
 }
 
-fn draw(vx: *vaxis.Vaxis, preview: *pv.PreviewData, file_path: ?[]const u8, selected_row: usize, selected_col: usize, row_offset: usize, col_offset: usize, column_widths: []const i32, sidebar_width: i32, sidebar_col_offset: usize, resizing_sidebar: bool, resizing_col: ?usize, show_column_types: bool, alloc: std.mem.Allocator) void {
+fn draw(
+    vx: *vaxis.Vaxis,
+    preview: *pv.PreviewData,
+    file_path: ?[]const u8,
+    selected_row: usize,
+    selected_col: usize,
+    row_offset: usize,
+    col_offset: usize,
+    column_widths: []const i32,
+    sidebar_width: i32,
+    sidebar_col_offset: usize,
+    resizing_sidebar: bool,
+    resizing_col: ?usize,
+    show_column_types: bool,
+    command_active: bool,
+    cmd_text: []const u8,
+    help_panel: bool,
+    alloc: std.mem.Allocator,
+) void {
     lock(&preview.mutex);
     defer unlock(&preview.mutex);
 
@@ -269,23 +489,73 @@ fn draw(vx: *vaxis.Vaxis, preview: *pv.PreviewData, file_path: ?[]const u8, sele
     win.clear();
     win.hideCursor();
 
+    const sh: i32 = @intCast(vx.screen.height);
+    const sw: i32 = @intCast(vx.screen.width);
+
+    if (help_panel) {
+        drawHelpPanel(win, sh, sw);
+        return;
+    }
+
     print(win, 0, 0, "csv-utils TUI (libvaxis)", .{});
     var buf: [256]u8 = undefined;
-    const line = std.fmt.bufPrint(&buf, "file={s} rows={d} cell=[r{d},c{d}]", .{
-        file_path orelse "<none>",
-        preview.rows.items.len,
-        selected_row + 1,
-        selected_col + 1,
-    }) catch "";
+    const line = if (command_active)
+        "type command, Enter=run, Esc=cancel  (:help)"
+    else
+        std.fmt.bufPrint(
+            &buf,
+            "file={s} rows={d} cell=[r{d},c{d}]  (: for commands)",
+            .{
+                file_path orelse "<none>",
+                preview.rows.items.len,
+                selected_row + 1,
+                selected_col + 1,
+            },
+        ) catch "";
     print(win, 0, 1, line, .{});
-    hline(win, 2, '-', @intCast(vx.screen.width));
+    hline(win, 2, '-', sw);
 
     drawHeaders(win, preview.headers, selected_col, col_offset, column_widths, sidebar_width, resizing_col, alloc);
     drawRows(win, preview, selected_row, selected_col, row_offset, col_offset, column_widths, sidebar_width, resizing_col, alloc);
     drawSidebar(win, preview.headers, selected_col, sidebar_col_offset, sidebar_width, resizing_sidebar, show_column_types, alloc);
-    const sh: i32 = @intCast(vx.screen.height);
-    const sw: i32 = @intCast(vx.screen.width);
-    hline(win, sh - 1, '-', sw);
+    const footer_y = if (command_active) sh - 2 else sh - 1;
+    hline(win, footer_y, '-', sw);
+
+    if (command_active) drawCommandLine(win, cmd_text, sh, sw, alloc);
+}
+
+fn drawCommandLine(win: vaxis.Window, cmd_text: []const u8, sh: i32, sw: i32, alloc: std.mem.Allocator) void {
+    const y = sh - 1;
+    const prefix = ":";
+    print(win, 0, y, prefix, .{ .bold = true });
+    const prefix_w: i32 = @intCast(prefix.len);
+    const max_w = @max(sw - prefix_w, 0);
+    if (max_w <= 0) return;
+    const buf = alloc.alloc(u8, @intCast(max_w)) catch return;
+    @memset(buf, ' ');
+    const take = @min(cmd_text.len, buf.len);
+    @memcpy(buf[0..take], cmd_text[0..take]);
+    print(win, prefix_w, y, buf, .{});
+    const cursor_col: u16 = @intCast(@min(prefix_w + @as(i32, @intCast(take)), sw - 1));
+    const cursor_row: u16 = @intCast(@max(y, 0));
+    win.showCursor(cursor_col, cursor_row);
+}
+
+fn drawHelpPanel(win: vaxis.Window, sh: i32, sw: i32) void {
+    const fill_style: vaxis.Style = .{ .reverse = true };
+    const text_style: vaxis.Style = .{ .reverse = true, .bold = true };
+
+    var y: i32 = 0;
+    while (y < sh) : (y += 1) {
+        hlineStyled(win, y, ' ', sw, fill_style);
+    }
+
+    var i: usize = 0;
+    while (i < help_lines.len) : (i += 1) {
+        const row = @as(i32, @intCast(i));
+        if (row >= sh) break;
+        print(win, 2, row, help_lines[i], text_style);
+    }
 }
 
 /// Draw the header row (fixed top row) of the table.
@@ -461,10 +731,18 @@ fn print(win: vaxis.Window, x: i32, y: i32, text: []const u8, style: vaxis.Style
 }
 
 fn hline(win: vaxis.Window, y: i32, ch: u8, w: i32) void {
-    var i: i32 = 0;
-    while (i < w) : (i += 1) {
-        var b: [1]u8 = .{ch};
-        print(win, i, y, b[0..], .{});
+    hlineStyled(win, y, ch, w, .{});
+}
+
+fn hlineStyled(win: vaxis.Window, y: i32, ch: u8, w: i32, style: vaxis.Style) void {
+    if (w <= 0) return;
+    var buf: [512]u8 = undefined;
+    var x: i32 = 0;
+    while (x < w) {
+        const chunk: i32 = @intCast(@min(buf.len, @as(usize, @intCast(w - x))));
+        @memset(buf[0..@intCast(chunk)], ch);
+        print(win, x, y, buf[0..@intCast(chunk)], style);
+        x += chunk;
     }
 }
 

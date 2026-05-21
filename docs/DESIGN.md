@@ -2,7 +2,7 @@
 
 **Living document.** Update this file whenever you change user-visible behavior, CLI/TUI contracts, data loading, or project layout. It should reflect what the code does today, not future plans.
 
-Last verified against: `main` (libvaxis TUI, Zig 0.16, per-column resize).
+Last verified against: `main` (libvaxis TUI, Zig 0.16, vim-style command mode, per-column resize).
 
 ---
 
@@ -144,6 +144,20 @@ Non-printable bytes in cells are shown as `.`; overflow uses `~` in the last col
 | `↑` / `↓` | Previous / next row |
 | `←` / `→` | Previous / next **column** (moves selection and table horizontal scroll) |
 | `t` | Toggle type labels in sidebar (`Columns (t)` + `[type]` suffix) |
+| `:` | Enter **command mode** (prompt on bottom line) |
+
+### Command mode (vim-style)
+
+Press `:` to open the command line at the bottom (`:your_command`). **Enter** runs the command; **Esc** cancels.
+
+| Command | Action |
+|---------|--------|
+| `?` | Open help panel (shortcuts + commands) |
+| `help` | Same as `?` |
+| `q` / `quit` | Quit TUI |
+| `close` | Close help panel (when open) |
+
+While the help panel is open, the table is not drawn; every row is repainted, and a full terminal refresh is queued each frame so incremental render does not leave the old table visible. Input is handled before the next draw so opening `:help` never paints one frame of table underneath. **Esc** or `q` closes help. Mouse and normal navigation are disabled during command entry and help view.
 
 ### Mouse
 
