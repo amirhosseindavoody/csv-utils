@@ -1,20 +1,18 @@
 # Test Data Generation
 
-This project includes a Python/Pandas generator for synthetic CSV datasets used to test parser behavior and performance.
+Python/Pandas generator for synthetic CSV datasets (`scripts/generate_test_data.py`).  
+See **[DESIGN.md](DESIGN.md)** for how column names map to TUI types and alignment.
 
 ## Generated Datasets
 
-The script generates these CSV shapes:
+Configured in `SPECS` inside the script:
 
-- `1000x100`
-- `10000x1000`
-- `1e6x1000`
+| Key | Output file |
+|-----|-------------|
+| `1000x100` | `test-data/generated/test_1000x100.csv` |
+| `10000x1000` | `test-data/generated/test_10000x1000.csv` |
 
-Output files are written to `test-data/generated/` by default:
-
-- `test-data/generated/test_1000x100.csv`
-- `test-data/generated/test_10000x1000.csv`
-- `test-data/generated/test_1000000x1000.csv` (see note below)
+Default output directory: `test-data/generated/`.
 
 ## Column Types Included
 
@@ -27,6 +25,8 @@ Each dataset contains a mix of:
 - mixed-format float-like columns (some decimal, some scientific as text)
 - integer columns
 - date columns (`YYYY-MM-DD`)
+
+The **first seven columns** are always one of each type (`str_000`, `long_str_000`, `float_general_000`, …), then the rest follow the layout ratios in `build_layout()`.
 
 ## Run via Pixi
 
@@ -54,11 +54,10 @@ Change output directory and chunk size:
 pixi run gen-test-data --output-dir test-data/custom --chunk-rows 5000
 ```
 
-## Notes on Large Files
+## Implementation notes
 
-- The `1e6x1000` file can be extremely large and may require significant disk space and generation time.
-- The generator writes in chunks to avoid loading all rows into memory at once.
-- Use `--datasets` to generate smaller files first if you are iterating quickly.
+- Rows are built as column dicts and assembled with `pd.DataFrame(columns)` per chunk (avoids pandas fragmentation warnings).
+- Large files are written in chunks (`--chunk-rows`, default 20_000).
 
 ## Script Location
 

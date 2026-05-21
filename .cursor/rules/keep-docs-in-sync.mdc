@@ -1,0 +1,57 @@
+---
+description: Keep README.md and docs/DESIGN.md aligned with code behavior
+alwaysApply: true
+---
+
+# Keep documentation in sync with code
+
+When you change **user-visible behavior**, **CLI/TUI contracts**, **data loading**, **pixi tasks**, or **project layout**, update documentation in the **same change** (do not defer).
+
+## Required files
+
+| File | Role |
+|------|------|
+| `docs/DESIGN.md` | **Source of truth** for architecture and behavior. Update first. |
+| `README.md` | Quick start, command examples, pixi tasks. Mirror DESIGN; keep concise. |
+
+Also update `docs/test-data-generation.md` if `scripts/generate_test_data.py` or dataset specs change.
+
+## When to update
+
+Update docs if you touch any of:
+
+- `src/main.zig`, `src/cli/**`, `src/core/**`, `src/tui/**`
+- `build.zig`, `build.zig.zon`, `pixi.toml`
+- `scripts/generate_test_data.py`, `scripts/capture_tui_snapshot.py`
+
+Skip doc updates only for pure refactors with **no** behavior, CLI, TUI, or task-name changes.
+
+## What to update in `docs/DESIGN.md`
+
+- CLI commands, flags, limits, filter syntax
+- TUI: layout, keys, mouse actions, scrolling, resize, column types, alignment
+- Preview/loading APIs and threading model
+- Module map if files are added/removed/renamed
+- Pixi tasks and binary names
+- Known limitations when constraints change
+- Bump the “Last verified against” line when you materially refresh the doc
+
+## What to update in `README.md`
+
+- New or renamed commands / pixi tasks
+- Changed defaults (paths, limits, dataset names)
+- Setup/prerequisites only if they changed
+- Keep the link to `docs/DESIGN.md` intact
+
+## Checklist before finishing
+
+- [ ] DESIGN.md describes the behavior **after** your change (not planned/future)
+- [ ] README examples still run as written
+- [ ] No stale references (e.g. ncurses, removed tasks, wrong dataset sizes)
+- [ ] TUI keyboard/mouse table matches `src/tui/app_vaxis.zig`
+
+## Style
+
+- Prefer editing existing sections over adding duplicate docs
+- Do not create new top-level doc files unless the user asks
+- Match the tone of current DESIGN.md: factual, present tense, tables for bindings

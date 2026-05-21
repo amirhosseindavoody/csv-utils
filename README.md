@@ -2,6 +2,8 @@
 
 High-performance CSV utility in Zig with CLI and TUI modes.
 
+Design and behavior (kept in sync with the code): **[docs/DESIGN.md](docs/DESIGN.md)**.
+
 ## Prerequisites
 
 - [Pixi](https://pixi.sh/latest/)

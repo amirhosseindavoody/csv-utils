@@ -94,13 +94,31 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
+COLUMN_TYPE_COUNT = 7
+
+
 def build_layout(total_cols: int) -> ColumnLayout:
-    long_str_cols = max(2, int(total_cols * 0.03))
-    float_general_cols = max(4, int(total_cols * 0.15))
-    float_scientific_cols = max(4, int(total_cols * 0.10))
-    float_mixed_cols = max(4, int(total_cols * 0.05))
-    int_cols = max(8, int(total_cols * 0.25))
-    date_cols = max(4, int(total_cols * 0.10))
+    if total_cols < COLUMN_TYPE_COUNT:
+        counts = [0] * COLUMN_TYPE_COUNT
+        for i in range(total_cols):
+            counts[i] = 1
+        return ColumnLayout(
+            str_cols=counts[0],
+            long_str_cols=counts[1],
+            float_general_cols=counts[2],
+            float_scientific_cols=counts[3],
+            float_mixed_cols=counts[4],
+            int_cols=counts[5],
+            date_cols=counts[6],
+        )
+
+    remaining = total_cols - COLUMN_TYPE_COUNT
+    long_str_cols = 1 + max(1, int(remaining * 0.03))
+    float_general_cols = 1 + max(3, int(remaining * 0.15))
+    float_scientific_cols = 1 + max(3, int(remaining * 0.10))
+    float_mixed_cols = 1 + max(3, int(remaining * 0.05))
+    int_cols = 1 + max(7, int(remaining * 0.25))
+    date_cols = 1 + max(3, int(remaining * 0.10))
 
     used = (
         long_str_cols
@@ -136,20 +154,59 @@ def random_tokens(rng: np.random.Generator, rows: int, width: int) -> np.ndarray
 
 
 def iter_columns(layout: ColumnLayout) -> Iterable[tuple[str, str]]:
-    for i in range(layout.str_cols):
-        yield ("str", f"str_{i:03d}")
-    for i in range(layout.long_str_cols):
-        yield ("long_str", f"long_str_{i:03d}")
-    for i in range(layout.float_general_cols):
-        yield ("float_general", f"float_general_{i:03d}")
-    for i in range(layout.float_scientific_cols):
-        yield ("float_scientific", f"float_scientific_{i:03d}")
-    for i in range(layout.float_mixed_cols):
-        yield ("float_mixed", f"float_mixed_{i:03d}")
-    for i in range(layout.int_cols):
-        yield ("int", f"int_{i:03d}")
-    for i in range(layout.date_cols):
-        yield ("date", f"date_{i:03d}")
+    """Yield columns with one representative of each type first, then the rest."""
+    groups: list[tuple[str, int, str]] = [
+        ("str", layout.str_cols, "str"),
+        ("long_str", layout.long_str_cols, "long_str"),
+        ("float_general", layout.float_general_cols, "float_general"),
+        ("float_scientific", layout.float_scientific_cols, "float_scientific"),
+        ("float_mixed", layout.float_mixed_cols, "float_mixed"),
+        ("int", layout.int_cols, "int"),
+        ("date", layout.date_cols, "date"),
+    ]
+
+    for kind, count, prefix in groups:
+        if count > 0:
+            yield (kind, f"{prefix}_000")
+
+    for kind, count, prefix in groups:
+        for i in range(1, count):
+            yield (kind, f"{prefix}_{i:03d}")
+
+
+def generate_column(
+    rng: np.random.Generator,
+    kind: str,
+    rows: int,
+    start_row: int,
+) -> np.ndarray:
+    if kind == "str":
+        return random_tokens(rng, rows, 12)
+    if kind == "long_str":
+        prefix = np.array([f"r{start_row + i:010d}_" for i in range(rows)], dtype=object)
+        suffix = random_tokens(rng, rows, 189)
+        return np.char.add(prefix.astype(str), suffix.astype(str))
+    if kind == "float_general":
+        return rng.normal(loc=0.0, scale=1000.0, size=rows)
+    if kind == "float_scientific":
+        return rng.normal(loc=0.0, scale=1.0, size=rows) * np.power(
+            10.0, rng.integers(-9, 9, size=rows)
+        )
+    if kind == "float_mixed":
+        vals = rng.normal(loc=10.0, scale=250.0, size=rows)
+        scientific_mask = rng.random(rows) < 0.5
+        out = np.empty(rows, dtype=object)
+        out[scientific_mask] = [f"{v:.8e}" for v in vals[scientific_mask]]
+        out[~scientific_mask] = [f"{v:.6f}" for v in vals[~scientific_mask]]
+        return out
+    if kind == "int":
+        return rng.integers(-(2**31), 2**31 - 1, size=rows, dtype=np.int64)
+    if kind == "date":
+        day_offsets = rng.integers(0, 3650, size=rows, dtype=np.int32)
+        base = np.datetime64("2015-01-01")
+        timestamps = base + day_offsets.astype("timedelta64[D]")
+        return pd.Series(timestamps).dt.strftime("%Y-%m-%d").to_numpy()
+    raise ValueError(f"Unknown column kind: {kind}")
 
 
 def generate_chunk(
@@ -158,41 +215,10 @@ def generate_chunk(
     start_row: int,
     rows: int,
 ) -> pd.DataFrame:
-    df = pd.DataFrame(index=np.arange(start_row, start_row + rows, dtype=np.int64))
-
+    columns: dict[str, np.ndarray] = {}
     for kind, col in iter_columns(layout):
-        if kind == "str":
-            df[col] = random_tokens(rng, rows, 12)
-        elif kind == "long_str":
-            # 200-char strings with deterministic prefix, random suffix.
-            prefix = np.array([f"r{start_row + i:010d}_" for i in range(rows)], dtype=object)
-            suffix = random_tokens(rng, rows, 189)
-            df[col] = np.char.add(prefix.astype(str), suffix.astype(str))
-        elif kind == "float_general":
-            df[col] = rng.normal(loc=0.0, scale=1000.0, size=rows)
-        elif kind == "float_scientific":
-            vals = rng.normal(loc=0.0, scale=1.0, size=rows) * np.power(
-                10.0, rng.integers(-9, 9, size=rows)
-            )
-            df[col] = vals
-        elif kind == "float_mixed":
-            vals = rng.normal(loc=10.0, scale=250.0, size=rows)
-            scientific_mask = rng.random(rows) < 0.5
-            out = np.empty(rows, dtype=object)
-            out[scientific_mask] = [f"{v:.8e}" for v in vals[scientific_mask]]
-            out[~scientific_mask] = [f"{v:.6f}" for v in vals[~scientific_mask]]
-            df[col] = out
-        elif kind == "int":
-            df[col] = rng.integers(-(2**31), 2**31 - 1, size=rows, dtype=np.int64)
-        elif kind == "date":
-            day_offsets = rng.integers(0, 3650, size=rows, dtype=np.int32)
-            base = np.datetime64("2015-01-01")
-            timestamps = base + day_offsets.astype("timedelta64[D]")
-            df[col] = pd.to_datetime(timestamps).strftime("%Y-%m-%d")
-        else:
-            raise ValueError(f"Unknown column kind: {kind}")
-
-    return df
+        columns[col] = generate_column(rng, kind, rows, start_row)
+    return pd.DataFrame(columns)
 
 
 def generate_dataset(
