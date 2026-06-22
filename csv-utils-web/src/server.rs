@@ -96,6 +96,11 @@ fn parse_action(name: &str, value: &serde_json::Value) -> Option<ViewAction> {
         "close_help" => Some(ViewAction::CloseHelp),
         "go_home" => Some(ViewAction::GoHome),
         "go_end" => Some(ViewAction::GoEnd),
+        "set_column_width" => {
+            let col = value.get("col")?.as_u64()? as usize;
+            let width = value.get("width")?.as_u64()? as u16;
+            Some(ViewAction::SetColumnWidth { col, width })
+        }
         _ => None,
     }
 }

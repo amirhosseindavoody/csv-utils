@@ -30,10 +30,12 @@ pub enum ViewAction {
     CloseHelp,
     GoHome,
     GoEnd,
+    SetColumnWidth { col: usize, width: u16 },
 }
 
 impl AppModel {
     pub fn tick(&mut self, layout: ViewLayout) {
+        self.ensure_column_widths();
         self.clamp_selection(layout.viewport_rows.max(1), layout.table_width);
         self.clamp_column_list_offset(layout.column_list_height);
     }
@@ -98,6 +100,9 @@ impl AppModel {
             ViewAction::GoHome => self.view.selected_row = 0,
             ViewAction::GoEnd => {
                 self.view.selected_row = self.preview.row_count().saturating_sub(1);
+            }
+            ViewAction::SetColumnWidth { col, width } => {
+                self.set_column_width(col, width);
             }
         }
         self.tick(layout);

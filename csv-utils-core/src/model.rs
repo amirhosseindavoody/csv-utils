@@ -3,6 +3,8 @@ use crate::schema;
 use std::path::PathBuf;
 
 pub const CELL_DISPLAY_WIDTH: usize = 18;
+pub const MIN_COLUMN_WIDTH: usize = 4;
+pub const MAX_COLUMN_WIDTH: usize = 64;
 
 #[derive(Debug, Clone)]
 pub struct TableViewState {
@@ -12,6 +14,8 @@ pub struct TableViewState {
     pub col_offset: usize,
     /// Independent scroll position for the column sidebar (not tied to selection).
     pub column_list_offset: usize,
+    /// Display width in characters, indexed by column.
+    pub column_widths: Vec<u16>,
     pub show_column_types: bool,
     pub show_help: bool,
 }
@@ -24,6 +28,7 @@ impl Default for TableViewState {
             row_offset: 0,
             col_offset: 0,
             column_list_offset: 0,
+            column_widths: Vec::new(),
             show_column_types: false,
             show_help: false,
         }
@@ -108,9 +113,35 @@ impl AppModel {
             .unwrap_or("<no file>")
     }
 
+    pub fn ensure_column_widths(&mut self) {
+        let n = self.preview.headers().len();
+        if self.view.column_widths.len() != n {
+            self.view.column_widths = vec![CELL_DISPLAY_WIDTH as u16; n];
+        }
+    }
+
+    pub fn column_width_chars(&self, col: usize) -> usize {
+        self.view
+            .column_widths
+            .get(col)
+            .copied()
+            .unwrap_or(CELL_DISPLAY_WIDTH as u16) as usize
+    }
+
+    pub fn set_column_width(&mut self, col: usize, width: u16) {
+        self.ensure_column_widths();
+        if col < self.view.column_widths.len() {
+            self.view.column_widths[col] =
+                width.clamp(MIN_COLUMN_WIDTH as u16, MAX_COLUMN_WIDTH as u16);
+        }
+    }
+
+    fn column_slot_width(&self, col: usize) -> u16 {
+        self.column_width_chars(col) as u16 + 1
+    }
+
     pub fn max_visible_columns(&self, table_width: u16) -> usize {
-        let col_slot = (CELL_DISPLAY_WIDTH + 1) as u16;
-        (table_width / col_slot.max(1)).max(1) as usize
+        self.visible_column_range(table_width).len().max(1)
     }
 
     pub fn clamp_selection(&mut self, viewport_rows: usize, table_width: u16) {
@@ -156,9 +187,23 @@ impl AppModel {
 
     pub fn visible_column_range(&self, table_width: u16) -> std::ops::Range<usize> {
         let headers_len = self.preview.headers().len();
-        let max_visible = self.max_visible_columns(table_width);
-        let start = self.view.col_offset;
-        let end = (start + max_visible).min(headers_len);
+        if headers_len == 0 {
+            return 0..0;
+        }
+        let start = self.view.col_offset.min(headers_len.saturating_sub(1));
+        let mut used = 0u16;
+        let mut end = start;
+        while end < headers_len {
+            let slot = self.column_slot_width(end);
+            if used > 0 && used.saturating_add(slot) > table_width {
+                break;
+            }
+            used = used.saturating_add(slot);
+            end += 1;
+        }
+        if end == start {
+            end = (start + 1).min(headers_len);
+        }
         start..end
     }
 
@@ -185,7 +230,7 @@ impl AppModel {
                 Some(VisibleColumn {
                     index: col_idx,
                     name,
-                    width: CELL_DISPLAY_WIDTH as u16,
+                    width: self.column_width_chars(col_idx) as u16,
                     kind,
                     align_right: is_right_aligned(kind),
                 })

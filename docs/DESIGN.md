@@ -103,7 +103,7 @@ Implementation: `csv-utils-core/src/engine.rs`.
 ┌─ csv-utils │ file.csv │ N rows [loading…] ─────────────────────┐
 │ ┌─ Data (rows A–B) ─────────────┐ ┌─ Columns (X–Y/Z) ────────┐ │
 │ │ header + visible rows         │ │ idx: name [type]         │ │
-│ │ 18-char cells, col scroll     │ │ independent list scroll  │ │
+│ │ resizable cells, col scroll   │ │ independent list scroll  │ │
 │ └───────────────────────────────┘ └──────────────────────────┘ │
 │ q quit  ↑↓ rows  ←→ cols  t types  ? help                       │
 └─────────────────────────────────────────────────────────────────┘
@@ -126,10 +126,11 @@ Implementation: `csv-utils-core/src/engine.rs`.
 | `row_offset` | First body row in table viewport. |
 | `col_offset` | First column in table viewport. |
 | `column_list_offset` | First column shown in sidebar (independent of selection). |
+| `column_widths` | Per-column cell width in characters (default 18, range 4–64). |
 | `show_column_types` | Sidebar `[type]` suffix when true. |
 | `show_help` | Help overlay visible. |
 
-`CELL_DISPLAY_WIDTH = 18`; horizontal capacity ≈ `table_width / 19` columns.
+Default column width is **18** characters (`CELL_DISPLAY_WIDTH`); each column can be resized independently (4–64). Horizontal capacity depends on the sum of visible column widths plus spacing.
 
 Each frame: `clamp_selection(viewport_rows, table_width)` and `clamp_column_list_offset(visible_height)`.
 
@@ -183,13 +184,14 @@ Non-printable bytes → `.`; truncation → `~` (`format_cell`).
 
 | Target | Action |
 |--------|--------|
-| Table header | Select column only |
+| Table header border | Drag to resize column width (4–64 chars) |
+| Table header | Select column only (click, not on border) |
 | Table body cell | Select row + column |
 | Table wheel | Move `selected_row` ±3 |
 | Column list click | Select column |
 | Column list wheel | Scroll sidebar ±3 via `column_list_offset` |
 
-Table hit-testing: `hit_test_table` in `app.rs` (block inner rect, 18+1 char columns).
+Table hit-testing: `hit_test_table` / `hit_test_column_resize` in `app.rs` (variable-width columns + 1-char spacing).
 
 ### Column list scrolling
 
@@ -222,7 +224,7 @@ Opens the same `AppModel` as the TUI. Serves embedded HTML at `/` and a JSON API
 | `/api/state` | GET | Current `ClientView` JSON. |
 | `/api/action` | POST | Apply a `ViewAction` (`{"action":"row_delta","value":-1}`, etc.). |
 
-The page polls `/api/state` while the background scan runs. Keyboard bindings mirror the TUI (`↑↓←→`, `PgUp`/`PgDn`, `Home`/`End`, `t`, `?`, `Esc`). Mouse: click cells/columns; wheel scrolls rows or column list.
+The page polls `/api/state` while the background scan runs. Keyboard bindings mirror the TUI (`↑↓←→`, `PgUp`/`PgDn`, `Home`/`End`, `t`, `?`, `Esc`). Mouse: click cells/columns; drag column header right edge to resize (4–64 chars); wheel scrolls rows or column list.
 
 **Theme:** follows the OS light/dark preference by default (`prefers-color-scheme`). Header **Theme** button cycles **System → Light → Dark**; choice is stored in `localStorage` (`csv-utils-theme`) and overrides system until set back to System.
 
@@ -342,7 +344,7 @@ docs/
 - TUI holds all body lines in memory as raw strings (not suitable for multi-GB files without paging).
 - Column types are name-prefix heuristics, not value inference.
 - CLI commands re-open files; no shared cache with TUI.
-- Fixed 18-char table columns; no column/sidebar resize in TUI.
+- Column widths reset when the TUI/web session restarts (not persisted).
 - Row navigation limited to loaded lines until background scan completes.
 - JSON CLI output does not escape embedded quotes in values.
 

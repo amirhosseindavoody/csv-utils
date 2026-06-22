@@ -5,7 +5,7 @@ use crossterm::terminal::{
 };
 use crossterm::ExecutableCommand;
 use csv_utils_core::column::{infer_column_kind, is_right_aligned};
-use csv_utils_core::model::{format_cell, AppModel, CELL_DISPLAY_WIDTH};
+use csv_utils_core::model::{format_cell, AppModel, MAX_COLUMN_WIDTH, MIN_COLUMN_WIDTH};
 use csv_utils_core::schema;
 use ratatui::backend::CrosstermBackend;
 use ratatui::layout::{Constraint, Direction, Layout, Position, Rect};
@@ -29,13 +29,19 @@ csv-utils — keyboard shortcuts
   t          toggle column type labels
   ?          this help
 
-Mouse: click a cell to select row/column; wheel on table scrolls rows; wheel on column list scrolls columns.
+Mouse: click a cell to select row/column; drag column header borders to resize; wheel on table scrolls rows; wheel on column list scrolls columns.
 
 Press Esc or ? to close.";
 
 struct LayoutAreas {
     table: Rect,
     columns: Rect,
+}
+
+struct ColumnResize {
+    col: usize,
+    start_x: u16,
+    start_width: u16,
 }
 
 pub fn run(file: Option<&str>) -> Result<()> {
@@ -56,8 +62,10 @@ pub fn run(file: Option<&str>) -> Result<()> {
         columns: Rect::default(),
     };
     let mut last_redraw = Instant::now();
+    let mut column_resize: Option<ColumnResize> = None;
 
     while running {
+        model.ensure_column_widths();
         terminal.draw(|frame| {
             areas = draw(frame, &model);
         })?;
@@ -75,7 +83,15 @@ pub fn run(file: Option<&str>) -> Result<()> {
                 Event::Key(key) if key.kind == KeyEventKind::Press => {
                     running = handle_key(key, &mut model, column_list_height);
                 }
-                Event::Mouse(mouse) => handle_mouse(mouse, &mut model, &areas, column_list_height),
+                Event::Mouse(mouse) => {
+                    handle_mouse(
+                        mouse,
+                        &mut model,
+                        &areas,
+                        column_list_height,
+                        &mut column_resize,
+                    );
+                }
                 Event::Resize(_, _) => {}
                 _ => {}
             }
@@ -152,6 +168,7 @@ fn handle_mouse(
     model: &mut AppModel,
     areas: &LayoutAreas,
     column_list_height: usize,
+    column_resize: &mut Option<ColumnResize>,
 ) {
     if model.view.show_help {
         return;
@@ -160,6 +177,23 @@ fn handle_mouse(
     let row = mouse.row;
     let col = mouse.column;
     let pos = Position { x: col, y: row };
+
+    if let Some(resize) = column_resize.as_ref() {
+        match mouse.kind {
+            MouseEventKind::Drag(crossterm::event::MouseButton::Left)
+            | MouseEventKind::Moved => {
+                let delta = col as i32 - resize.start_x as i32;
+                let new_width = (resize.start_width as i32 + delta)
+                    .clamp(MIN_COLUMN_WIDTH as i32, MAX_COLUMN_WIDTH as i32) as u16;
+                model.set_column_width(resize.col, new_width);
+            }
+            MouseEventKind::Up(crossterm::event::MouseButton::Left) => {
+                *column_resize = None;
+            }
+            _ => {}
+        }
+        return;
+    }
 
     match mouse.kind {
         MouseEventKind::ScrollUp if areas.columns.contains(pos) => {
@@ -182,6 +216,14 @@ fn handle_mouse(
         MouseEventKind::Down(crossterm::event::MouseButton::Left)
             if areas.table.contains(pos) =>
         {
+            if let Some(resize_col) = hit_test_column_resize(col, row, areas.table, model) {
+                *column_resize = Some(ColumnResize {
+                    col: resize_col,
+                    start_x: col,
+                    start_width: model.column_width_chars(resize_col) as u16,
+                });
+                return;
+            }
             if let Some(hit) = hit_test_table(col, row, areas.table, model) {
                 model.view.selected_col = hit.col;
                 if let Some(row_idx) = hit.row {
@@ -213,6 +255,42 @@ struct TableHit {
     col: usize,
 }
 
+/// Map a screen coordinate to a column border for resize (header row only).
+fn hit_test_column_resize(
+    mouse_x: u16,
+    mouse_y: u16,
+    table_area: Rect,
+    model: &AppModel,
+) -> Option<usize> {
+    let inner = Block::default().borders(Borders::ALL).inner(table_area);
+    if mouse_y != inner.y {
+        return None;
+    }
+    if !inner.contains(Position {
+        x: mouse_x,
+        y: mouse_y,
+    }) {
+        return None;
+    }
+
+    let col_range = model.visible_column_range(table_area.width);
+    if col_range.is_empty() {
+        return None;
+    }
+
+    let rel_x = mouse_x.saturating_sub(inner.x);
+    let mut x = 0u16;
+    for col_idx in col_range {
+        let w = model.column_width_chars(col_idx) as u16;
+        let right = x.saturating_add(w);
+        if rel_x + 1 >= right && rel_x <= right.saturating_add(1) {
+            return Some(col_idx);
+        }
+        x = right.saturating_add(1);
+    }
+    None
+}
+
 /// Map a screen coordinate to a table row/column (must match `draw_table` layout).
 fn hit_test_table(mouse_x: u16, mouse_y: u16, table_area: Rect, model: &AppModel) -> Option<TableHit> {
     let inner = Block::default().borders(Borders::ALL).inner(table_area);
@@ -224,19 +302,23 @@ fn hit_test_table(mouse_x: u16, mouse_y: u16, table_area: Rect, model: &AppModel
     }
 
     let col_range = model.visible_column_range(table_area.width);
-    let visible_cols = col_range.len();
-    if visible_cols == 0 {
+    if col_range.is_empty() {
         return None;
     }
 
-    let col_slot = CELL_DISPLAY_WIDTH as u16 + 1;
     let rel_x = mouse_x.saturating_sub(inner.x);
-    let vis_col = (rel_x / col_slot) as usize;
-    if vis_col >= visible_cols {
-        return None;
+    let mut x = 0u16;
+    let mut col_idx = None;
+    for idx in col_range.clone() {
+        let w = model.column_width_chars(idx) as u16;
+        let right = x.saturating_add(w);
+        if rel_x < right {
+            col_idx = Some(idx);
+            break;
+        }
+        x = right.saturating_add(1);
     }
-    let col_idx = col_range.start + vis_col;
-
+    let col_idx = col_idx?;
     let rel_y = mouse_y.saturating_sub(inner.y);
     if rel_y == 0 {
         return Some(TableHit {
@@ -309,7 +391,7 @@ fn draw(frame: &mut ratatui::Frame, model: &AppModel) -> LayoutAreas {
     draw_table(frame, table_area, model);
     draw_column_list(frame, columns_area, model);
 
-    let hints = " q quit  ↑↓ rows  ←→ cols  t types  ? help ";
+    let hints = " q quit  ↑↓ rows  ←→ cols  drag header borders  t types  ? help ";
     frame.render_widget(
         Paragraph::new(hints).style(Style::default().fg(Color::DarkGray)),
         outer[2],
@@ -379,7 +461,11 @@ fn draw_table(frame: &mut ratatui::Frame, area: Rect, model: &AppModel) {
             .map(|(_i, col_idx)| {
                 let text = fields.get(col_idx).map(String::as_str).unwrap_or("");
                 let kind = infer_column_kind(&headers[col_idx]);
-                let display = format_cell(text, CELL_DISPLAY_WIDTH, is_right_aligned(kind));
+                let display = format_cell(
+                    text,
+                    model.column_width_chars(col_idx),
+                    is_right_aligned(kind),
+                );
                 let mut style = Style::default();
                 if row_selected {
                     style = style.bg(Color::DarkGray);
@@ -396,8 +482,9 @@ fn draw_table(frame: &mut ratatui::Frame, area: Rect, model: &AppModel) {
         rows.push(Row::new(cells).height(1));
     }
 
-    let widths: Vec<Constraint> = (0..visible_headers.len())
-        .map(|_| Constraint::Length(CELL_DISPLAY_WIDTH as u16))
+    let widths: Vec<Constraint> = col_range
+        .clone()
+        .map(|col_idx| Constraint::Length(model.column_width_chars(col_idx) as u16))
         .collect();
 
     let title = format!(

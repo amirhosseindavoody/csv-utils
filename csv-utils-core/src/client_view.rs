@@ -1,5 +1,5 @@
 use crate::column::{infer_column_kind, is_right_aligned};
-use crate::model::{format_cell, AppModel, CELL_DISPLAY_WIDTH};
+use crate::model::{format_cell, AppModel};
 use crate::schema;
 use crate::ViewLayout;
 use serde::Serialize;
@@ -33,6 +33,7 @@ pub struct ClientTable {
 pub struct ClientColumnHeader {
     pub index: usize,
     pub name: String,
+    pub width: u16,
     pub selected: bool,
 }
 
@@ -85,7 +86,11 @@ impl AppModel {
                     let text = fields.get(col_idx).map(String::as_str).unwrap_or("");
                     let kind = infer_column_kind(&headers[col_idx]);
                     ClientCell {
-                        text: format_cell(text, CELL_DISPLAY_WIDTH, is_right_aligned(kind)),
+                        text: format_cell(
+                            text,
+                            self.column_width_chars(col_idx),
+                            is_right_aligned(kind),
+                        ),
                         align_right: is_right_aligned(kind),
                         selected: row_selected && col_idx == self.view.selected_col,
                     }
@@ -103,6 +108,7 @@ impl AppModel {
             .map(|col_idx| ClientColumnHeader {
                 index: col_idx,
                 name: headers[col_idx].clone(),
+                width: self.column_width_chars(col_idx) as u16,
                 selected: col_idx == self.view.selected_col,
             })
             .collect();

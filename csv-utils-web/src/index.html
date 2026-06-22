@@ -127,10 +127,25 @@
       border: 1px solid var(--border);
       padding: 0.15rem 0.35rem;
       white-space: pre;
-      max-width: 18ch;
       overflow: hidden;
     }
-    th { background: var(--surface-muted); position: sticky; top: 0; z-index: 1; }
+    th {
+      background: var(--surface-muted);
+      position: sticky;
+      top: 0;
+      z-index: 1;
+    }
+    th .col-resize-handle {
+      position: absolute;
+      right: 0;
+      top: 0;
+      bottom: 0;
+      width: 6px;
+      cursor: col-resize;
+      touch-action: none;
+    }
+    th .col-resize-handle:hover { background: var(--accent); opacity: 0.35; }
+    body.col-resizing { cursor: col-resize; user-select: none; }
     th.selected { background: var(--header-select); color: white; }
     tr.row-selected td { background: var(--select-row); }
     td.selected { background: var(--select-cell); color: var(--select-cell-text); font-weight: 700; }
@@ -183,7 +198,7 @@
         <div id="sidebar" class="sidebar"></div>
       </section>
     </main>
-    <footer id="hints">arrows navigate · t types · ? help · theme button cycles system / light / dark</footer>
+    <footer id="hints">arrows navigate · drag column borders to resize · t types · ? help · theme</footer>
   </div>
   <div id="help" class="help-overlay"><div class="help-box" id="help-text"></div></div>
   <script>
@@ -197,16 +212,67 @@
   Esc        close help
 
 Click table cells or column list items to select.
-Click table cells or column list items to select.
 Mouse wheel on table/columns scrolls rows/columns.
+Drag column header right edge to resize (4–64 chars).
 
 Theme button (header): System · Light · Dark.`;
 
+    const MIN_COL_WIDTH = 4;
+    const MAX_COL_WIDTH = 64;
     const THEME_KEY = 'csv-utils-theme';
     const THEMES = ['system', 'light', 'dark'];
     const THEME_LABELS = { system: 'System', light: 'Light', dark: 'Dark' };
 
     let pollTimer = null;
+    let columnResize = null;
+    let pendingColumnWidths = {};
+    let skipPoll = false;
+
+    function columnWidth(col) {
+      if (pendingColumnWidths[col.index] != null) {
+        return pendingColumnWidths[col.index];
+      }
+      return col.width;
+    }
+
+    function widthStyle(w) {
+      return `width:${w}ch;min-width:${w}ch;max-width:${w}ch`;
+    }
+
+    function applyPendingColumnWidths() {
+      const table = document.querySelector('#table-wrap table');
+      if (!table) return;
+      for (const [col, width] of Object.entries(pendingColumnWidths)) {
+        const style = widthStyle(width);
+        table.querySelectorAll(`th[data-col="${col}"], td[data-col="${col}"]`).forEach(el => {
+          el.style.width = `${width}ch`;
+          el.style.minWidth = `${width}ch`;
+          el.style.maxWidth = `${width}ch`;
+        });
+      }
+    }
+
+    document.addEventListener('mousemove', (e) => {
+      if (!columnResize) return;
+      const charWidth = 8;
+      const delta = Math.round((e.clientX - columnResize.startX) / charWidth);
+      const width = Math.min(MAX_COL_WIDTH, Math.max(MIN_COL_WIDTH, columnResize.startWidth + delta));
+      pendingColumnWidths[columnResize.col] = width;
+      applyPendingColumnWidths();
+    });
+
+    document.addEventListener('mouseup', async () => {
+      if (!columnResize) return;
+      const col = columnResize.col;
+      const width = pendingColumnWidths[col];
+      columnResize = null;
+      document.body.classList.remove('col-resizing');
+      skipPoll = false;
+      if (width != null) {
+        await postAction('set_column_width', { col, width });
+        delete pendingColumnWidths[col];
+      }
+    });
 
     function applyTheme(mode) {
       const root = document.documentElement;
@@ -269,30 +335,50 @@ Theme button (header): System · Light · Dark.`;
       } else {
         let html = '<table><thead><tr>';
         for (const col of state.table.columns) {
-          html += `<th class="${col.selected ? 'selected' : ''}">${escapeHtml(col.name)}</th>`;
+          const w = columnWidth(col);
+          const cls = col.selected ? 'selected' : '';
+          html += `<th class="${cls}" data-col="${col.index}" style="${widthStyle(w)}">${escapeHtml(col.name)}<span class="col-resize-handle" data-col="${col.index}"></span></th>`;
         }
         html += '</tr></thead><tbody>';
         for (const row of state.table.rows) {
           html += `<tr class="${row.selected ? 'row-selected' : ''}">`;
           row.cells.forEach((cell, i) => {
             const col = state.table.columns[i];
-            const cls = [cell.align_right ? 'num' : '', cell.selected ? 'selected' : ''].join(' ').trim();
-            html += `<td class="${cls}" data-row="${row.index}" data-col="${col.index}">${escapeHtml(cell.text)}</td>`;
+            const w = columnWidth(col);
+            const cls = [cell.align_right ? 'num' : '', cell.selected ? 'selected' : ''].filter(Boolean).join(' ');
+            html += `<td class="${cls}" data-row="${row.index}" data-col="${col.index}" style="${widthStyle(w)}">${escapeHtml(cell.text)}</td>`;
           });
           html += '</tr>';
         }
         html += '</tbody></table>';
         wrap.innerHTML = html;
+        wrap.querySelectorAll('.col-resize-handle').forEach(handle => {
+          handle.addEventListener('mousedown', (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            const col = +handle.dataset.col;
+            const colMeta = state.table.columns.find(c => c.index === col);
+            columnResize = {
+              col,
+              startX: e.clientX,
+              startWidth: columnWidth(colMeta || { index: col, width: 18 }),
+            };
+            skipPoll = true;
+            document.body.classList.add('col-resizing');
+          });
+        });
         wrap.querySelectorAll('td[data-row]').forEach(td => {
           td.addEventListener('click', () => {
             postAction('select_cell', { row: +td.dataset.row, col: +td.dataset.col });
           });
         });
         wrap.querySelectorAll('th').forEach((th, i) => {
-          th.addEventListener('click', () => {
+          th.addEventListener('click', (e) => {
+            if (e.target.classList.contains('col-resize-handle')) return;
             postAction('select_column', state.table.columns[i].index);
           });
         });
+        applyPendingColumnWidths();
       }
 
       const sidebar = document.getElementById('sidebar');
@@ -316,6 +402,7 @@ Theme button (header): System · Light · Dark.`;
 
     function schedulePoll(state) {
       clearTimeout(pollTimer);
+      if (skipPoll) return;
       if (!state.scan_done) {
         pollTimer = setTimeout(refresh, 150);
       }
