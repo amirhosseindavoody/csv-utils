@@ -1,0 +1,357 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>csv-utils</title>
+  <style>
+    :root {
+      color-scheme: light dark;
+      --bg: #f6f8fa;
+      --panel: #ffffff;
+      --border: #d0d7de;
+      --text: #1f2328;
+      --muted: #656d76;
+      --accent: #0969da;
+      --select-row: #eaeef2;
+      --select-cell: #bf8700;
+      --select-cell-text: #1f2328;
+      --sidebar-select: #8250df;
+      --header-select: #0969da;
+      --surface-muted: #f6f8fa;
+      --hover: #eaeef2;
+      --overlay: rgba(31, 35, 40, 0.5);
+    }
+
+    @media (prefers-color-scheme: dark) {
+      :root:not([data-theme="light"]) {
+        color-scheme: dark;
+        --bg: #0f1419;
+        --panel: #1a2332;
+        --border: #2d3a4f;
+        --text: #e6edf3;
+        --muted: #8b949e;
+        --accent: #58a6ff;
+        --select-row: #30363d;
+        --select-cell: #d29922;
+        --select-cell-text: #111;
+        --sidebar-select: #8957e5;
+        --header-select: #1f6feb;
+        --surface-muted: #121820;
+        --hover: #21262d;
+        --overlay: rgba(0, 0, 0, 0.72);
+      }
+    }
+
+    :root[data-theme="light"] {
+      color-scheme: light;
+    }
+
+    :root[data-theme="dark"] {
+      color-scheme: dark;
+      --bg: #0f1419;
+      --panel: #1a2332;
+      --border: #2d3a4f;
+      --text: #e6edf3;
+      --muted: #8b949e;
+      --accent: #58a6ff;
+      --select-row: #30363d;
+      --select-cell: #d29922;
+      --select-cell-text: #111;
+      --sidebar-select: #8957e5;
+      --header-select: #1f6feb;
+      --surface-muted: #121820;
+      --hover: #21262d;
+      --overlay: rgba(0, 0, 0, 0.72);
+    }
+
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font: 14px/1.4 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      background: var(--bg);
+      color: var(--text);
+    }
+    .app { display: grid; grid-template-rows: auto 1fr auto; min-height: 100vh; }
+    header, footer {
+      border: 1px solid var(--border);
+      background: var(--panel);
+      padding: 0.6rem 1rem;
+    }
+    header {
+      border-top: none;
+      border-left: none;
+      border-right: none;
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+      flex-wrap: wrap;
+    }
+    footer { border-bottom: none; border-left: none; border-right: none; color: var(--muted); font-size: 12px; }
+    .title { font-weight: 700; }
+    .badge { color: var(--accent); }
+    .header-spacer { flex: 1; }
+    .theme-toggle {
+      border: 1px solid var(--border);
+      background: var(--surface-muted);
+      color: var(--text);
+      font: inherit;
+      font-size: 12px;
+      padding: 0.35rem 0.65rem;
+      border-radius: 6px;
+      cursor: pointer;
+    }
+    .theme-toggle:hover { background: var(--hover); }
+    main {
+      display: grid;
+      grid-template-columns: 1fr 320px;
+      gap: 0;
+      min-height: 0;
+    }
+    .panel {
+      border-right: 1px solid var(--border);
+      display: flex;
+      flex-direction: column;
+      min-height: 0;
+    }
+    .panel:last-child { border-right: none; }
+    .panel-head {
+      padding: 0.5rem 0.75rem;
+      border-bottom: 1px solid var(--border);
+      background: var(--surface-muted);
+      font-weight: 600;
+    }
+    .table-wrap { overflow: auto; flex: 1; }
+    table { border-collapse: collapse; width: max-content; min-width: 100%; }
+    th, td {
+      border: 1px solid var(--border);
+      padding: 0.15rem 0.35rem;
+      white-space: pre;
+      max-width: 18ch;
+      overflow: hidden;
+    }
+    th { background: var(--surface-muted); position: sticky; top: 0; z-index: 1; }
+    th.selected { background: var(--header-select); color: white; }
+    tr.row-selected td { background: var(--select-row); }
+    td.selected { background: var(--select-cell); color: var(--select-cell-text); font-weight: 700; }
+    td.num, th.num { text-align: right; }
+    .sidebar {
+      overflow: auto;
+      flex: 1;
+      padding: 0.25rem 0;
+    }
+    .sidebar button {
+      display: block;
+      width: 100%;
+      text-align: left;
+      border: none;
+      background: transparent;
+      color: var(--text);
+      font: inherit;
+      padding: 0.25rem 0.75rem;
+      cursor: pointer;
+    }
+    .sidebar button:hover { background: var(--hover); }
+    .sidebar button.selected { background: var(--sidebar-select); color: white; font-weight: 700; }
+    .help-overlay {
+      position: fixed; inset: 0; background: var(--overlay);
+      display: none; align-items: center; justify-content: center; z-index: 10;
+    }
+    .help-overlay.open { display: flex; }
+    .help-box {
+      background: var(--panel); border: 1px solid var(--border);
+      padding: 1.25rem 1.5rem; max-width: 520px; white-space: pre-wrap;
+    }
+    .empty { padding: 2rem; color: var(--muted); }
+  </style>
+</head>
+<body>
+  <div class="app">
+    <header>
+      <span class="title">csv-utils</span>
+      <span id="meta" class="badge">loading…</span>
+      <span class="header-spacer"></span>
+      <button id="theme-toggle" class="theme-toggle" type="button" aria-label="Theme: System. Click to change.">Theme: System</button>
+    </header>
+    <main>
+      <section class="panel">
+        <div id="table-title" class="panel-head">Data</div>
+        <div id="table-wrap" class="table-wrap"></div>
+      </section>
+      <section class="panel">
+        <div id="sidebar-title" class="panel-head">Columns</div>
+        <div id="sidebar" class="sidebar"></div>
+      </section>
+    </main>
+    <footer id="hints">arrows navigate · t types · ? help · theme button cycles system / light / dark</footer>
+  </div>
+  <div id="help" class="help-overlay"><div class="help-box" id="help-text"></div></div>
+  <script>
+    const HELP = `csv-utils — browser UI
+
+  ↑/↓        previous / next row
+  ←/→        previous / next column
+  PgUp/PgDn  scroll 10 rows
+  t          toggle column types
+  ?          help
+  Esc        close help
+
+Click table cells or column list items to select.
+Click table cells or column list items to select.
+Mouse wheel on table/columns scrolls rows/columns.
+
+Theme button (header): System · Light · Dark.`;
+
+    const THEME_KEY = 'csv-utils-theme';
+    const THEMES = ['system', 'light', 'dark'];
+    const THEME_LABELS = { system: 'System', light: 'Light', dark: 'Dark' };
+
+    let pollTimer = null;
+
+    function applyTheme(mode) {
+      const root = document.documentElement;
+      if (mode === 'system') {
+        root.removeAttribute('data-theme');
+      } else {
+        root.dataset.theme = mode;
+      }
+      const btn = document.getElementById('theme-toggle');
+      const label = THEME_LABELS[mode];
+      btn.textContent = `Theme: ${label}`;
+      btn.setAttribute('aria-label', `Theme: ${label}. Click to change.`);
+    }
+
+    function loadTheme() {
+      const saved = localStorage.getItem(THEME_KEY);
+      const mode = THEMES.includes(saved) ? saved : 'system';
+      applyTheme(mode);
+      return mode;
+    }
+
+    function cycleTheme() {
+      const current = localStorage.getItem(THEME_KEY) || 'system';
+      const next = THEMES[(THEMES.indexOf(current) + 1) % THEMES.length];
+      localStorage.setItem(THEME_KEY, next);
+      applyTheme(next);
+    }
+
+    loadTheme();
+    window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => {
+      if ((localStorage.getItem(THEME_KEY) || 'system') === 'system') {
+        applyTheme('system');
+      }
+    });
+    document.getElementById('theme-toggle').addEventListener('click', cycleTheme);
+
+    async function postAction(action, value) {
+      await fetch('/api/action', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action, value }),
+      });
+      await refresh();
+    }
+
+    function render(state) {
+      document.getElementById('meta').textContent =
+        `${state.file} · ${state.row_count} rows · ${state.status_line}`;
+      document.getElementById('table-title').textContent =
+        `Data (rows ${state.table.row_start + 1}–${state.table.row_end})`;
+      const colEnd = state.sidebar.length
+        ? state.sidebar[state.sidebar.length - 1].index + 1
+        : state.column_list_offset;
+      document.getElementById('sidebar-title').textContent =
+        `Columns (${state.column_list_offset + 1}–${colEnd}/${state.column_count})`;
+
+      const wrap = document.getElementById('table-wrap');
+      if (!state.table.rows.length) {
+        wrap.innerHTML = '<div class="empty">No rows loaded. Open a CSV file when starting the server.</div>';
+      } else {
+        let html = '<table><thead><tr>';
+        for (const col of state.table.columns) {
+          html += `<th class="${col.selected ? 'selected' : ''}">${escapeHtml(col.name)}</th>`;
+        }
+        html += '</tr></thead><tbody>';
+        for (const row of state.table.rows) {
+          html += `<tr class="${row.selected ? 'row-selected' : ''}">`;
+          row.cells.forEach((cell, i) => {
+            const col = state.table.columns[i];
+            const cls = [cell.align_right ? 'num' : '', cell.selected ? 'selected' : ''].join(' ').trim();
+            html += `<td class="${cls}" data-row="${row.index}" data-col="${col.index}">${escapeHtml(cell.text)}</td>`;
+          });
+          html += '</tr>';
+        }
+        html += '</tbody></table>';
+        wrap.innerHTML = html;
+        wrap.querySelectorAll('td[data-row]').forEach(td => {
+          td.addEventListener('click', () => {
+            postAction('select_cell', { row: +td.dataset.row, col: +td.dataset.col });
+          });
+        });
+        wrap.querySelectorAll('th').forEach((th, i) => {
+          th.addEventListener('click', () => {
+            postAction('select_column', state.table.columns[i].index);
+          });
+        });
+      }
+
+      const sidebar = document.getElementById('sidebar');
+      sidebar.innerHTML = state.sidebar.map(item =>
+        `<button class="${item.selected ? 'selected' : ''}" data-col="${item.index}">${escapeHtml(item.label)}</button>`
+      ).join('');
+      sidebar.querySelectorAll('button').forEach(btn => {
+        btn.addEventListener('click', () => postAction('select_column', +btn.dataset.col));
+      });
+
+      const help = document.getElementById('help');
+      help.classList.toggle('open', state.show_help);
+      document.getElementById('help-text').textContent = HELP;
+
+      schedulePoll(state);
+    }
+
+    function escapeHtml(s) {
+      return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+    }
+
+    function schedulePoll(state) {
+      clearTimeout(pollTimer);
+      if (!state.scan_done) {
+        pollTimer = setTimeout(refresh, 150);
+      }
+    }
+
+    async function refresh() {
+      const res = await fetch('/api/state');
+      const state = await res.json();
+      render(state);
+    }
+
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'ArrowUp') { e.preventDefault(); postAction('row_delta', -1); }
+      else if (e.key === 'ArrowDown') { e.preventDefault(); postAction('row_delta', 1); }
+      else if (e.key === 'ArrowLeft') { e.preventDefault(); postAction('col_delta', -1); }
+      else if (e.key === 'ArrowRight') { e.preventDefault(); postAction('col_delta', 1); }
+      else if (e.key === 'PageUp') { e.preventDefault(); postAction('page_rows', -10); }
+      else if (e.key === 'PageDown') { e.preventDefault(); postAction('page_rows', 10); }
+      else if (e.key === 'Home') { e.preventDefault(); postAction('go_home', null); }
+      else if (e.key === 'End') { e.preventDefault(); postAction('go_end', null); }
+      else if (e.key === 't') { e.preventDefault(); postAction('toggle_types', null); }
+      else if (e.key === '?') { e.preventDefault(); postAction('toggle_help', null); }
+      else if (e.key === 'Escape') { e.preventDefault(); postAction('close_help', null); }
+    });
+
+    document.getElementById('table-wrap').addEventListener('wheel', (e) => {
+      e.preventDefault();
+      postAction('row_delta', e.deltaY < 0 ? -3 : 3);
+    }, { passive: false });
+
+    document.getElementById('sidebar').addEventListener('wheel', (e) => {
+      e.preventDefault();
+      postAction('column_list_delta', e.deltaY < 0 ? -3 : 3);
+    }, { passive: false });
+
+    refresh();
+  </script>
+</body>
+</html>

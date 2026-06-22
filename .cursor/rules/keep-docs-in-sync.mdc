@@ -20,8 +20,8 @@ Also update `docs/test-data-generation.md` if `scripts/generate_test_data.py` or
 
 Update docs if you touch any of:
 
-- `src/main.zig`, `src/cli/**`, `src/core/**`, `src/tui/**`
-- `build.zig`, `build.zig.zon`, `pixi.toml`
+- `csv-utils/src/**`, `csv-utils-core/src/**`
+- `Cargo.toml`, `pixi.toml`
 - `scripts/generate_test_data.py`, `scripts/capture_tui_snapshot.py`
 
 Skip doc updates only for pure refactors with **no** behavior, CLI, TUI, or task-name changes.
@@ -29,7 +29,7 @@ Skip doc updates only for pure refactors with **no** behavior, CLI, TUI, or task
 ## What to update in `docs/DESIGN.md`
 
 - CLI commands, flags, limits, filter syntax
-- TUI: layout, keys, mouse actions, scrolling, resize, column types, alignment
+- TUI: layout, keys, mouse actions, scrolling, column types, alignment
 - Preview/loading APIs and threading model
 - Module map if files are added/removed/renamed
 - Pixi tasks and binary names
@@ -47,8 +47,8 @@ Skip doc updates only for pure refactors with **no** behavior, CLI, TUI, or task
 
 - [ ] DESIGN.md describes the behavior **after** your change (not planned/future)
 - [ ] README examples still run as written
-- [ ] No stale references (e.g. ncurses, removed tasks, wrong dataset sizes)
-- [ ] TUI keyboard/mouse table matches `src/tui/app_vaxis.zig`
+- [ ] No stale references (e.g. removed tasks, wrong dataset sizes)
+- [ ] TUI keyboard/mouse table matches `csv-utils/src/tui/app.rs`
 
 ## Style
 

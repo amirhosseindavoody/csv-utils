@@ -1,83 +1,89 @@
 # csv-utils — design & behavior
 
-**Living document.** Update this file whenever you change user-visible behavior, CLI/TUI contracts, data loading, or project layout. It should reflect what the code does today, not future plans.
+**Living document.** Update this file whenever you change user-visible behavior, CLI/TUI contracts, data loading, or project layout.
 
-Last verified against: `main` (libvaxis TUI, Zig 0.16, vim-style command mode, per-column resize).
+Last verified against: `main` (Rust ratatui TUI + browser web UI, workspace at repo root, June 2025).
 
 ---
 
 ## Purpose
 
-`csv-utils` is a Zig CSV tool for:
+`csv-utils` is a Rust CSV tool for:
 
 - **CLI:** streaming stats, filters, unique values, and JSON row export on large files.
 - **TUI:** interactive table exploration with progressive loading, column sidebar, and mouse/keyboard navigation.
 
-Design goals: bounded memory for preview/TUI, fast initial paint, and simple CSV parsing (quoted fields via `schema.splitRow`).
+Design goals: fast initial paint, simple CSV parsing (quoted fields via `split_row`), and a shared core library with a local browser UI server.
 
 ---
 
-## High-level architecture
+## Architecture
 
 ```mermaid
 flowchart TB
-  main[main.zig] --> cli[cli/commands.zig]
-  main --> tui[tui/app.zig → app_vaxis.zig]
-  cli --> engine[core/engine.zig]
-  tui --> preview[core/preview.zig]
-  tui --> schema[core/schema.zig]
-  engine --> csv_reader[core/csv_reader.zig]
+  bin[csv-utils binary] --> cli[cli.rs]
+  bin --> tui[tui/app.rs]
+  web[csv-utils-web binary] --> web_srv[web/server.rs]
+  cli --> engine[csv-utils-core/engine.rs]
+  tui --> model[csv-utils-core/model.rs]
+  web_srv --> model
+  model --> preview[csv-utils-core/preview.rs]
+  model --> schema[csv-utils-core/schema.rs]
   engine --> schema
-  engine --> stats[core/stats.zig]
-  engine --> predicate[core/predicate.zig]
-  engine --> unique[core/unique.zig]
-  engine --> json_view[core/json_view.zig]
-  preview --> schema
-  tui --> vaxis[libvaxis]
+  tui --> ratatui[ratatui + crossterm]
+  web_srv --> axum[axum + tokio]
 ```
 
 | Layer | Role |
 |--------|------|
-| `main.zig` | Dispatches `tui` or delegates to CLI commands. |
-| `cli/` | Argument parsing and command routing. |
-| `core/` | CSV I/O, parsing, queries, preview buffer. |
-| `tui/` | Terminal UI (`libvaxis`), rendering, input. |
-| `scripts/` | Test data generation and TUI snapshot capture. |
+| `csv-utils/src/main.rs` | Clap CLI dispatch; `tui` subcommand. |
+| `csv-utils/src/cli.rs` | CLI command runners. |
+| `csv-utils/src/tui/app.rs` | ratatui renderer, event loop, input. |
+| `csv-utils-web/src/main.rs` | Browser UI server (`csv-utils-web` binary). |
+| `csv-utils-web/src/server.rs` | axum routes, JSON API, embedded HTML. |
+| `csv-utils-core/` | CSV parsing, preview buffer, CLI engine, `AppModel`, `ViewAction`, `ClientView`. |
+
+`ClientView` is the JSON snapshot sent to browser clients; `ViewAction` applies keyboard/mouse-style updates shared with the TUI model.
 
 ---
 
-## Entry point & modes
+## Entry point
 
 ```
-csv-utils <command> [args...]
+csv-utils stats <file.csv>
+csv-utils unique <file.csv> <col1[,col2,...]> [limit]
+csv-utils json <file.csv> [limit]
+csv-utils filter <file.csv> <expr> [limit]
 csv-utils tui [file.csv]
 ```
 
-- **`tui`:** Opens full-screen TUI. Optional CSV path; without a file, shows an empty table.
-- **Other commands:** `stats`, `unique`, `json`, `filter` — see [CLI commands](#cli-commands).
+- **`tui`:** full-screen TUI; optional CSV path (empty usage hint if omitted).
+- **Other commands:** see [CLI commands](#cli-commands).
 
-Implementation: `src/main.zig`.
+Build: `pixi run build` or `cargo build --release`. Binary: `target/release/csv-utils`.
+
+Pixi tasks run from the **repo root**; extra args are forwarded (`pixi run tui file.csv`, `pixi run run -- stats file.csv`).
 
 ---
 
 ## CLI commands
 
-| Command | Usage | Behavior |
-|---------|--------|----------|
-| `stats` | `stats <file.csv>` | One pass: per-column null/non-null counts and numeric min/max/mean where parseable. |
-| `unique` | `unique <file> <col1[,col2,...]> [limit]` | Distinct values per column (default limit 50). |
-| `json` | `json <file> [limit]` | Print rows as JSON objects (default limit 20). |
-| `filter` | `filter <file> <expr> [limit]` | Rows matching expression (default limit 50). |
+| Command | Usage | Default limit | Behavior |
+|---------|--------|---------------|----------|
+| `stats` | `stats <file.csv>` | — | Per-column row/null/non-null counts and `max_width`. |
+| `unique` | `unique <file> <col1[,col2,...]> [limit]` | 50 | Distinct value combinations as JSON objects. |
+| `json` | `json <file> [limit]` | 20 | Rows as JSON objects. |
+| `filter` | `filter <file> <expr> [limit]` | 50 | Matching rows as JSON objects. |
 
-**Filter expression** (`core/predicate.zig`):
+**Filter expression** (`csv-utils-core/predicate.rs`):
 
 - Operators: `=`, `!=`, `>`, `<`, `contains`, `in`
 - Examples: `city=Tehran`, `age>30`, `name contains Ali`, `city in Tehran\|Paris`
-- Comma-separated AND for simple `col=val` forms.
+- Comma-separated AND between conditions.
 
-CLI reads the file **sequentially** and calls `splitRow` on every data line — heavier than TUI preview, which keeps raw lines until render.
+CLI reads the file sequentially and calls `split_row` on every data line — heavier than TUI preview, which keeps raw lines until render.
 
-Implementation: `src/cli/commands.zig`, `src/core/engine.zig`.
+Implementation: `csv-utils-core/src/engine.rs`.
 
 ---
 
@@ -85,121 +91,158 @@ Implementation: `src/cli/commands.zig`, `src/core/engine.zig`.
 
 ### Stack
 
-- **Terminal library:** [libvaxis](https://github.com/rockorager/libvaxis) (Zig package in `build.zig.zon`).
-- **Shim:** `src/tui/app.zig` re-exports `app_vaxis.zig`.
-- **Zig:** 0.16 (`std.Io`, `std.process.Init`, `std.atomic.Mutex`).
-
-Terminal setup: alternate screen, mouse reporting enabled, conservative ASCII rendering (charset reset, no `queryTerminal` negotiation).
+- **ratatui** 0.29 + **crossterm** (alternate screen, mouse capture).
+- **Frontend:** `csv-utils/src/tui/app.rs`
+- **State:** `AppModel` + `TableViewState` in `csv-utils-core/src/model.rs`
+- **Data table:** ratatui `Table`
+- **Column sidebar:** manual `Paragraph` list (not ratatui `List`; see [Column list scrolling](#column-list-scrolling))
 
 ### Screen layout
 
 ```
- Row 0: title — "csv-utils TUI (libvaxis)"
- Row 1: status — file=… rows=… cell=[rN,cM]
- Row 2: horizontal rule
- Row 3: table header row
- Row 4+: data rows (">" marks selected row)
- Last row: horizontal rule
- Right: column sidebar (variable width)
- Between table and sidebar: "<>" resize handle + sidebar splitter
+┌─ csv-utils │ file.csv │ N rows [loading…] ─────────────────────┐
+│ ┌─ Data (rows A–B) ─────────────┐ ┌─ Columns (X–Y/Z) ────────┐ │
+│ │ header + visible rows         │ │ idx: name [type]         │ │
+│ │ 18-char cells, col scroll     │ │ independent list scroll  │ │
+│ └───────────────────────────────┘ └──────────────────────────┘ │
+│ q quit  ↑↓ rows  ←→ cols  t types  ? help                       │
+└─────────────────────────────────────────────────────────────────┘
 ```
 
 | Region | Description |
 |--------|-------------|
-| **Row marker** | 2 columns; `>` on selected row. |
-| **Table** | Variable-width columns; each column is `(width - 1)` content + `\|` separator. |
-| **Sidebar** | Column index + name; optional type suffix when toggled. |
-| **Sidebar splitter** | Column immediately left of sidebar; drag to resize sidebar. |
+| **Title** | File basename, live row count, `loading…` or `ERROR`. |
+| **Data table** | Horizontal window (`col_offset`) + vertical window (`row_offset`). Selected cell yellow; selected row dimmed. |
+| **Columns pane** | 32-char wide; title `Columns (X–Y/Z)`; selected line `▸` + magenta. |
+| **Help** | Centered overlay; `?` opens; `Esc` / `?` closes. |
 
-### Data loading (TUI)
+### View state
 
-1. **Sync:** `loadPreviewHeaderAndInitialRows(path, 128)` — header + first 128 body lines as **raw UTF-8** (not split into fields yet).
-2. **Background thread:** `streamAppendBodyLinesAfterSkip` — skips header + already-loaded lines, appends remaining lines to `PreviewData.rows`.
-3. **Render:** Each visible frame parses only displayed rows with `schema.splitRow` (arena allocator, freed each frame).
+`TableViewState` (`model.rs`):
 
-`PreviewData` (`core/preview.zig`) is mutex-protected; row count grows while `scan_done` is false. Status line shows current `rows=`.
+| Field | Role |
+|-------|------|
+| `selected_row`, `selected_col` | Active cell (0-based). Row max = loaded body lines − 1. |
+| `row_offset` | First body row in table viewport. |
+| `col_offset` | First column in table viewport. |
+| `column_list_offset` | First column shown in sidebar (independent of selection). |
+| `show_column_types` | Sidebar `[type]` suffix when true. |
+| `show_help` | Help overlay visible. |
+
+`CELL_DISPLAY_WIDTH = 18`; horizontal capacity ≈ `table_width / 19` columns.
+
+Each frame: `clamp_selection(viewport_rows, table_width)` and `clamp_column_list_offset(visible_height)`.
+
+### Data loading
+
+1. **Sync:** header + first **128** body lines as raw UTF-8 (`INITIAL_BODY_LINES`).
+2. **Background thread:** append remaining body lines to `PreviewData`.
+3. **Render:** `split_row` only on visible rows.
+
+Headers are available immediately. Row count in the title grows until `scan_done`.
+
+| API | Use |
+|-----|-----|
+| `PreviewData::load_header_and_initial_rows` | TUI startup |
+| `PreviewData::start_background_scan` | Background append |
+| `PreviewData::load_limited` | Tests (`scan_done = true`) |
+
+I/O: 1 MiB `BufReader`, `\n`-delimited lines. Run from repo root for `test-data/…` paths.
 
 ### Column types (display only)
 
-Inferred from **header name prefixes** (matches generated test data):
+Inferred from header name prefixes (matches test data generator):
 
-| Prefix | Kind | Cell alignment |
-|--------|------|----------------|
+| Prefix | Kind | Alignment |
+|--------|------|-----------|
 | `str_` | string | left |
 | `long_str_` | long string | left |
 | `float_general_` | float | right |
 | `float_scientific_` | float (sci) | right |
-| `float_mixed_` | float (mixed text) | right |
+| `float_mixed_` | float (mixed) | right |
 | `int_` | integer | right |
 | `date_` | date | left |
 | (other) | unknown | left |
 
-Non-printable bytes in cells are shown as `.`; overflow uses `~` in the last column.
+Non-printable bytes → `.`; truncation → `~` (`format_cell`).
 
 ### Keyboard
 
 | Key | Action |
 |-----|--------|
 | `q` | Quit |
-| `↑` / `↓` | Previous / next row |
-| `←` / `→` | Previous / next **column** (moves selection and table horizontal scroll) |
-| `t` | Toggle type labels in sidebar (`Columns (t)` + `[type]` suffix) |
-| `:` | Enter **command mode** (prompt on bottom line) |
-
-### Command mode (vim-style)
-
-Press `:` to open the command line at the bottom (`:your_command`). **Enter** runs the command; **Esc** cancels.
-
-| Command | Action |
-|---------|--------|
-| `?` | Open help panel (shortcuts + commands) |
-| `help` | Same as `?` |
-| `q` / `quit` | Quit TUI |
-| `close` | Close help panel (when open) |
-
-While the help panel is open, the table is not drawn; every row is repainted, and a full terminal refresh is queued each frame so incremental render does not leave the old table visible. Input is handled before the next draw so opening `:help` never paints one frame of table underneath. **Esc** or `q` closes help. Mouse and normal navigation are disabled during command entry and help view.
+| `↑`/`↓` or `j`/`k` | Previous / next row |
+| `←`/`→` or `h`/`l` | Previous / next column |
+| `PgUp`/`PgDn` | Move selection ±10 rows |
+| `Home`/`End` | First / last loaded row |
+| `t` | Toggle type labels in column list |
+| `?` | Help overlay |
+| `Esc` | Close help |
 
 ### Mouse
 
 | Target | Action |
 |--------|--------|
-| Table cell (not on `\|`) | Select row + column |
-| Header cell | Select column only |
-| Column boundary (`\|`) | Drag to resize **column to the left** (width 6–64, default 16) |
-| Sidebar list item | Select column |
-| Sidebar + wheel | Scroll column list (`sidebar_col_offset`, independent of `←`/`→`) |
-| Table + wheel | Scroll selection by 3 rows |
-| `<>` / sidebar splitter | Drag to resize sidebar (width 18–60, default 28) |
+| Table header | Select column only |
+| Table body cell | Select row + column |
+| Table wheel | Move `selected_row` ±3 |
+| Column list click | Select column |
+| Column list wheel | Scroll sidebar ±3 via `column_list_offset` |
 
-Column widths are stored per session in `column_widths` (one `i32` per header). Horizontal scroll (`col_offset`) keeps the selected column visible based on cumulative widths.
+Table hit-testing: `hit_test_table` in `app.rs` (block inner rect, 18+1 char columns).
 
-### Rendering notes
+### Column list scrolling
 
-- Per-frame `ArenaAllocator` holds all formatted cell buffers until `vx.render()` completes (avoids use-after-free in libvaxis).
-- Selected cell uses reverse video; active resize targets use bold/reverse on separators.
+Sidebar uses manual lines + `column_list_offset`. ratatui `List` was avoided because it resets offset each frame to keep the selected item visible, which blocked wheel scrolling past the current selection.
 
-Implementation: `src/tui/app_vaxis.zig`.
+- Scroll max: `headers.len() − visible_height` (header count, not row count).
+- Wheel updates offset only.
+- Selection changes call `ensure_column_list_shows_selection`.
 
 ---
 
-## Core: CSV preview
+## Web UI (browser)
 
-| API | Use |
-|-----|-----|
-| `loadPreviewHeaderOnly` | Header only; body streamed later. |
-| `loadPreviewHeaderAndInitialRows` | TUI startup. |
-| `loadPreviewLimited` | Benchmark/tests; full read up to limit, `scan_done = true`. |
-| `streamAppendBodyLinesAfterSkip` | Background append after initial rows. |
+Binary: **`csv-utils-web`** (`target/release/csv-utils-web`).
 
-I/O: 1 MiB read buffer, line-based `takeDelimiter('\n')`, `std.Io.Dir.cwd().openFile`.
+```
+csv-utils-web [file.csv] [--host HOST] [--port PORT]
+```
+
+| Flag | Default | Meaning |
+|------|---------|---------|
+| `--host` | `127.0.0.1` | Bind address (use `0.0.0.0` for LAN access). |
+| `--port` | `8080` | TCP port. |
+
+Opens the same `AppModel` as the TUI. Serves embedded HTML at `/` and a JSON API:
+
+| Route | Method | Purpose |
+|-------|--------|---------|
+| `/` | GET | Single-page browser UI (table + column sidebar). |
+| `/api/state` | GET | Current `ClientView` JSON. |
+| `/api/action` | POST | Apply a `ViewAction` (`{"action":"row_delta","value":-1}`, etc.). |
+
+The page polls `/api/state` while the background scan runs. Keyboard bindings mirror the TUI (`↑↓←→`, `PgUp`/`PgDn`, `Home`/`End`, `t`, `?`, `Esc`). Mouse: click cells/columns; wheel scrolls rows or column list.
+
+**Theme:** follows the OS light/dark preference by default (`prefers-color-scheme`). Header **Theme** button cycles **System → Light → Dark**; choice is stored in `localStorage` (`csv-utils-theme`) and overrides system until set back to System.
+
+Layout constants match the TUI defaults: 24 visible rows, 110-char table width, 20 sidebar lines.
+
+Pixi:
+
+```bash
+pixi run web -- test-data/generated/test_1000x100.csv
+pixi run web -- --host 0.0.0.0 --port 8080 file.csv
+pixi run web-tui   # shortcut with test CSV
+```
+
+Then open `http://127.0.0.1:8080/` (or your `--host`/`--port`). Ctrl+C stops the server and joins the background scan thread.
 
 ---
 
 ## Core: CSV parsing
 
-`schema.splitRow` — splits one line into fields with quoted-field support. Used by CLI engine and TUI per-row render.
-
-`csv_reader.zig` — iterator-style line reader for CLI streaming.
+`schema::split_row` — quoted fields, `""` escape, comma split outside quotes.
 
 ---
 
@@ -208,16 +251,12 @@ I/O: 1 MiB read buffer, line-based `takeDelimiter('\n')`, `std.Io.Dir.cwd().open
 Script: `scripts/generate_test_data.py`  
 Task: `pixi run gen-test-data`
 
-**Datasets (configured):**
-
 | Key | Rows | Cols | Output |
 |-----|------|------|--------|
 | `1000x100` | 1,000 | 100 | `test-data/generated/test_1000x100.csv` |
 | `10000x1000` | 10,000 | 1,000 | `test-data/generated/test_10000x1000.csv` |
 
-**Column order in file:** First seven columns are one of each type (`str_000`, `long_str_000`, `float_general_000`, …), then remaining columns per layout ratios.
-
-See also: `docs/test-data-generation.md` (run instructions; verify dataset list against `SPECS` in the script).
+See `docs/test-data-generation.md`.
 
 ---
 
@@ -226,61 +265,65 @@ See also: `docs/test-data-generation.md` (run instructions; verify dataset list 
 | Task | Command |
 |------|---------|
 | Build | `pixi run build` |
-| Run CLI | `pixi run run -- <cmd> …` |
-| TUI | `pixi run tui [file]` |
+| Run CLI | `pixi run run -- stats file.csv` |
+| TUI | `pixi run tui file.csv` |
+| Web UI | `pixi run web -- file.csv` or `pixi run web-tui` |
 | Unit tests | `pixi run test` |
-| Preview benchmark | `pixi run bench-parse [-- file limit]` |
 | Generate test CSVs | `pixi run gen-test-data` |
-| TUI snapshot (CI/debug) | `pixi run test-tui-large-capture` → `artifacts/tui_snapshot_large.txt` |
-| Debug first row parse | `pixi run debug-preview-large` |
+| TUI snapshot | `pixi run test-tui-large-capture` → `artifacts/tui_snapshot_large.txt` |
 
-**Binaries** (`zig-out/bin/`): `csv-utils`, `bench-csv-parse`, `debug-preview-dump`.
-
-**Dependencies:** `libvaxis` pinned in `build.zig.zon`; Zig `>=0.16,<0.17`.
+**Dependencies:** ratatui, crossterm, clap, anyhow, thiserror, axum, tokio, serde (`Cargo.toml` workspace).
 
 ---
 
-## Debugging & artifacts
-
-- **`scripts/capture_tui_snapshot.py`** — Runs built binary in PTY via `script(1)`, writes ANSI snapshot + report. Default command: `./zig-out/bin/csv-utils tui "{file}"`.
-- **`artifacts/`** — Snapshot outputs (gitignored as needed; see `.gitignore`).
-
----
-
-## Module map (current)
+## Module map
 
 ```
-src/
-  main.zig
-  bench_csv_parse_main.zig
-  debug_preview_dump.zig
-  cli/
-    args.zig
-    commands.zig
-  core/
-    preview.zig      # TUI buffer + streaming
-    schema.zig       # splitRow, column index
-    csv_reader.zig
-    engine.zig       # CLI commands
-    predicate.zig
-    stats.zig
-    unique.zig
-    json_view.zig
-  tui/
-    app.zig          # export run
-    app_vaxis.zig    # TUI implementation
-  cache/
-    index_store.zig  # stub / future cache
+Cargo.toml                   # workspace root
+csv-utils-core/
+  src/
+    lib.rs
+    schema.rs
+    predicate.rs
+    preview.rs
+    stats.rs
+    unique.rs
+    json_view.rs
+    engine.rs
+    column.rs
+    model.rs
+    actions.rs
+    client_view.rs
+csv-utils/
+  src/
+    main.rs
+    cli.rs
+    tui/
+      mod.rs
+      app.rs
+csv-utils-web/
+  src/
+    main.rs
+    server.rs
+    assets.rs
+    index.html
+scripts/
+  generate_test_data.py
+  capture_tui_snapshot.py
+test-data/generated/
+docs/
 ```
 
 ---
 
 ## Known limitations
 
-- TUI stores **all** body lines in memory as raw strings (grows with file size; fine for test files, not for multi-GB without future paging).
-- Column types are **name-based heuristics**, not schema inference from values.
-- Filter/stats CLI do not share the TUI preview buffer; each command re-opens the file.
-- `cache/index_store.zig` is not wired into the hot path yet.
+- TUI holds all body lines in memory as raw strings (not suitable for multi-GB files without paging).
+- Column types are name-prefix heuristics, not value inference.
+- CLI commands re-open files; no shared cache with TUI.
+- Fixed 18-char table columns; no column/sidebar resize in TUI.
+- Row navigation limited to loaded lines until background scan completes.
+- JSON CLI output does not escape embedded quotes in values.
 
 ---
 
@@ -288,8 +331,7 @@ src/
 
 | Document | Contents |
 |----------|----------|
-| `docs/implementation-plan.md` | Original project plan (historical; ncurses-era structure). |
 | `docs/test-data-generation.md` | Generator usage and column mix. |
-| `README.md` | Quick start and command examples. |
+| `README.md` | Quick start and pixi tasks. |
 
-When behavior changes, update **this file first**, then adjust README/examples if user-facing commands changed.
+When behavior changes, update **this file first**, then `README.md`.

@@ -163,7 +163,7 @@ def main() -> int:
     parser.add_argument("--cols", type=int, default=140, help="PTY cols.")
     parser.add_argument(
         "--command-template",
-        default='./zig-out/bin/csv-utils tui "{file}"',
+        default='./target/release/csv-utils tui "{file}"',
         help='Command template to run inside PTY. Use "{file}" placeholder.',
     )
     parser.add_argument("--output", default="artifacts/tui_snapshot_large.txt", help="Snapshot report output path.")

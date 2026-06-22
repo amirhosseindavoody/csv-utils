@@ -1,29 +1,23 @@
 [workspace]
 name = "csv-utils"
 version = "0.1.0"
-description = "High-performance Zig CSV CLI + TUI explorer"
+description = "High-performance CSV CLI + TUI explorer"
 channels = ["conda-forge"]
 platforms = ["linux-64"]
 
 [dependencies]
-zig = ">=0.16.0,<0.17"
-ncurses = ">=6.6,<7"
 python = ">=3.14.4,<3.15"
 pandas = ">=3.0.2,<4"
 numpy = ">=2.4.3,<3"
 
 [tasks]
-build = "zig build -Doptimize=ReleaseFast"
-run = "zig build run --"
-tui = "zig build run -- tui"
+build = "bash -lc 'source \"$HOME/.cargo/env\" 2>/dev/null || true; cargo build --release'"
+run = "bash -lc 'source \"$HOME/.cargo/env\" 2>/dev/null || true; cargo run --release -- \"$@\"' --"
+tui = "bash -lc 'source \"$HOME/.cargo/env\" 2>/dev/null || true; cargo run --release -- tui \"$@\"' --"
+test = "bash -lc 'source \"$HOME/.cargo/env\" 2>/dev/null || true; cargo test'"
 gen-test-data = "python scripts/generate_test_data.py"
-
-test = "zig build test"
-
-bench-parse-small = "zig build bench-parse -- test-data/generated/test_1000x100.csv"
-bench-parse-large = "zig build bench-parse -- test-data/generated/test_10000x1000.csv"
-
-test-tui-small = "zig build run -- tui test-data/generated/test_1000x100.csv"
-test-tui-large = "zig build run -- tui test-data/generated/test_10000x1000.csv"
+test-tui-small = "pixi run tui test-data/generated/test_1000x100.csv"
+test-tui-large = "pixi run tui test-data/generated/test_10000x1000.csv"
 test-tui-large-capture = "pixi run build && python scripts/capture_tui_snapshot.py --file test-data/generated/test_10000x1000.csv --seconds 2.0 --rows 40 --cols 140 --output artifacts/tui_snapshot_large.txt --raw-output artifacts/tui_snapshot_large.raw"
-debug-preview-large = "zig build debug-preview -- test-data/generated/test_10000x1000.csv"
+web = "bash -lc 'source \"$HOME/.cargo/env\" 2>/dev/null || true; cargo run --release -p csv-utils-web -- \"$@\"' --"
+web-tui = "pixi run web -- test-data/generated/test_1000x100.csv"
