@@ -1,0 +1,39 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/prefix-dev/recipe-format/main/schema.json
+
+context:
+  version: 0.1.0
+
+package:
+  name: csv-utils
+  version: ${{ version }}
+
+source:
+  path: ..
+  use_gitignore: true
+
+build:
+  number: 0
+  script:
+    - |
+      set -euo pipefail
+      cd "$SRC_DIR"
+      host="$(rustc -vV | sed -n 's/^host: //p')"
+      cargo build --locked --release -p csv-utils -p csv-utils-web
+      install -Dm755 "target/${host}/release/csv-utils" "$PREFIX/bin/csv-utils"
+      install -Dm755 "target/${host}/release/csv-utils-web" "$PREFIX/bin/csv-utils-web"
+      rm -f "$PREFIX/.crates.toml" "$PREFIX/.crates2.json"
+
+requirements:
+  build:
+    - ${{ compiler('rust') }}
+    - ${{ compiler('c') }}
+
+tests:
+  - script:
+      - csv-utils --help
+      - csv-utils-web --help
+
+about:
+  summary: High-performance CSV CLI, TUI, and browser UI explorer
+  license: MIT
+  license_file: LICENSE

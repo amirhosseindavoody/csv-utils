@@ -2,7 +2,7 @@
 
 **Living document.** Update this file whenever you change user-visible behavior, CLI/TUI contracts, data loading, or project layout.
 
-Last verified against: `main` (Rust ratatui TUI + browser web UI, workspace at repo root, June 2025).
+Last verified against: `main` (Rust ratatui TUI + browser web UI + conda package, workspace at repo root, June 2025).
 
 ---
 
@@ -264,13 +264,32 @@ See `docs/test-data-generation.md`.
 
 | Task | Command |
 |------|---------|
-| Build | `pixi run build` |
+| Build (cargo) | `pixi run build` |
+| Conda package | `pixi run conda-package` → `dist/csv-utils-*.conda` |
 | Run CLI | `pixi run run -- stats file.csv` |
 | TUI | `pixi run tui file.csv` |
 | Web UI | `pixi run web -- file.csv` or `pixi run web-tui` |
 | Unit tests | `pixi run test` |
 | Generate test CSVs | `pixi run gen-test-data` |
 | TUI snapshot | `pixi run test-tui-large-capture` → `artifacts/tui_snapshot_large.txt` |
+
+### Conda package (pixi build)
+
+The repo is a Pixi **package** (`[package]` in `pixi.toml`) built with the **`pixi-build-rattler-build`** backend and `recipe/recipe.yaml`.
+
+```bash
+pixi run conda-package
+# equivalent:
+pixi publish --target-dir dist
+```
+
+Output: `dist/csv-utils-<version>-<build>_0.conda` containing `csv-utils` and `csv-utils-web` in `$PREFIX/bin`. Build uses conda-forge `rust` and `gcc` compilers (no rustup required for packaging).
+
+To publish to an indexed local channel:
+
+```bash
+pixi publish --target-channel file:///path/to/my-channel
+```
 
 **Dependencies:** ratatui, crossterm, clap, anyhow, thiserror, axum, tokio, serde (`Cargo.toml` workspace).
 
@@ -307,6 +326,8 @@ csv-utils-web/
     server.rs
     assets.rs
     index.html
+recipe/
+  recipe.yaml
 scripts/
   generate_test_data.py
   capture_tui_snapshot.py

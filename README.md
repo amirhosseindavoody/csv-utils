@@ -54,6 +54,16 @@ Capture a TUI snapshot (PTY via `script(1)`):
 pixi run test-tui-large-capture
 ```
 
+## Conda package
+
+Build a `.conda` package (includes `csv-utils` and `csv-utils-web` binaries):
+
+```bash
+pixi run conda-package
+```
+
+Artifact: `dist/csv-utils-*.conda`. Uses conda-forge Rust via `recipe/recipe.yaml` and the `pixi-build-rattler-build` backend. See [docs/DESIGN.md](docs/DESIGN.md#conda-package-pixi-build).
+
 ## Status
 
 - CLI: `stats`, `unique`, `json`, `filter`, `tui`
