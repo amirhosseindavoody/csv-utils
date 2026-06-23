@@ -1,6 +1,7 @@
 use crate::column::{
-    infer_kind_from_state, is_right_aligned, observe_column_infer, ColumnInferState, ColumnKind,
-    NumericRepr,
+    column_kind_index, column_kind_options, infer_kind_from_state, is_right_aligned,
+    is_numeric, observe_column_infer, ColumnInferState,
+    ColumnKind, NumericRepr,
 };
 use crate::display::{format_cell_for_column, sanitize_ascii, truncate_middle};
 use crate::schema;
@@ -25,7 +26,9 @@ pub struct TableViewState {
     pub column_numeric_repr: Vec<NumericRepr>,
     /// Manual resize lock per column (until file reopen).
     pub column_widths_user_set: Vec<bool>,
-    pub show_column_types: bool,
+    pub show_column_format: bool,
+    /// Focus index in the format pane (0–4 type, 5–6 representation).
+    pub column_format_focus: usize,
     pub show_help: bool,
 }
 
@@ -48,7 +51,8 @@ impl Default for TableViewState {
             column_kinds: Vec::new(),
             column_numeric_repr: Vec::new(),
             column_widths_user_set: Vec::new(),
-            show_column_types: false,
+            show_column_format: false,
+            column_format_focus: 0,
             show_help: false,
         }
     }
@@ -297,26 +301,94 @@ impl AppModel {
         }
     }
 
-    pub fn cycle_column_type(&mut self, col: usize) {
+    pub fn set_column_kind(&mut self, col: usize, kind: ColumnKind) {
         self.ensure_column_state();
         if col < self.view.column_kinds.len() {
-            self.view.column_kinds[col] = self.view.column_kinds[col].cycle();
+            self.view.column_kinds[col] = kind;
             self.view.column_widths_user_set[col] = false;
             self.apply_fitted_column_width(col);
         }
     }
 
-    pub fn cycle_numeric_repr(&mut self, col: usize) {
+    pub fn set_numeric_repr(&mut self, col: usize, repr: NumericRepr) {
         self.ensure_column_state();
         if col < self.view.column_numeric_repr.len() {
-            let kind = self.effective_column_kind(col);
-            if matches!(kind, ColumnKind::Int | ColumnKind::Float) {
-                self.view.column_numeric_repr[col] =
-                    self.view.column_numeric_repr[col].cycle();
-                self.view.column_widths_user_set[col] = false;
-                self.apply_fitted_column_width(col);
-            }
+            self.view.column_numeric_repr[col] = repr;
+            self.view.column_widths_user_set[col] = false;
+            self.apply_fitted_column_width(col);
         }
+    }
+
+    pub fn open_column_format_pane(&mut self) {
+        let col = self.view.selected_col;
+        self.view.show_column_format = true;
+        let stored = self
+            .view
+            .column_kinds
+            .get(col)
+            .copied()
+            .unwrap_or(ColumnKind::Auto);
+        self.view.column_format_focus = column_kind_index(stored);
+    }
+
+    pub fn close_column_format_pane(&mut self) {
+        self.view.show_column_format = false;
+    }
+
+    pub fn column_format_repr_enabled(&self) -> bool {
+        let col = self.view.selected_col;
+        let focus = self.view.column_format_focus;
+        if (3..=4).contains(&focus) {
+            return true;
+        }
+        let stored = self
+            .view
+            .column_kinds
+            .get(col)
+            .copied()
+            .unwrap_or(ColumnKind::Auto);
+        if matches!(stored, ColumnKind::Int | ColumnKind::Float) {
+            return true;
+        }
+        if stored == ColumnKind::Auto {
+            return is_numeric(self.effective_column_kind(col));
+        }
+        false
+    }
+
+    pub fn column_format_focus_max(&self) -> usize {
+        if self.column_format_repr_enabled() {
+            6
+        } else {
+            4
+        }
+    }
+
+    pub fn column_format_focus_delta(&mut self, delta: i32) {
+        let max = self.column_format_focus_max() as i32;
+        let next = self.view.column_format_focus as i32 + delta;
+        self.view.column_format_focus = next.clamp(0, max) as usize;
+    }
+
+    pub fn column_format_apply_focus(&mut self) {
+        let col = self.view.selected_col;
+        match self.view.column_format_focus {
+            0..=4 => {
+                let kind = column_kind_options()[self.view.column_format_focus];
+                self.set_column_kind(col, kind);
+            }
+            5 => self.set_numeric_repr(col, NumericRepr::General),
+            6 => self.set_numeric_repr(col, NumericRepr::Scientific),
+            _ => {}
+        }
+    }
+
+    pub fn stored_column_kind(&self, col: usize) -> ColumnKind {
+        self.view
+            .column_kinds
+            .get(col)
+            .copied()
+            .unwrap_or(ColumnKind::Auto)
     }
 
     fn column_slot_width(&self, col: usize) -> u16 {
@@ -424,25 +496,18 @@ impl AppModel {
             .iter()
             .enumerate()
             .map(|(col_idx, name)| {
-                let stored = self
-                    .view
-                    .column_kinds
-                    .get(col_idx)
-                    .copied()
-                    .unwrap_or(ColumnKind::Auto);
+                let stored = self.stored_column_kind(col_idx);
                 let effective = self.effective_column_kind(col_idx);
-                let label = if self.view.show_column_types {
-                    if stored == ColumnKind::Auto {
-                        format!("{col_idx}: {name} [{}]", effective.label())
-                    } else {
-                        format!(
-                            "{col_idx}: {name} [{}={}]",
-                            stored.label(),
-                            effective.label()
-                        )
-                    }
+                let label = if stored == ColumnKind::Auto {
+                    format!("{col_idx}: {name} [{}]", effective.label())
+                } else if stored != effective {
+                    format!(
+                        "{col_idx}: {name} [{}={}]",
+                        stored.label(),
+                        effective.label()
+                    )
                 } else {
-                    format!("{col_idx}: {name}")
+                    format!("{col_idx}: {name} [{}]", stored.label())
                 };
                 SidebarColumn {
                     index: col_idx,
@@ -528,13 +593,13 @@ mod tests {
     }
 
     #[test]
-    fn cycle_column_type_changes_kind() {
+    fn set_column_kind_changes_display() {
         let path = PathBuf::from("test-data/generated/test_1000x100.csv");
         if !path.exists() {
             return;
         }
         let mut model = AppModel::open(Some(path)).expect("open csv");
-        model.cycle_column_type(0);
+        model.set_column_kind(0, ColumnKind::Text);
         assert_eq!(model.view.column_kinds[0], ColumnKind::Text);
     }
 }

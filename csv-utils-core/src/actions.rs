@@ -1,3 +1,4 @@
+use crate::column::{ColumnKind, NumericRepr};
 use crate::model::AppModel;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -25,14 +26,17 @@ pub enum ViewAction {
     PageRows(i32),
     SelectCell { row: usize, col: usize },
     SelectColumn(usize),
-    ToggleTypes,
+    OpenColumnFormat,
+    CloseColumnFormat,
+    ColumnFormatFocusDelta(i32),
+    ColumnFormatApply,
+    SetColumnKind { col: usize, kind: ColumnKind },
+    SetNumericRepr { col: usize, repr: NumericRepr },
     ToggleHelp,
     CloseHelp,
     GoHome,
     GoEnd,
     SetColumnWidth { col: usize, width: u16 },
-    CycleColumnType,
-    CycleNumericRepr,
 }
 
 impl AppModel {
@@ -95,9 +99,12 @@ impl AppModel {
                 self.view.selected_col = col;
                 self.ensure_column_list_shows_selection(layout.column_list_height);
             }
-            ViewAction::ToggleTypes => {
-                self.view.show_column_types = !self.view.show_column_types;
-            }
+            ViewAction::OpenColumnFormat => self.open_column_format_pane(),
+            ViewAction::CloseColumnFormat => self.close_column_format_pane(),
+            ViewAction::ColumnFormatFocusDelta(delta) => self.column_format_focus_delta(delta),
+            ViewAction::ColumnFormatApply => self.column_format_apply_focus(),
+            ViewAction::SetColumnKind { col, kind } => self.set_column_kind(col, kind),
+            ViewAction::SetNumericRepr { col, repr } => self.set_numeric_repr(col, repr),
             ViewAction::ToggleHelp => self.view.show_help = true,
             ViewAction::CloseHelp => self.view.show_help = false,
             ViewAction::GoHome => self.view.selected_row = 0,
@@ -106,14 +113,6 @@ impl AppModel {
             }
             ViewAction::SetColumnWidth { col, width } => {
                 self.set_column_width(col, width);
-            }
-            ViewAction::CycleColumnType => {
-                let col = self.view.selected_col;
-                self.cycle_column_type(col);
-            }
-            ViewAction::CycleNumericRepr => {
-                let col = self.view.selected_col;
-                self.cycle_numeric_repr(col);
             }
         }
         self.tick(layout);

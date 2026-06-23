@@ -10,7 +10,7 @@ Full-screen terminal table explorer. Stack: **ratatui** 0.29 + **crossterm**. Fr
 │ │ header + visible rows         │ │ idx: name [type]         │ │
 │ │ resizable cells, col scroll   │ │ independent list scroll  │ │
 │ └───────────────────────────────┘ └──────────────────────────┘ │
-│ q quit  ↑↓ rows  ←→ cols  drag resize  t labels  T type  R repr  ? help │
+│ q quit  ↑↓ rows  ←→ cols  drag resize  t format  ? help │
 └─────────────────────────────────────────────────────────────────┘
 ```
 
@@ -20,6 +20,7 @@ Full-screen terminal table explorer. Stack: **ratatui** 0.29 + **crossterm**. Fr
 | **Data table** | Horizontal window (`col_offset`) + vertical window (`row_offset`). Selected cell yellow; selected row dimmed |
 | **Columns pane** | 32-char wide; title `Columns (X–Y/Z)`; selected line `▸` + magenta |
 | **Help** | Centered overlay; `?` opens; `Esc` / `?` closes |
+| **Format picker** | Centered overlay; `t` opens; choose type and numeric representation; `Esc` closes |
 
 Data table uses ratatui `Table`. Column sidebar uses manual `Paragraph` lines (not ratatui `List`; see [column list scrolling](#column-list-scrolling)).
 
@@ -37,7 +38,8 @@ Data table uses ratatui `Table`. Column sidebar uses manual `Paragraph` lines (n
 | `column_kinds` | Per-column type override (`Auto` = infer from loaded rows) |
 | `column_numeric_repr` | General vs scientific formatting for numeric columns |
 | `column_widths_user_set` | Manual resize lock per column |
-| `show_column_types` | Sidebar `[type]` suffix when true |
+| `show_column_format` | Column format picker overlay visible |
+| `column_format_focus` | Highlighted option in format picker (0–4 type, 5–6 representation) |
 | `show_help` | Help overlay visible |
 
 Each frame: `maybe_refit_column_widths()` (when loaded row count changes), `clamp_selection(viewport_rows, table_width)`, and `clamp_column_list_offset(visible_height)`.
@@ -51,11 +53,21 @@ Each frame: `maybe_refit_column_widths()` (when loaded row count changes), `clam
 | `←`/`→` or `h`/`l` | Previous / next column |
 | `PgUp`/`PgDn` | Move selection ±10 rows |
 | `Home`/`End` | First / last loaded row |
-| `t` | Toggle type labels in column list |
-| `T` | Cycle selected column type (auto/text/date/int/float) |
-| `R` | Cycle numeric representation (general/scientific) |
+| `t` | Open column format picker (type + representation) |
 | `?` | Help overlay |
-| `Esc` | Close help |
+| `Esc` | Close format picker or help |
+
+### Format picker (`t`)
+
+While the picker is open, table navigation is disabled:
+
+| Key | Action |
+|-----|--------|
+| `↑`/`↓` or `j`/`k` | Move highlight between options |
+| `Enter` | Apply highlighted option |
+| `Esc` | Close picker |
+
+Type options: **auto**, **text**, **date**, **int**, **float**. Representation (**general**, **scientific**) appears when the column is or will be numeric.
 
 ## Mouse
 

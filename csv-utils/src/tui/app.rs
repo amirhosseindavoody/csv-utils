@@ -4,7 +4,7 @@ use crossterm::terminal::{
     disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen,
 };
 use crossterm::ExecutableCommand;
-use csv_utils_core::column::ColumnKind;
+use csv_utils_core::column::{column_kind_options, ColumnKind, NumericRepr};
 use csv_utils_core::display::truncate_middle;
 use csv_utils_core::model::{AppModel, MAX_COLUMN_WIDTH, MIN_COLUMN_WIDTH};
 use csv_utils_core::schema;
@@ -27,9 +27,7 @@ csv-utils — keyboard shortcuts
   ↑/↓        previous / next row
   ←/→        previous / next column
   PgUp/PgDn  scroll 10 rows
-  t          toggle column type labels
-  T          cycle selected column type (auto/text/date/int/float)
-  R          cycle numeric representation (general/scientific)
+  t          column type & representation picker
   ?          this help
 
 Mouse: click a cell to select row/column; drag column header borders to resize; wheel on table scrolls rows; wheel on column list scrolls columns.
@@ -126,6 +124,17 @@ fn column_list_visible_height(columns_area: Rect) -> usize {
 }
 
 fn handle_key(key: KeyEvent, model: &mut AppModel, column_list_height: usize) -> bool {
+    if model.view.show_column_format {
+        match key.code {
+            KeyCode::Esc => model.close_column_format_pane(),
+            KeyCode::Up | KeyCode::Char('k') => model.column_format_focus_delta(-1),
+            KeyCode::Down | KeyCode::Char('j') => model.column_format_focus_delta(1),
+            KeyCode::Enter => model.column_format_apply_focus(),
+            _ => {}
+        }
+        return true;
+    }
+
     if model.view.show_help {
         if matches!(key.code, KeyCode::Esc | KeyCode::Char('?') | KeyCode::Char('q')) {
             model.view.show_help = false;
@@ -136,9 +145,7 @@ fn handle_key(key: KeyEvent, model: &mut AppModel, column_list_height: usize) ->
     match key.code {
         KeyCode::Char('q') => return false,
         KeyCode::Char('?') => model.view.show_help = true,
-        KeyCode::Char('t') => model.view.show_column_types = !model.view.show_column_types,
-        KeyCode::Char('T') => model.cycle_column_type(model.view.selected_col),
-        KeyCode::Char('R') => model.cycle_numeric_repr(model.view.selected_col),
+        KeyCode::Char('t') => model.open_column_format_pane(),
         KeyCode::Up | KeyCode::Char('k') => {
             model.view.selected_row = model.view.selected_row.saturating_sub(1);
         }
@@ -175,7 +182,7 @@ fn handle_mouse(
     column_list_height: usize,
     column_resize: &mut Option<ColumnResize>,
 ) {
-    if model.view.show_help {
+    if model.view.show_help || model.view.show_column_format {
         return;
     }
 
@@ -396,7 +403,7 @@ fn draw(frame: &mut ratatui::Frame, model: &AppModel) -> LayoutAreas {
     draw_table(frame, table_area, model);
     draw_column_list(frame, columns_area, model);
 
-    let hints = " q quit  ↑↓ rows  ←→ cols  drag resize  t labels  T type  R repr  ? help ";
+    let hints = " q quit  ↑↓ rows  ←→ cols  drag resize  t format  ? help ";
     frame.render_widget(
         Paragraph::new(hints).style(Style::default().fg(Color::DarkGray)),
         outer[2],
@@ -404,6 +411,9 @@ fn draw(frame: &mut ratatui::Frame, model: &AppModel) -> LayoutAreas {
 
     if model.view.show_help {
         draw_help(frame, area);
+    }
+    if model.view.show_column_format {
+        draw_column_format(frame, area, model);
     }
 
     LayoutAreas {
@@ -511,25 +521,18 @@ fn draw_column_list(frame: &mut ratatui::Frame, area: Rect, model: &AppModel) {
     for i in 0..visible_height {
         let col_idx = model.view.column_list_offset + i;
         if let Some(name) = headers.get(col_idx) {
-            let stored = model
-                .view
-                .column_kinds
-                .get(col_idx)
-                .copied()
-                .unwrap_or(ColumnKind::Auto);
+            let stored = model.stored_column_kind(col_idx);
             let effective = model.effective_column_kind(col_idx);
-            let text = if model.view.show_column_types {
-                if stored == ColumnKind::Auto {
-                    format!("{col_idx}: {name} [{}]", effective.label())
-                } else {
-                    format!(
-                        "{col_idx}: {name} [{}={}]",
-                        stored.label(),
-                        effective.label()
-                    )
-                }
+            let text = if stored == ColumnKind::Auto {
+                format!("{col_idx}: {name} [{}]", effective.label())
+            } else if stored != effective {
+                format!(
+                    "{col_idx}: {name} [{}={}]",
+                    stored.label(),
+                    effective.label()
+                )
             } else {
-                format!("{col_idx}: {name}")
+                format!("{col_idx}: {name} [{}]", stored.label())
             };
             let display = truncate_middle(&text, inner.width as usize);
             let style = if col_idx == model.view.selected_col {
@@ -570,6 +573,102 @@ fn draw_column_list(frame: &mut ratatui::Frame, area: Rect, model: &AppModel) {
                 .border_style(Style::default().fg(Color::Magenta)),
         ),
         area,
+    );
+}
+
+fn draw_column_format(frame: &mut ratatui::Frame, area: Rect, model: &AppModel) {
+    let popup_area = centered_rect(52, 62, area);
+    frame.render_widget(Clear, popup_area);
+
+    let col = model.view.selected_col;
+    let headers = model.preview.headers();
+    let name = headers.get(col).map(String::as_str).unwrap_or("?");
+    let stored = model.stored_column_kind(col);
+    let effective = model.effective_column_kind(col);
+    let repr = model.numeric_repr(col);
+    let focus = model.view.column_format_focus;
+    let repr_enabled = model.column_format_repr_enabled();
+
+    let mut lines = vec![
+        Line::from(vec![
+            Span::styled(
+                format!(" Column {col}: {name} "),
+                Style::default().add_modifier(Modifier::BOLD),
+            ),
+        ]),
+        Line::from(""),
+        Line::from(Span::styled(" Type ", Style::default().add_modifier(Modifier::BOLD))),
+    ];
+
+    for (idx, kind) in column_kind_options().iter().enumerate() {
+        let marker = if focus == idx { "▸ " } else { "  " };
+        let selected = stored == *kind;
+        let check = if selected { " ✓" } else { "" };
+        let mut label = kind.label().to_string();
+        if *kind == ColumnKind::Auto && effective != ColumnKind::Auto {
+            label = format!("{label} (inferred: {})", effective.label());
+        }
+        let style = if focus == idx {
+            Style::default()
+                .fg(Color::Black)
+                .bg(Color::Cyan)
+                .add_modifier(Modifier::BOLD)
+        } else if selected {
+            Style::default().fg(Color::Cyan)
+        } else {
+            Style::default()
+        };
+        lines.push(Line::from(Span::styled(
+            format!("{marker}{label}{check}"),
+            style,
+        )));
+    }
+
+    if repr_enabled {
+        lines.push(Line::from(""));
+        lines.push(Line::from(Span::styled(
+            " Representation ",
+            Style::default().add_modifier(Modifier::BOLD),
+        )));
+        for (offset, repr_opt) in [NumericRepr::General, NumericRepr::Scientific]
+            .iter()
+            .enumerate()
+        {
+            let idx = 5 + offset;
+            let marker = if focus == idx { "▸ " } else { "  " };
+            let selected = repr == *repr_opt;
+            let check = if selected { " ✓" } else { "" };
+            let style = if focus == idx {
+                Style::default()
+                    .fg(Color::Black)
+                    .bg(Color::Cyan)
+                    .add_modifier(Modifier::BOLD)
+            } else if selected {
+                Style::default().fg(Color::Cyan)
+            } else {
+                Style::default()
+            };
+            lines.push(Line::from(Span::styled(
+                format!("{marker}{}{check}", repr_opt.label()),
+                style,
+            )));
+        }
+    }
+
+    lines.push(Line::from(""));
+    lines.push(Line::from(Span::styled(
+        " ↑/↓ move  Enter apply  Esc close ",
+        Style::default().fg(Color::DarkGray),
+    )));
+
+    frame.render_widget(
+        Paragraph::new(lines).block(
+            Block::default()
+                .title(" Column format ")
+                .borders(Borders::ALL)
+                .border_style(Style::default().fg(Color::Cyan)),
+        ),
+        popup_area,
     );
 }
 

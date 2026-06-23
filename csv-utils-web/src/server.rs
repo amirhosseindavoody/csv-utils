@@ -6,7 +6,10 @@ use axum::{
     routing::{get, post},
     Router,
 };
-use csv_utils_core::{AppModel, ClientView, ViewAction, ViewLayout};
+use csv_utils_core::{
+    column::{column_kind_from_label, numeric_repr_from_label},
+    AppModel, ClientView, ViewAction, ViewLayout,
+};
 use serde::Deserialize;
 use std::{net::SocketAddr, path::PathBuf, sync::Arc};
 use tokio::sync::Mutex;
@@ -91,7 +94,21 @@ fn parse_action(name: &str, value: &serde_json::Value) -> Option<ViewAction> {
             let col = value.get("col")?.as_u64()? as usize;
             Some(ViewAction::SelectCell { row, col })
         }
-        "toggle_types" => Some(ViewAction::ToggleTypes),
+        "toggle_types" => Some(ViewAction::OpenColumnFormat),
+        "open_column_format" => Some(ViewAction::OpenColumnFormat),
+        "close_column_format" => Some(ViewAction::CloseColumnFormat),
+        "column_format_focus_delta" => value.as_i64().map(|v| ViewAction::ColumnFormatFocusDelta(v as i32)),
+        "column_format_apply" => Some(ViewAction::ColumnFormatApply),
+        "set_column_kind" => {
+            let col = value.get("col")?.as_u64()? as usize;
+            let kind = column_kind_from_label(value.get("kind")?.as_str()?)?;
+            Some(ViewAction::SetColumnKind { col, kind })
+        }
+        "set_numeric_repr" => {
+            let col = value.get("col")?.as_u64()? as usize;
+            let repr = numeric_repr_from_label(value.get("repr")?.as_str()?)?;
+            Some(ViewAction::SetNumericRepr { col, repr })
+        }
         "toggle_help" => Some(ViewAction::ToggleHelp),
         "close_help" => Some(ViewAction::CloseHelp),
         "go_home" => Some(ViewAction::GoHome),
@@ -101,8 +118,8 @@ fn parse_action(name: &str, value: &serde_json::Value) -> Option<ViewAction> {
             let width = value.get("width")?.as_u64()? as u16;
             Some(ViewAction::SetColumnWidth { col, width })
         }
-        "cycle_column_type" => Some(ViewAction::CycleColumnType),
-        "cycle_numeric_repr" => Some(ViewAction::CycleNumericRepr),
+        "cycle_column_type" => Some(ViewAction::OpenColumnFormat),
+        "cycle_numeric_repr" => None,
         _ => None,
     }
 }

@@ -25,7 +25,7 @@ All interactive UIs share one core model (`AppModel`) so behavior stays aligned 
 ## User experience values
 
 - **Keyboard-first in the TUI** — mouse augments (select, scroll, resize), does not replace keys.
-- **Parity where it matters** — TUI and web share selection, scrolling, column list, types toggle, and column resize semantics.
+- **Parity where it matters** — TUI and web share selection, scrolling, column list, format picker, and column resize semantics.
 - **Terminal-native web fallback** — browser UI follows system light/dark by default; explicit theme override when needed.
 - **Fixed-width cells for scanning** — monospace columns auto-fit to header and loaded row content (4–64 chars). Text and dates truncate with middle `...`; numbers rescale (precision/notation) instead of ellipsis.
 

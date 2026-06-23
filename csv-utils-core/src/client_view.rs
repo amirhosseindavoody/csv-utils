@@ -13,13 +13,25 @@ pub struct ClientView {
     pub scan_error: bool,
     pub selected_row: usize,
     pub selected_col: usize,
-    pub show_column_types: bool,
+    pub show_column_format: bool,
+    pub column_format: Option<ClientColumnFormat>,
     pub show_help: bool,
     pub status_line: String,
     pub column_list_offset: usize,
     pub column_count: usize,
     pub table: ClientTable,
     pub sidebar: Vec<ClientSidebarItem>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct ClientColumnFormat {
+    pub column_index: usize,
+    pub column_name: String,
+    pub stored_kind: String,
+    pub effective_kind: String,
+    pub numeric_repr: String,
+    pub repr_enabled: bool,
+    pub focus: usize,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -119,25 +131,18 @@ impl AppModel {
         let sidebar = (sidebar_start..sidebar_end)
             .filter_map(|col_idx| {
                 let name = headers.get(col_idx)?;
-                let stored = self
-                    .view
-                    .column_kinds
-                    .get(col_idx)
-                    .copied()
-                    .unwrap_or(crate::column::ColumnKind::Auto);
+                let stored = self.stored_column_kind(col_idx);
                 let effective = self.effective_column_kind(col_idx);
-                let label = if self.view.show_column_types {
-                    if stored == crate::column::ColumnKind::Auto {
-                        format!("{col_idx}: {name} [{}]", effective.label())
-                    } else {
-                        format!(
-                            "{col_idx}: {name} [{}={}]",
-                            stored.label(),
-                            effective.label()
-                        )
-                    }
+                let label = if stored == crate::column::ColumnKind::Auto {
+                    format!("{col_idx}: {name} [{}]", effective.label())
+                } else if stored != effective {
+                    format!(
+                        "{col_idx}: {name} [{}={}]",
+                        stored.label(),
+                        effective.label()
+                    )
                 } else {
-                    format!("{col_idx}: {name}")
+                    format!("{col_idx}: {name} [{}]", stored.label())
                 };
                 let display = truncate_middle(&label, 32);
                 Some(ClientSidebarItem {
@@ -163,6 +168,24 @@ impl AppModel {
             }
         );
 
+        let column_format = if self.view.show_column_format {
+            let col = self.view.selected_col;
+            let stored = self.stored_column_kind(col);
+            let effective = self.effective_column_kind(col);
+            let repr = self.numeric_repr(col);
+            Some(ClientColumnFormat {
+                column_index: col,
+                column_name: headers.get(col).cloned().unwrap_or_default(),
+                stored_kind: stored.label().to_string(),
+                effective_kind: effective.label().to_string(),
+                numeric_repr: repr.label().to_string(),
+                repr_enabled: self.column_format_repr_enabled(),
+                focus: self.view.column_format_focus,
+            })
+        } else {
+            None
+        };
+
         ClientView {
             file: self.file_label().to_string(),
             row_count: self.preview.row_count(),
@@ -170,7 +193,8 @@ impl AppModel {
             scan_error: self.preview.scan_error(),
             selected_row: self.view.selected_row,
             selected_col: self.view.selected_col,
-            show_column_types: self.view.show_column_types,
+            show_column_format: self.view.show_column_format,
+            column_format,
             show_help: self.view.show_help,
             status_line,
             column_list_offset: self.view.column_list_offset,

@@ -35,12 +35,66 @@ impl ColumnKind {
     }
 }
 
+pub fn column_kind_from_label(label: &str) -> Option<ColumnKind> {
+    match label {
+        "auto" => Some(ColumnKind::Auto),
+        "text" => Some(ColumnKind::Text),
+        "date" => Some(ColumnKind::Date),
+        "int" => Some(ColumnKind::Int),
+        "float" => Some(ColumnKind::Float),
+        _ => None,
+    }
+}
+
+pub fn numeric_repr_from_label(label: &str) -> Option<NumericRepr> {
+    match label {
+        "general" => Some(NumericRepr::General),
+        "scientific" => Some(NumericRepr::Scientific),
+        _ => None,
+    }
+}
+
 impl NumericRepr {
+    pub fn label(self) -> &'static str {
+        match self {
+            NumericRepr::General => "general",
+            NumericRepr::Scientific => "scientific",
+        }
+    }
+
     pub fn cycle(self) -> Self {
         match self {
             NumericRepr::General => NumericRepr::Scientific,
             NumericRepr::Scientific => NumericRepr::General,
         }
+    }
+}
+
+pub fn column_kind_options() -> &'static [ColumnKind] {
+    &[
+        ColumnKind::Auto,
+        ColumnKind::Text,
+        ColumnKind::Date,
+        ColumnKind::Int,
+        ColumnKind::Float,
+    ]
+}
+
+pub fn column_kind_index(kind: ColumnKind) -> usize {
+    column_kind_options()
+        .iter()
+        .position(|k| *k == kind)
+        .unwrap_or(0)
+}
+
+pub fn numeric_repr_options() -> &'static [NumericRepr] {
+    &[NumericRepr::General, NumericRepr::Scientific]
+}
+
+pub fn numeric_repr_index(repr: NumericRepr) -> usize {
+    match repr {
+        NumericRepr::General => 0,
+        NumericRepr::Scientific => 1,
     }
 }
 

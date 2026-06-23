@@ -67,52 +67,76 @@ fn format_int_scientific(n: i64, prec: usize) -> String {
     format!("{n:.prec$e}")
 }
 
+fn format_int_with_repr(n: i64, width: usize, repr: NumericRepr) -> Option<String> {
+    match repr {
+        NumericRepr::General => {
+            let plain = format_int_plain(n);
+            if fits(&plain, width) {
+                return Some(plain);
+            }
+            for prec in (0..=6).rev() {
+                let s = format_int_scientific(n, prec);
+                if fits(&s, width) {
+                    return Some(s);
+                }
+            }
+        }
+        NumericRepr::Scientific => {
+            for prec in (0..=6).rev() {
+                let s = format_int_scientific(n, prec);
+                if fits(&s, width) {
+                    return Some(s);
+                }
+            }
+            let plain = format_int_plain(n);
+            if fits(&plain, width) {
+                return Some(plain);
+            }
+        }
+    }
+    None
+}
+
+fn format_float_with_repr(n: f64, width: usize, repr: NumericRepr) -> Option<String> {
+    let try_order: &[NumericRepr] = match repr {
+        NumericRepr::General => &[NumericRepr::General, NumericRepr::Scientific],
+        NumericRepr::Scientific => &[NumericRepr::Scientific, NumericRepr::General],
+    };
+    for &r in try_order {
+        for prec in (0..=12).rev() {
+            let s = match r {
+                NumericRepr::General => format_float_general(n, prec),
+                NumericRepr::Scientific => format_float_scientific(n, prec),
+            };
+            if fits(&s, width) {
+                return Some(s);
+            }
+        }
+    }
+    None
+}
+
 pub fn format_numeric_cell(text: &str, width: usize, kind: ColumnKind, repr: NumericRepr) -> String {
     if width == 0 {
         return String::new();
     }
     let sanitized = sanitize_ascii(text);
-    if fits(&sanitized, width) {
-        return pad_left(&sanitized, width);
-    }
 
     match kind {
         ColumnKind::Int => {
             if let Ok(n) = sanitized.parse::<i64>() {
-                let plain = format_int_plain(n);
-                if fits(&plain, width) {
-                    return pad_left(&plain, width);
-                }
-                for prec in (0..=6).rev() {
-                    let s = format_int_scientific(n, prec);
-                    if fits(&s, width) {
-                        return pad_left(&s, width);
-                    }
-                }
-                for prec in (0..=3).rev() {
-                    let s = format!("{n:.prec$e}");
-                    if fits(&s, width) {
-                        return pad_left(&s, width);
-                    }
+                if let Some(s) = format_int_with_repr(n, width, repr) {
+                    return pad_left(&s, width);
                 }
             }
         }
         ColumnKind::Float => {
             if let Ok(n) = sanitized.parse::<f64>() {
-                let try_order: &[NumericRepr] = match repr {
-                    NumericRepr::General => &[NumericRepr::General, NumericRepr::Scientific],
-                    NumericRepr::Scientific => &[NumericRepr::Scientific, NumericRepr::General],
-                };
-                for &r in try_order {
-                    for prec in (0..=12).rev() {
-                        let s = match r {
-                            NumericRepr::General => format_float_general(n, prec),
-                            NumericRepr::Scientific => format_float_scientific(n, prec),
-                        };
-                        if fits(&s, width) {
-                            return pad_left(&s, width);
-                        }
-                    }
+                if repr == NumericRepr::General && fits(&sanitized, width) {
+                    return pad_left(&sanitized, width);
+                }
+                if let Some(s) = format_float_with_repr(n, width, repr) {
+                    return pad_left(&s, width);
                 }
             }
         }
@@ -176,5 +200,15 @@ mod tests {
     fn text_uses_middle_ellipsis() {
         let s = format_cell_for_column("hello world", 8, ColumnKind::Text, NumericRepr::General);
         assert_eq!(s, "he...rld");
+    }
+
+    #[test]
+    fn scientific_repr_when_raw_fits() {
+        let general = format_numeric_cell("770.11", 10, ColumnKind::Float, NumericRepr::General);
+        assert_eq!(general.trim(), "770.11");
+
+        let scientific =
+            format_numeric_cell("770.11", 10, ColumnKind::Float, NumericRepr::Scientific);
+        assert!(scientific.contains('e') || scientific.contains('E'));
     }
 }

@@ -34,8 +34,8 @@ Inferred from **loaded cell values** when kind is `Auto`:
 
 Location: `csv-utils-core/src/column.rs` (`infer_column_kind_from_values`).
 
-Override the selected column with **`T`** (cycle **auto → text → date → int → float → auto**). Toggle type labels in the sidebar with **`t`**.
+Override the selected column with **`t`**, which opens a format picker for **auto**, **text**, **date**, **int**, and **float**. For numeric columns, the picker also offers **general** vs **scientific** representation (affects formatting and auto-fit width).
 
-For numeric columns, **`R`** cycles representation **general ↔ scientific** (affects formatting and auto-fit width).
+The column sidebar always shows the stored type (and inferred type when set to auto).
 
 Types affect alignment, sidebar labels, truncation vs rescaling, and numeric notation only; they do not change CLI parsing.
