@@ -3,9 +3,9 @@
 Current constraints and intentional trade-offs.
 
 - TUI/web hold all body lines in memory as raw strings (not suitable for multi-GB files without paging).
-- Column types are name-prefix heuristics, not value inference.
+- Type inference scans **loaded rows only**; very long values in unscanned tail rows may not affect auto-fit until loaded.
+- Manual column resize locks width for that column until a new file is opened; widths are not persisted across sessions.
 - CLI commands re-open files; no shared cache with TUI/web sessions.
-- Column widths reset when the TUI/web session restarts (not persisted).
 - Row navigation is limited to loaded lines until the background scan completes.
 - JSON CLI output does not escape embedded quotes in values.
 - Web UI uses fixed layout constants (not terminal/window resize aware on the server side).

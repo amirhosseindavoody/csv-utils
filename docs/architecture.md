@@ -81,8 +81,9 @@ csv-utils-core/src/
   unique.rs
   json_view.rs
   engine.rs          # CLI orchestration
-  column.rs          # header-prefix type heuristics
-  model.rs           # AppModel, TableViewState, format_cell
+  column.rs          # ColumnKind, value-based type inference
+  display.rs         # truncate_middle, numeric rescaling, format_cell_for_column
+  model.rs           # AppModel, TableViewState, auto-fit column widths
   actions.rs         # ViewAction, apply_action
   client_view.rs     # ClientView JSON
 

@@ -27,12 +27,11 @@ All interactive UIs share one core model (`AppModel`) so behavior stays aligned 
 - **Keyboard-first in the TUI** — mouse augments (select, scroll, resize), does not replace keys.
 - **Parity where it matters** — TUI and web share selection, scrolling, column list, types toggle, and column resize semantics.
 - **Terminal-native web fallback** — browser UI follows system light/dark by default; explicit theme override when needed.
-- **Fixed-width cells for scanning** — monospace columns with truncation (`~`) beat wrapping for wide CSVs.
+- **Fixed-width cells for scanning** — monospace columns auto-fit to header and loaded row content (4–64 chars). Text and dates truncate with middle `...`; numbers rescale (precision/notation) instead of ellipsis.
 
 ## Non-goals (for now)
 
 - Full CSV RFC dialect support (custom delimiters, multiline records beyond quoted fields).
-- Value-based column type inference (types come from header name prefixes in test data / heuristics).
 - Persisted UI state across sessions (column widths, selection, scroll).
 - Single in-process cache shared between CLI and TUI invocations.
 

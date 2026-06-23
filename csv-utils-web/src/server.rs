@@ -101,6 +101,8 @@ fn parse_action(name: &str, value: &serde_json::Value) -> Option<ViewAction> {
             let width = value.get("width")?.as_u64()? as u16;
             Some(ViewAction::SetColumnWidth { col, width })
         }
+        "cycle_column_type" => Some(ViewAction::CycleColumnType),
+        "cycle_numeric_repr" => Some(ViewAction::CycleNumericRepr),
         _ => None,
     }
 }

@@ -1,5 +1,6 @@
-use crate::column::{infer_column_kind, is_right_aligned};
-use crate::model::{format_cell, AppModel};
+use crate::column::is_right_aligned;
+use crate::display::{format_cell_for_column, truncate_middle};
+use crate::model::AppModel;
 use crate::schema;
 use crate::ViewLayout;
 use serde::Serialize;
@@ -84,12 +85,14 @@ impl AppModel {
                 .clone()
                 .map(|col_idx| {
                     let text = fields.get(col_idx).map(String::as_str).unwrap_or("");
-                    let kind = infer_column_kind(&headers[col_idx]);
+                    let kind = self.effective_column_kind(col_idx);
+                    let repr = self.numeric_repr(col_idx);
                     ClientCell {
-                        text: format_cell(
+                        text: format_cell_for_column(
                             text,
                             self.column_width_chars(col_idx),
-                            is_right_aligned(kind),
+                            kind,
+                            repr,
                         ),
                         align_right: is_right_aligned(kind),
                         selected: row_selected && col_idx == self.view.selected_col,
@@ -107,7 +110,7 @@ impl AppModel {
             .clone()
             .map(|col_idx| ClientColumnHeader {
                 index: col_idx,
-                name: headers[col_idx].clone(),
+                name: self.format_column_header(col_idx, &headers[col_idx]),
                 width: self.column_width_chars(col_idx) as u16,
                 selected: col_idx == self.view.selected_col,
             })
@@ -116,15 +119,30 @@ impl AppModel {
         let sidebar = (sidebar_start..sidebar_end)
             .filter_map(|col_idx| {
                 let name = headers.get(col_idx)?;
-                let kind = infer_column_kind(name);
+                let stored = self
+                    .view
+                    .column_kinds
+                    .get(col_idx)
+                    .copied()
+                    .unwrap_or(crate::column::ColumnKind::Auto);
+                let effective = self.effective_column_kind(col_idx);
                 let label = if self.view.show_column_types {
-                    format!("{col_idx}: {name} [{}]", kind.label())
+                    if stored == crate::column::ColumnKind::Auto {
+                        format!("{col_idx}: {name} [{}]", effective.label())
+                    } else {
+                        format!(
+                            "{col_idx}: {name} [{}={}]",
+                            stored.label(),
+                            effective.label()
+                        )
+                    }
                 } else {
                     format!("{col_idx}: {name}")
                 };
+                let display = truncate_middle(&label, 32);
                 Some(ClientSidebarItem {
                     index: col_idx,
-                    label,
+                    label: display,
                     selected: col_idx == self.view.selected_col,
                 })
             })

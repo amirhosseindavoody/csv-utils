@@ -2,7 +2,7 @@
 
 Living documentation for behavior, architecture, and development workflows. Update these docs in the same change as user-visible code changes.
 
-Last verified against: `main` (Rust TUI + browser web UI + conda package, June 2025).
+Last verified against: `main` (smart column display + value type inference, June 2025).
 
 ---
 

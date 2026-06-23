@@ -207,7 +207,9 @@
   ↑/↓        previous / next row
   ←/→        previous / next column
   PgUp/PgDn  scroll 10 rows
-  t          toggle column types
+  t          toggle column type labels
+  T          cycle selected column type
+  R          cycle numeric representation
   ?          help
   Esc        close help
 
@@ -424,6 +426,8 @@ Theme button (header): System · Light · Dark.`;
       else if (e.key === 'Home') { e.preventDefault(); postAction('go_home', null); }
       else if (e.key === 'End') { e.preventDefault(); postAction('go_end', null); }
       else if (e.key === 't') { e.preventDefault(); postAction('toggle_types', null); }
+      else if (e.key === 'T') { e.preventDefault(); postAction('cycle_column_type', null); }
+      else if (e.key === 'R') { e.preventDefault(); postAction('cycle_numeric_repr', null); }
       else if (e.key === '?') { e.preventDefault(); postAction('toggle_help', null); }
       else if (e.key === 'Escape') { e.preventDefault(); postAction('close_help', null); }
     });

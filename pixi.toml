@@ -23,10 +23,10 @@ rust = ">=1.96.0,<1.97"
 csv-utils = { path = "." }
 
 [tasks]
-build = "bash -lc 'source \"$HOME/.cargo/env\" 2>/dev/null || true; cargo build --release'"
-run = "bash -lc 'source \"$HOME/.cargo/env\" 2>/dev/null || true; cargo run --release -p csv-utils -- \"$@\"' --"
-tui = "bash -lc 'source \"$HOME/.cargo/env\" 2>/dev/null || true; cargo run --release -p csv-utils -- tui \"$@\"' --"
-test = "bash -lc 'source \"$HOME/.cargo/env\" 2>/dev/null || true; cargo test'"
+build = "cargo build --release"
+run = "cargo run --release -p csv-utils --"
+tui = "cargo run --release -p csv-utils -- tui"
+test = "cargo test"
 gen-test-data = "python scripts/generate_test_data.py"
 test-tui-small = "pixi run tui test-data/generated/test_1000x100.csv"
 test-tui-large = "pixi run tui test-data/generated/test_10000x1000.csv"

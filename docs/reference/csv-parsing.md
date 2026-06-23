@@ -10,30 +10,32 @@ CLI, preview rendering, and tests all use this function.
 
 ## Cell display
 
-`format_cell(text, width, align_right)` in `model.rs`:
+Formatting lives in `csv-utils-core/src/display.rs`:
 
 - Fixed-width monospace cells
 - Non-printable bytes → `.`
-- Truncation marker → `~` at last visible character
-- Default width **18** (`CELL_DISPLAY_WIDTH`); per-column override 4–64
+- **Text / date** — middle ellipsis (`...`) when wider than the column
+- **Int / float** — rescaled to fit (reduced precision, general or scientific notation); no ellipsis
+- Column widths **auto-fit** to header + loaded row content, clamped **4–64** (`MIN_COLUMN_WIDTH` / `MAX_COLUMN_WIDTH` in `model.rs`)
+- Manual column resize (TUI/web drag) locks that column until a new file is opened
+
+Entry point: `format_cell_for_column(text, width, kind, repr)`.
 
 ## Column types (display only)
 
-Inferred from **header name prefixes** (matches test data generator):
+Inferred from **loaded cell values** when kind is `Auto`:
 
-| Prefix | Kind | Alignment |
-|--------|------|-----------|
-| `str_` | string | left |
-| `long_str_` | long string | left |
-| `float_general_` | float | right |
-| `float_scientific_` | float (sci) | right |
-| `float_mixed_` | float (mixed) | right |
-| `int_` | integer | right |
-| `date_` | date | left |
-| (other) | unknown | left |
+| Inferred kind | Rule | Alignment |
+|---------------|------|-----------|
+| `date` | All non-empty values match `YYYY-MM-DD` | left |
+| `int` | All non-empty values parse as integers | right |
+| `float` | All non-empty values parse as floats | right |
+| `text` | Otherwise | left |
 
-Location: `csv-utils-core/src/column.rs`
+Location: `csv-utils-core/src/column.rs` (`infer_column_kind_from_values`).
 
-Types affect alignment and sidebar labels only; they are not inferred from cell values.
+Override the selected column with **`T`** (cycle **auto → text → date → int → float → auto**). Toggle type labels in the sidebar with **`t`**.
 
-Toggle type labels in TUI/web with `t`.
+For numeric columns, **`R`** cycles representation **general ↔ scientific** (affects formatting and auto-fit width).
+
+Types affect alignment, sidebar labels, truncation vs rescaling, and numeric notation only; they do not change CLI parsing.

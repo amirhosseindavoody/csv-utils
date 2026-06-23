@@ -4,8 +4,9 @@ use crossterm::terminal::{
     disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen,
 };
 use crossterm::ExecutableCommand;
-use csv_utils_core::column::{infer_column_kind, is_right_aligned};
-use csv_utils_core::model::{format_cell, AppModel, MAX_COLUMN_WIDTH, MIN_COLUMN_WIDTH};
+use csv_utils_core::column::ColumnKind;
+use csv_utils_core::display::truncate_middle;
+use csv_utils_core::model::{AppModel, MAX_COLUMN_WIDTH, MIN_COLUMN_WIDTH};
 use csv_utils_core::schema;
 use ratatui::backend::CrosstermBackend;
 use ratatui::layout::{Constraint, Direction, Layout, Position, Rect};
@@ -27,6 +28,8 @@ csv-utils — keyboard shortcuts
   ←/→        previous / next column
   PgUp/PgDn  scroll 10 rows
   t          toggle column type labels
+  T          cycle selected column type (auto/text/date/int/float)
+  R          cycle numeric representation (general/scientific)
   ?          this help
 
 Mouse: click a cell to select row/column; drag column header borders to resize; wheel on table scrolls rows; wheel on column list scrolls columns.
@@ -65,7 +68,7 @@ pub fn run(file: Option<&str>) -> Result<()> {
     let mut column_resize: Option<ColumnResize> = None;
 
     while running {
-        model.ensure_column_widths();
+        model.maybe_update_column_layout();
         terminal.draw(|frame| {
             areas = draw(frame, &model);
         })?;
@@ -134,6 +137,8 @@ fn handle_key(key: KeyEvent, model: &mut AppModel, column_list_height: usize) ->
         KeyCode::Char('q') => return false,
         KeyCode::Char('?') => model.view.show_help = true,
         KeyCode::Char('t') => model.view.show_column_types = !model.view.show_column_types,
+        KeyCode::Char('T') => model.cycle_column_type(model.view.selected_col),
+        KeyCode::Char('R') => model.cycle_numeric_repr(model.view.selected_col),
         KeyCode::Up | KeyCode::Char('k') => {
             model.view.selected_row = model.view.selected_row.saturating_sub(1);
         }
@@ -391,7 +396,7 @@ fn draw(frame: &mut ratatui::Frame, model: &AppModel) -> LayoutAreas {
     draw_table(frame, table_area, model);
     draw_column_list(frame, columns_area, model);
 
-    let hints = " q quit  ↑↓ rows  ←→ cols  drag header borders  t types  ? help ";
+    let hints = " q quit  ↑↓ rows  ←→ cols  drag resize  t labels  T type  R repr  ? help ";
     frame.render_widget(
         Paragraph::new(hints).style(Style::default().fg(Color::DarkGray)),
         outer[2],
@@ -439,7 +444,7 @@ fn draw_table(frame: &mut ratatui::Frame, area: Rect, model: &AppModel) {
                 } else {
                     Style::default().add_modifier(Modifier::BOLD)
                 };
-                Cell::from(*name).style(style)
+                Cell::from(model.format_column_header(col_idx, name)).style(style)
             })
             .collect::<Vec<_>>(),
     )
@@ -460,12 +465,7 @@ fn draw_table(frame: &mut ratatui::Frame, area: Rect, model: &AppModel) {
             .enumerate()
             .map(|(_i, col_idx)| {
                 let text = fields.get(col_idx).map(String::as_str).unwrap_or("");
-                let kind = infer_column_kind(&headers[col_idx]);
-                let display = format_cell(
-                    text,
-                    model.column_width_chars(col_idx),
-                    is_right_aligned(kind),
-                );
+                let display = model.format_column_cell(col_idx, text);
                 let mut style = Style::default();
                 if row_selected {
                     style = style.bg(Color::DarkGray);
@@ -511,13 +511,27 @@ fn draw_column_list(frame: &mut ratatui::Frame, area: Rect, model: &AppModel) {
     for i in 0..visible_height {
         let col_idx = model.view.column_list_offset + i;
         if let Some(name) = headers.get(col_idx) {
-            let kind = infer_column_kind(name);
+            let stored = model
+                .view
+                .column_kinds
+                .get(col_idx)
+                .copied()
+                .unwrap_or(ColumnKind::Auto);
+            let effective = model.effective_column_kind(col_idx);
             let text = if model.view.show_column_types {
-                format!("{col_idx}: {name} [{}]", kind.label())
+                if stored == ColumnKind::Auto {
+                    format!("{col_idx}: {name} [{}]", effective.label())
+                } else {
+                    format!(
+                        "{col_idx}: {name} [{}={}]",
+                        stored.label(),
+                        effective.label()
+                    )
+                }
             } else {
                 format!("{col_idx}: {name}")
             };
-            let display = format_cell(&text, inner.width as usize, false);
+            let display = truncate_middle(&text, inner.width as usize);
             let style = if col_idx == model.view.selected_col {
                 Style::default()
                     .fg(Color::Black)

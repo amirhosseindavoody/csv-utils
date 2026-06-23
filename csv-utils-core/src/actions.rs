@@ -31,11 +31,14 @@ pub enum ViewAction {
     GoHome,
     GoEnd,
     SetColumnWidth { col: usize, width: u16 },
+    CycleColumnType,
+    CycleNumericRepr,
 }
 
 impl AppModel {
     pub fn tick(&mut self, layout: ViewLayout) {
-        self.ensure_column_widths();
+        self.ensure_column_state();
+        self.maybe_update_column_layout();
         self.clamp_selection(layout.viewport_rows.max(1), layout.table_width);
         self.clamp_column_list_offset(layout.column_list_height);
     }
@@ -103,6 +106,14 @@ impl AppModel {
             }
             ViewAction::SetColumnWidth { col, width } => {
                 self.set_column_width(col, width);
+            }
+            ViewAction::CycleColumnType => {
+                let col = self.view.selected_col;
+                self.cycle_column_type(col);
+            }
+            ViewAction::CycleNumericRepr => {
+                let col = self.view.selected_col;
+                self.cycle_numeric_repr(col);
             }
         }
         self.tick(layout);

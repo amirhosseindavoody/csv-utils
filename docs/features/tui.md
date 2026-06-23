@@ -10,7 +10,7 @@ Full-screen terminal table explorer. Stack: **ratatui** 0.29 + **crossterm**. Fr
 │ │ header + visible rows         │ │ idx: name [type]         │ │
 │ │ resizable cells, col scroll   │ │ independent list scroll  │ │
 │ └───────────────────────────────┘ └──────────────────────────┘ │
-│ q quit  ↑↓ rows  ←→ cols  drag header borders  t types  ? help │
+│ q quit  ↑↓ rows  ←→ cols  drag resize  t labels  T type  R repr  ? help │
 └─────────────────────────────────────────────────────────────────┘
 ```
 
@@ -33,11 +33,14 @@ Data table uses ratatui `Table`. Column sidebar uses manual `Paragraph` lines (n
 | `row_offset` | First body row in table viewport |
 | `col_offset` | First column in table viewport |
 | `column_list_offset` | First column shown in sidebar (independent of selection) |
-| `column_widths` | Per-column cell width in characters (default 18, range 4–64) |
+| `column_widths` | Per-column cell width in characters (auto-fit 4–64; manual drag locks column) |
+| `column_kinds` | Per-column type override (`Auto` = infer from loaded rows) |
+| `column_numeric_repr` | General vs scientific formatting for numeric columns |
+| `column_widths_user_set` | Manual resize lock per column |
 | `show_column_types` | Sidebar `[type]` suffix when true |
 | `show_help` | Help overlay visible |
 
-Each frame: `clamp_selection(viewport_rows, table_width)` and `clamp_column_list_offset(visible_height)`.
+Each frame: `maybe_refit_column_widths()` (when loaded row count changes), `clamp_selection(viewport_rows, table_width)`, and `clamp_column_list_offset(visible_height)`.
 
 ## Keyboard
 
@@ -49,6 +52,8 @@ Each frame: `clamp_selection(viewport_rows, table_width)` and `clamp_column_list
 | `PgUp`/`PgDn` | Move selection ±10 rows |
 | `Home`/`End` | First / last loaded row |
 | `t` | Toggle type labels in column list |
+| `T` | Cycle selected column type (auto/text/date/int/float) |
+| `R` | Cycle numeric representation (general/scientific) |
 | `?` | Help overlay |
 | `Esc` | Close help |
 

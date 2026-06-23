@@ -33,7 +33,7 @@ Same logical regions as the TUI: title/meta bar, data table, column sidebar, hin
 
 ## Keyboard
 
-Mirrors the TUI: `↑↓←→`, `PgUp`/`PgDn`, `Home`/`End`, `t`, `?`, `Esc`.
+Mirrors the TUI: `↑↓←→`, `PgUp`/`PgDn`, `Home`/`End`, `t`, `T`, `R`, `?`, `Esc`.
 
 ## Mouse
 
@@ -55,6 +55,8 @@ Example action:
 {"action": "row_delta", "value": -1}
 {"action": "select_cell", "value": {"row": 0, "col": 2}}
 {"action": "set_column_width", "value": {"col": 0, "width": 24}}
+{"action": "cycle_column_type"}
+{"action": "cycle_numeric_repr"}
 ```
 
 The page polls `/api/state` while the background scan runs (`scan_done: false`).
