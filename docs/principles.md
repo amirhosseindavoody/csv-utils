@@ -1,0 +1,39 @@
+# Guiding principles
+
+These principles explain *why* csv-utils is shaped the way it is. For concrete behavior, see the [user guide](index.md#user-guide); for crate layout, see [architecture](architecture.md).
+
+## Purpose
+
+`csv-utils` is a Rust CSV tool with three surfaces:
+
+| Surface | Role |
+|---------|------|
+| **CLI** | Streaming stats, filters, unique values, and JSON export on large files |
+| **TUI** | Interactive table exploration with progressive loading |
+| **Web UI** | Same exploration model in a browser via a local HTTP server |
+
+All interactive UIs share one core model (`AppModel`) so behavior stays aligned across terminal and browser.
+
+## Design goals
+
+1. **Fast initial paint** — show headers and the first rows immediately; grow row count in the background.
+2. **Simple, predictable CSV parsing** — quoted fields via `split_row`; no full dialect engine.
+3. **One shared core** — `csv-utils-core` owns parsing, preview, CLI engine, and view state; frontends are thin.
+4. **Progressive disclosure** — CLI for scripts; TUI/web when you need to look around a file.
+5. **Honest limits** — document memory and loading constraints rather than pretending to handle multi-GB files in the TUI.
+
+## User experience values
+
+- **Keyboard-first in the TUI** — mouse augments (select, scroll, resize), does not replace keys.
+- **Parity where it matters** — TUI and web share selection, scrolling, column list, types toggle, and column resize semantics.
+- **Terminal-native web fallback** — browser UI follows system light/dark by default; explicit theme override when needed.
+- **Fixed-width cells for scanning** — monospace columns with truncation (`~`) beat wrapping for wide CSVs.
+
+## Non-goals (for now)
+
+- Full CSV RFC dialect support (custom delimiters, multiline records beyond quoted fields).
+- Value-based column type inference (types come from header name prefixes in test data / heuristics).
+- Persisted UI state across sessions (column widths, selection, scroll).
+- Single in-process cache shared between CLI and TUI invocations.
+
+See [known limitations](reference/limitations.md) for the full list.

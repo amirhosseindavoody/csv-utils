@@ -2,7 +2,7 @@
 
 High-performance CSV utility with CLI and interactive TUI (Rust + ratatui).
 
-Design and behavior: **[docs/DESIGN.md](docs/DESIGN.md)**.
+Design and behavior: **[docs/index.md](docs/index.md)** (structured guide; [DESIGN.md](docs/DESIGN.md) redirects there).
 
 ## Prerequisites
 
@@ -62,7 +62,7 @@ Build a `.conda` package (includes `csv-utils` and `csv-utils-web` binaries):
 pixi run conda-package
 ```
 
-Artifact: `dist/csv-utils-*.conda`. Uses conda-forge Rust via `recipe/recipe.yaml` and the `pixi-build-rattler-build` backend. See [docs/DESIGN.md](docs/DESIGN.md#conda-package-pixi-build).
+Artifact: `dist/csv-utils-*.conda`. See [docs/development/build.md](docs/development/build.md#conda-package).
 
 ## Status
 
