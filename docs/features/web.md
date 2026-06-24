@@ -33,7 +33,7 @@ Same logical regions as the TUI: title/meta bar, data table, column sidebar, hin
 
 ## Keyboard
 
-Mirrors the TUI: `↑↓←→`, `PgUp`/`PgDn`, `Home`/`End`, `t` (format picker), `?`, `Esc`.
+Mirrors the TUI: `↑↓←→`, `PgUp`/`PgDn`, `Home`/`End`, `t` (format picker), `c` (column info), `?`, `q` (close panel).
 
 ## Mouse
 
@@ -56,6 +56,9 @@ Example action:
 {"action": "select_cell", "value": {"row": 0, "col": 2}}
 {"action": "set_column_width", "value": {"col": 0, "width": 24}}
 {"action": "open_column_format"}
+{"action": "open_column_info"}
+{"action": "close_column_info"}
+{"action": "toggle_column_type_labels"}
 {"action": "close_column_format"}
 {"action": "column_format_focus_delta", "value": 1}
 {"action": "column_format_apply"}

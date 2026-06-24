@@ -110,7 +110,7 @@ pub fn is_right_aligned(kind: ColumnKind) -> bool {
     is_numeric(kind)
 }
 
-fn is_date_value(s: &str) -> bool {
+pub(crate) fn is_date_value(s: &str) -> bool {
     let b = s.as_bytes();
     b.len() == 10
         && b[4] == b'-'
@@ -120,11 +120,11 @@ fn is_date_value(s: &str) -> bool {
         && b[8..10].iter().all(|c| c.is_ascii_digit())
 }
 
-fn is_int_value(s: &str) -> bool {
+pub(crate) fn is_int_value(s: &str) -> bool {
     s.parse::<i64>().is_ok() && !s.contains('.') && !s.contains('e') && !s.contains('E')
 }
 
-fn is_float_value(s: &str) -> bool {
+pub(crate) fn is_float_value(s: &str) -> bool {
     s.parse::<f64>().is_ok()
 }
 

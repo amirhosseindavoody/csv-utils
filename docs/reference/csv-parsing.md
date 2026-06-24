@@ -36,6 +36,6 @@ Location: `csv-utils-core/src/column.rs` (`infer_column_kind_from_values`).
 
 Override the selected column with **`t`**, which opens a format picker for **auto**, **text**, **date**, **int**, and **float**. For numeric columns, the picker also offers **general** vs **scientific** representation (affects formatting and auto-fit width).
 
-The column sidebar always shows the stored type (and inferred type when set to auto).
+Press **`c`** to open a column info panel with type, representation, and type-specific statistics (computed from loaded rows while scanning).
 
 Types affect alignment, sidebar labels, truncation vs rescaling, and numeric notation only; they do not change CLI parsing.

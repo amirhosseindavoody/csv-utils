@@ -28,6 +28,8 @@ pub enum ViewAction {
     SelectColumn(usize),
     OpenColumnFormat,
     CloseColumnFormat,
+    OpenColumnInfo,
+    CloseColumnInfo,
     ColumnFormatFocusDelta(i32),
     ColumnFormatApply,
     SetColumnKind { col: usize, kind: ColumnKind },
@@ -101,6 +103,8 @@ impl AppModel {
             }
             ViewAction::OpenColumnFormat => self.open_column_format_pane(),
             ViewAction::CloseColumnFormat => self.close_column_format_pane(),
+            ViewAction::OpenColumnInfo => self.open_column_info_pane(),
+            ViewAction::CloseColumnInfo => self.close_column_info_pane(),
             ViewAction::ColumnFormatFocusDelta(delta) => self.column_format_focus_delta(delta),
             ViewAction::ColumnFormatApply => self.column_format_apply_focus(),
             ViewAction::SetColumnKind { col, kind } => self.set_column_kind(col, kind),

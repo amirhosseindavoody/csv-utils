@@ -23,16 +23,17 @@ use std::time::{Duration, Instant};
 const HELP_TEXT: &str = "\
 csv-utils — keyboard shortcuts
 
-  q          quit
+  q          quit (closes a panel when one is open)
   ↑/↓        previous / next row
   ←/→        previous / next column
   PgUp/PgDn  scroll 10 rows
   t          column type & representation picker
+  c          column info (type, stats)
   ?          this help
 
 Mouse: click a cell to select row/column; drag column header borders to resize; wheel on table scrolls rows; wheel on column list scrolls columns.
 
-Press Esc or ? to close.";
+Press q or ? to close.";
 
 struct LayoutAreas {
     table: Rect,
@@ -124,9 +125,19 @@ fn column_list_visible_height(columns_area: Rect) -> usize {
 }
 
 fn handle_key(key: KeyEvent, model: &mut AppModel, column_list_height: usize) -> bool {
+    if model.view.show_column_info {
+        if matches!(key.code, KeyCode::Char('q')) {
+            model.close_column_info_pane();
+        } else if matches!(key.code, KeyCode::Char('t')) {
+            model.close_column_info_pane();
+            model.open_column_format_pane();
+        }
+        return true;
+    }
+
     if model.view.show_column_format {
         match key.code {
-            KeyCode::Esc => model.close_column_format_pane(),
+            KeyCode::Char('q') => model.close_column_format_pane(),
             KeyCode::Up | KeyCode::Char('k') => model.column_format_focus_delta(-1),
             KeyCode::Down | KeyCode::Char('j') => model.column_format_focus_delta(1),
             KeyCode::Enter => model.column_format_apply_focus(),
@@ -136,7 +147,7 @@ fn handle_key(key: KeyEvent, model: &mut AppModel, column_list_height: usize) ->
     }
 
     if model.view.show_help {
-        if matches!(key.code, KeyCode::Esc | KeyCode::Char('?') | KeyCode::Char('q')) {
+        if matches!(key.code, KeyCode::Char('?') | KeyCode::Char('q')) {
             model.view.show_help = false;
         }
         return true;
@@ -146,6 +157,7 @@ fn handle_key(key: KeyEvent, model: &mut AppModel, column_list_height: usize) ->
         KeyCode::Char('q') => return false,
         KeyCode::Char('?') => model.view.show_help = true,
         KeyCode::Char('t') => model.open_column_format_pane(),
+        KeyCode::Char('c') => model.open_column_info_pane(),
         KeyCode::Up | KeyCode::Char('k') => {
             model.view.selected_row = model.view.selected_row.saturating_sub(1);
         }
@@ -182,7 +194,7 @@ fn handle_mouse(
     column_list_height: usize,
     column_resize: &mut Option<ColumnResize>,
 ) {
-    if model.view.show_help || model.view.show_column_format {
+    if model.view.show_help || model.view.show_column_format || model.view.show_column_info {
         return;
     }
 
@@ -403,7 +415,7 @@ fn draw(frame: &mut ratatui::Frame, model: &AppModel) -> LayoutAreas {
     draw_table(frame, table_area, model);
     draw_column_list(frame, columns_area, model);
 
-    let hints = " q quit  ↑↓ rows  ←→ cols  drag resize  t format  ? help ";
+    let hints = " q quit  ↑↓ rows  ←→ cols  drag resize  t format  c info  ? help ";
     frame.render_widget(
         Paragraph::new(hints).style(Style::default().fg(Color::DarkGray)),
         outer[2],
@@ -414,6 +426,9 @@ fn draw(frame: &mut ratatui::Frame, model: &AppModel) -> LayoutAreas {
     }
     if model.view.show_column_format {
         draw_column_format(frame, area, model);
+    }
+    if model.view.show_column_info {
+        draw_column_info(frame, area, model);
     }
 
     LayoutAreas {
@@ -521,19 +536,7 @@ fn draw_column_list(frame: &mut ratatui::Frame, area: Rect, model: &AppModel) {
     for i in 0..visible_height {
         let col_idx = model.view.column_list_offset + i;
         if let Some(name) = headers.get(col_idx) {
-            let stored = model.stored_column_kind(col_idx);
-            let effective = model.effective_column_kind(col_idx);
-            let text = if stored == ColumnKind::Auto {
-                format!("{col_idx}: {name} [{}]", effective.label())
-            } else if stored != effective {
-                format!(
-                    "{col_idx}: {name} [{}={}]",
-                    stored.label(),
-                    effective.label()
-                )
-            } else {
-                format!("{col_idx}: {name} [{}]", stored.label())
-            };
+            let text = model.format_sidebar_column_label(col_idx, name);
             let display = truncate_middle(&text, inner.width as usize);
             let style = if col_idx == model.view.selected_col {
                 Style::default()
@@ -657,7 +660,7 @@ fn draw_column_format(frame: &mut ratatui::Frame, area: Rect, model: &AppModel) 
 
     lines.push(Line::from(""));
     lines.push(Line::from(Span::styled(
-        " ↑/↓ move  Enter apply  Esc close ",
+        " ↑/↓ move  Enter apply  q close ",
         Style::default().fg(Color::DarkGray),
     )));
 
@@ -667,6 +670,67 @@ fn draw_column_format(frame: &mut ratatui::Frame, area: Rect, model: &AppModel) 
                 .title(" Column format ")
                 .borders(Borders::ALL)
                 .border_style(Style::default().fg(Color::Cyan)),
+        ),
+        popup_area,
+    );
+}
+
+fn draw_column_info(frame: &mut ratatui::Frame, area: Rect, model: &AppModel) {
+    let popup_area = centered_rect(50, 58, area);
+    frame.render_widget(Clear, popup_area);
+
+    let info = model.column_info(model.view.selected_col);
+    let mut lines = vec![
+        Line::from(vec![Span::styled(
+            format!(" Column {}: {} ", info.column_index, info.column_name),
+            Style::default().add_modifier(Modifier::BOLD),
+        )]),
+        Line::from(""),
+        Line::from(vec![
+            Span::raw("Type: "),
+            Span::styled(
+                if info.stored_kind == info.effective_kind {
+                    info.effective_kind.clone()
+                } else {
+                    format!("{} (inferred: {})", info.stored_kind, info.effective_kind)
+                },
+                Style::default().fg(Color::Cyan),
+            ),
+        ]),
+    ];
+
+    if let Some(repr) = &info.numeric_repr {
+        lines.push(Line::from(vec![
+            Span::raw("Representation: "),
+            Span::styled(repr.clone(), Style::default().fg(Color::Cyan)),
+        ]));
+    }
+
+    lines.push(Line::from(""));
+    lines.push(Line::from(Span::styled(
+        " Statistics ",
+        Style::default().add_modifier(Modifier::BOLD),
+    )));
+
+    for stat in &info.stats {
+        lines.push(Line::from(vec![
+            Span::raw(format!("  {:<16} ", stat.label)),
+            Span::styled(stat.value.clone(), Style::default().fg(Color::Yellow)),
+        ]));
+    }
+
+    lines.push(Line::from(""));
+    lines.push(Line::from(Span::styled(
+        " t format  q close ",
+        Style::default().fg(Color::DarkGray),
+    )));
+
+    frame.render_widget(
+        Paragraph::new(lines).block(
+            Block::default()
+                .title(" Column info ")
+                .borders(Borders::ALL)
+                .border_style(Style::default().fg(Color::Magenta)),
         ),
         popup_area,
     );

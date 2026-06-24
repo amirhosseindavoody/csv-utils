@@ -7,10 +7,10 @@ Full-screen terminal table explorer. Stack: **ratatui** 0.29 + **crossterm**. Fr
 ```
 ┌─ csv-utils │ file.csv │ N rows [loading…] ─────────────────────┐
 │ ┌─ Data (rows A–B) ─────────────┐ ┌─ Columns (X–Y/Z) ────────┐ │
-│ │ header + visible rows         │ │ idx: name [type]         │ │
+│ │ header + visible rows         │ │ idx: name                │ │
 │ │ resizable cells, col scroll   │ │ independent list scroll  │ │
 │ └───────────────────────────────┘ └──────────────────────────┘ │
-│ q quit  ↑↓ rows  ←→ cols  drag resize  t format  ? help │
+│ q quit  ↑↓ rows  ←→ cols  drag resize  t format  c info  ? help │
 └─────────────────────────────────────────────────────────────────┘
 ```
 
@@ -19,8 +19,9 @@ Full-screen terminal table explorer. Stack: **ratatui** 0.29 + **crossterm**. Fr
 | **Title** | File basename, live row count, `loading…` or `ERROR` |
 | **Data table** | Horizontal window (`col_offset`) + vertical window (`row_offset`). Selected cell yellow; selected row dimmed |
 | **Columns pane** | 32-char wide; title `Columns (X–Y/Z)`; selected line `▸` + magenta |
-| **Help** | Centered overlay; `?` opens; `Esc` / `?` closes |
-| **Format picker** | Centered overlay; `t` opens; choose type and numeric representation; `Esc` closes |
+| **Help** | Centered overlay; `?` opens; `q` / `?` closes |
+| **Format picker** | Centered overlay; `t` opens; choose type and numeric representation; `q` closes |
+| **Column info** | Centered overlay; `c` opens; type, representation, and type-specific stats; `q` closes |
 
 Data table uses ratatui `Table`. Column sidebar uses manual `Paragraph` lines (not ratatui `List`; see [column list scrolling](#column-list-scrolling)).
 
@@ -39,6 +40,7 @@ Data table uses ratatui `Table`. Column sidebar uses manual `Paragraph` lines (n
 | `column_numeric_repr` | General vs scientific formatting for numeric columns |
 | `column_widths_user_set` | Manual resize lock per column |
 | `show_column_format` | Column format picker overlay visible |
+| `show_column_info` | Column info overlay visible |
 | `column_format_focus` | Highlighted option in format picker (0–4 type, 5–6 representation) |
 | `show_help` | Help overlay visible |
 
@@ -48,14 +50,14 @@ Each frame: `maybe_refit_column_widths()` (when loaded row count changes), `clam
 
 | Key | Action |
 |-----|--------|
-| `q` | Quit |
+| `q` | Quit; closes an open panel when one is visible |
 | `↑`/`↓` or `j`/`k` | Previous / next row |
 | `←`/`→` or `h`/`l` | Previous / next column |
 | `PgUp`/`PgDn` | Move selection ±10 rows |
 | `Home`/`End` | First / last loaded row |
 | `t` | Open column format picker (type + representation) |
+| `c` | Open column info panel (type, representation, statistics) |
 | `?` | Help overlay |
-| `Esc` | Close format picker or help |
 
 ### Format picker (`t`)
 
@@ -65,9 +67,20 @@ While the picker is open, table navigation is disabled:
 |-----|--------|
 | `↑`/`↓` or `j`/`k` | Move highlight between options |
 | `Enter` | Apply highlighted option |
-| `Esc` | Close picker |
+| `q` | Close picker |
 
 Type options: **auto**, **text**, **date**, **int**, **float**. Representation (**general**, **scientific**) appears when the column is or will be numeric.
+
+### Column info (`c`)
+
+Read-only panel for the selected column. Updates when you change selection while it is open. Statistics are computed incrementally from **loaded rows** (shows a note while the file is still scanning).
+
+| Key | Action |
+|-----|--------|
+| `t` | Close info and open format picker |
+| `q` | Close panel |
+
+Type-specific stats: text (distinct count, min/max length), date (earliest/latest), int/float (min, max, mean).
 
 ## Mouse
 

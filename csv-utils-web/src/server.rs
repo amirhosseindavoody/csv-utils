@@ -94,7 +94,10 @@ fn parse_action(name: &str, value: &serde_json::Value) -> Option<ViewAction> {
             let col = value.get("col")?.as_u64()? as usize;
             Some(ViewAction::SelectCell { row, col })
         }
-        "toggle_types" => Some(ViewAction::OpenColumnFormat),
+        "open_column_info" => Some(ViewAction::OpenColumnInfo),
+        "close_column_info" => Some(ViewAction::CloseColumnInfo),
+        "toggle_column_type_labels" => Some(ViewAction::OpenColumnInfo),
+        "toggle_types" => Some(ViewAction::OpenColumnInfo),
         "open_column_format" => Some(ViewAction::OpenColumnFormat),
         "close_column_format" => Some(ViewAction::CloseColumnFormat),
         "column_format_focus_delta" => value.as_i64().map(|v| ViewAction::ColumnFormatFocusDelta(v as i32)),

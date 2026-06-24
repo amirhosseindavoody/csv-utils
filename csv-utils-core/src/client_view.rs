@@ -1,4 +1,5 @@
 use crate::column::is_right_aligned;
+use crate::column_stats::ColumnInfo;
 use crate::display::{format_cell_for_column, truncate_middle};
 use crate::model::AppModel;
 use crate::schema;
@@ -14,7 +15,9 @@ pub struct ClientView {
     pub selected_row: usize,
     pub selected_col: usize,
     pub show_column_format: bool,
+    pub show_column_info: bool,
     pub column_format: Option<ClientColumnFormat>,
+    pub column_info: Option<ColumnInfo>,
     pub show_help: bool,
     pub status_line: String,
     pub column_list_offset: usize,
@@ -131,19 +134,7 @@ impl AppModel {
         let sidebar = (sidebar_start..sidebar_end)
             .filter_map(|col_idx| {
                 let name = headers.get(col_idx)?;
-                let stored = self.stored_column_kind(col_idx);
-                let effective = self.effective_column_kind(col_idx);
-                let label = if stored == crate::column::ColumnKind::Auto {
-                    format!("{col_idx}: {name} [{}]", effective.label())
-                } else if stored != effective {
-                    format!(
-                        "{col_idx}: {name} [{}={}]",
-                        stored.label(),
-                        effective.label()
-                    )
-                } else {
-                    format!("{col_idx}: {name} [{}]", stored.label())
-                };
+                let label = self.format_sidebar_column_label(col_idx, name);
                 let display = truncate_middle(&label, 32);
                 Some(ClientSidebarItem {
                     index: col_idx,
@@ -186,6 +177,12 @@ impl AppModel {
             None
         };
 
+        let column_info = if self.view.show_column_info {
+            Some(self.column_info(self.view.selected_col))
+        } else {
+            None
+        };
+
         ClientView {
             file: self.file_label().to_string(),
             row_count: self.preview.row_count(),
@@ -194,7 +191,9 @@ impl AppModel {
             selected_row: self.view.selected_row,
             selected_col: self.view.selected_col,
             show_column_format: self.view.show_column_format,
+            show_column_info: self.view.show_column_info,
             column_format,
+            column_info,
             show_help: self.view.show_help,
             status_line,
             column_list_offset: self.view.column_list_offset,

@@ -3,6 +3,7 @@ use crate::column::{
     is_numeric, observe_column_infer, ColumnInferState,
     ColumnKind, NumericRepr,
 };
+use crate::column_stats::{build_column_info, ColumnInfo, ColumnStatsAccum};
 use crate::display::{format_cell_for_column, sanitize_ascii, truncate_middle};
 use crate::schema;
 use std::path::PathBuf;
@@ -27,6 +28,7 @@ pub struct TableViewState {
     /// Manual resize lock per column (until file reopen).
     pub column_widths_user_set: Vec<bool>,
     pub show_column_format: bool,
+    pub show_column_info: bool,
     /// Focus index in the format pane (0–4 type, 5–6 representation).
     pub column_format_focus: usize,
     pub show_help: bool,
@@ -37,6 +39,7 @@ struct ColumnLayoutCache {
     rows_processed: usize,
     max_content_len: Vec<usize>,
     infer_state: Vec<ColumnInferState>,
+    stats: Vec<ColumnStatsAccum>,
 }
 
 impl Default for TableViewState {
@@ -52,6 +55,7 @@ impl Default for TableViewState {
             column_numeric_repr: Vec::new(),
             column_widths_user_set: Vec::new(),
             show_column_format: false,
+            show_column_info: false,
             column_format_focus: 0,
             show_help: false,
         }
@@ -173,6 +177,7 @@ impl AppModel {
             .map(|h| sanitize_ascii(h).len())
             .collect();
         self.column_layout.infer_state = vec![ColumnInferState::Unknown; n];
+        self.column_layout.stats = vec![ColumnStatsAccum::default(); n];
     }
 
     fn apply_fitted_column_widths(&mut self) {
@@ -233,6 +238,7 @@ impl AppModel {
                     self.column_layout.max_content_len[col] =
                         self.column_layout.max_content_len[col].max(len);
                     observe_column_infer(&mut self.column_layout.infer_state[col], cell);
+                    self.column_layout.stats[col].observe(cell);
                 }
             }
         }
@@ -391,6 +397,41 @@ impl AppModel {
             .unwrap_or(ColumnKind::Auto)
     }
 
+    pub fn open_column_info_pane(&mut self) {
+        self.view.show_column_info = true;
+    }
+
+    pub fn close_column_info_pane(&mut self) {
+        self.view.show_column_info = false;
+    }
+
+    pub fn column_info(&self, col: usize) -> ColumnInfo {
+        let headers = self.preview.headers();
+        let name = headers.get(col).map(String::as_str).unwrap_or("");
+        let stored = self.stored_column_kind(col);
+        let effective = self.effective_column_kind(col);
+        let repr = self.numeric_repr(col);
+        let stats = self
+            .column_layout
+            .stats
+            .get(col)
+            .cloned()
+            .unwrap_or_default();
+        build_column_info(
+            col,
+            name,
+            stored,
+            effective,
+            repr,
+            &stats,
+            self.preview.scan_done(),
+        )
+    }
+
+    pub fn format_sidebar_column_label(&self, col_idx: usize, name: &str) -> String {
+        format!("{col_idx}: {name}")
+    }
+
     fn column_slot_width(&self, col: usize) -> u16 {
         self.column_width_chars(col) as u16 + 1
     }
@@ -496,22 +537,9 @@ impl AppModel {
             .iter()
             .enumerate()
             .map(|(col_idx, name)| {
-                let stored = self.stored_column_kind(col_idx);
-                let effective = self.effective_column_kind(col_idx);
-                let label = if stored == ColumnKind::Auto {
-                    format!("{col_idx}: {name} [{}]", effective.label())
-                } else if stored != effective {
-                    format!(
-                        "{col_idx}: {name} [{}={}]",
-                        stored.label(),
-                        effective.label()
-                    )
-                } else {
-                    format!("{col_idx}: {name} [{}]", stored.label())
-                };
                 SidebarColumn {
                     index: col_idx,
-                    label,
+                    label: self.format_sidebar_column_label(col_idx, name),
                     selected: col_idx == self.view.selected_col,
                 }
             })
