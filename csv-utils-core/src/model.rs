@@ -377,6 +377,15 @@ impl AppModel {
         }
     }
 
+    pub fn column_info_apply_option(&mut self, option: usize) {
+        let max = self.column_info_focus_max();
+        if option > max {
+            return;
+        }
+        self.view.column_info_focus = option;
+        self.column_info_apply_focus();
+    }
+
     pub fn stored_column_kind(&self, col: usize) -> ColumnKind {
         self.view
             .column_kinds

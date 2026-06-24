@@ -72,6 +72,7 @@ The panel shows editable **type** (auto, text, date, int, float) and **represent
 
 | Target | Action |
 |--------|--------|
+| Column info panel | Click type/representation rows to apply |
 | Table header border | Drag to resize column width (4–64 chars) |
 | Table header | Select column only (click, not on border) |
 | Table body cell | Select row + column |

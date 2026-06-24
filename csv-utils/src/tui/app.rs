@@ -30,13 +30,14 @@ csv-utils — keyboard shortcuts
   c          column info (type, stats, format)
   ?          this help
 
-Mouse: click a cell to select row/column; drag column header borders to resize; wheel on table scrolls rows; wheel on column list scrolls columns.
+Mouse: click table cells, column info options, or column header borders to resize; wheel on table scrolls rows; wheel on column list scrolls columns.
 
 Press q or ? to close.";
 
 struct LayoutAreas {
     table: Rect,
     columns: Rect,
+    column_info_popup: Option<Rect>,
 }
 
 struct ColumnResize {
@@ -61,6 +62,7 @@ pub fn run(file: Option<&str>) -> Result<()> {
     let mut areas = LayoutAreas {
         table: Rect::default(),
         columns: Rect::default(),
+        column_info_popup: None,
     };
     let mut last_redraw = Instant::now();
     let mut column_resize: Option<ColumnResize> = None;
@@ -182,7 +184,31 @@ fn handle_mouse(
     column_list_height: usize,
     column_resize: &mut Option<ColumnResize>,
 ) {
-    if model.view.show_help || model.view.show_column_info {
+    if model.view.show_help {
+        return;
+    }
+
+    if model.view.show_column_info {
+        if matches!(
+            mouse.kind,
+            MouseEventKind::Down(crossterm::event::MouseButton::Left)
+        ) {
+            let pos = Position {
+                x: mouse.column,
+                y: mouse.row,
+            };
+            if let Some(popup) = areas.column_info_popup {
+                let inner = Block::default().borders(Borders::ALL).inner(popup);
+                if inner.contains(pos) {
+                    let line = mouse.row.saturating_sub(inner.y) as usize;
+                    if let Some(option) =
+                        column_info_option_at_line(line, model.column_info_repr_enabled())
+                    {
+                        model.column_info_apply_option(option);
+                    }
+                }
+            }
+        }
         return;
     }
 
@@ -412,13 +438,18 @@ fn draw(frame: &mut ratatui::Frame, model: &AppModel) -> LayoutAreas {
     if model.view.show_help {
         draw_help(frame, area);
     }
-    if model.view.show_column_info {
-        draw_column_info(frame, area, model);
-    }
+    let column_info_popup = if model.view.show_column_info {
+        let popup_area = centered_rect(54, 72, area);
+        draw_column_info(frame, popup_area, model);
+        Some(popup_area)
+    } else {
+        None
+    };
 
     LayoutAreas {
         table: table_area,
         columns: columns_area,
+        column_info_popup,
     }
 }
 
@@ -564,8 +595,17 @@ fn draw_column_list(frame: &mut ratatui::Frame, area: Rect, model: &AppModel) {
     );
 }
 
-fn draw_column_info(frame: &mut ratatui::Frame, area: Rect, model: &AppModel) {
-    let popup_area = centered_rect(54, 72, area);
+fn column_info_option_at_line(line: usize, repr_enabled: bool) -> Option<usize> {
+    if (3..=7).contains(&line) {
+        return Some(line - 3);
+    }
+    if repr_enabled && (10..=11).contains(&line) {
+        return Some(line - 5);
+    }
+    None
+}
+
+fn draw_column_info(frame: &mut ratatui::Frame, popup_area: Rect, model: &AppModel) {
     frame.render_widget(Clear, popup_area);
 
     let col = model.view.selected_col;
@@ -659,7 +699,7 @@ fn draw_column_info(frame: &mut ratatui::Frame, area: Rect, model: &AppModel) {
 
     lines.push(Line::from(""));
     lines.push(Line::from(Span::styled(
-        " ↑/↓ move  Enter apply  q close ",
+        " click/↑↓  Enter apply  q close ",
         Style::default().fg(Color::DarkGray),
     )));
 

@@ -464,16 +464,6 @@ Theme button (header): System · Light · Dark.`;
         <div class="format-section">Statistics</div>
         <table class="info-stats"><tbody>${statsRows}</tbody></table>
         <div class="info-hint">Click type/repr or use ↑/↓ and Enter. q closes.</div>`;
-      box.querySelectorAll('.info-kind').forEach(btn => {
-        btn.addEventListener('click', () => {
-          postAction('set_column_kind', { col: info.column_index, kind: btn.dataset.kind });
-        });
-      });
-      box.querySelectorAll('.info-repr').forEach(btn => {
-        btn.addEventListener('click', () => {
-          postAction('set_numeric_repr', { col: info.column_index, repr: btn.dataset.repr });
-        });
-      });
     }
 
     function escapeHtml(s) {
@@ -525,6 +515,26 @@ Theme button (header): System · Light · Dark.`;
       e.preventDefault();
       postAction('column_list_delta', e.deltaY < 0 ? -3 : 3);
     }, { passive: false });
+
+    document.getElementById('info-box').addEventListener('click', (e) => {
+      const kindBtn = e.target.closest('.info-kind');
+      if (kindBtn && lastState?.column_info) {
+        e.preventDefault();
+        postAction('set_column_kind', {
+          col: lastState.column_info.column_index,
+          kind: kindBtn.dataset.kind,
+        });
+        return;
+      }
+      const reprBtn = e.target.closest('.info-repr');
+      if (reprBtn && lastState?.column_info) {
+        e.preventDefault();
+        postAction('set_numeric_repr', {
+          col: lastState.column_info.column_index,
+          repr: reprBtn.dataset.repr,
+        });
+      }
+    });
 
     refresh();
   </script>
