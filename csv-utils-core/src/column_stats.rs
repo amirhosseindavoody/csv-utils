@@ -106,6 +106,8 @@ pub struct ColumnInfo {
     pub rows_sampled: usize,
     pub scan_complete: bool,
     pub stats: Vec<ColumnInfoStat>,
+    pub focus: usize,
+    pub repr_enabled: bool,
 }
 
 pub fn build_column_info(
@@ -116,6 +118,8 @@ pub fn build_column_info(
     repr: NumericRepr,
     stats: &ColumnStatsAccum,
     scan_complete: bool,
+    focus: usize,
+    repr_enabled: bool,
 ) -> ColumnInfo {
     let mut lines = vec![
         stat("Rows sampled", stats.rows.to_string()),
@@ -191,6 +195,8 @@ pub fn build_column_info(
         rows_sampled: stats.rows,
         scan_complete,
         stats: lines,
+        focus,
+        repr_enabled,
     }
 }
 
@@ -243,6 +249,8 @@ mod tests {
             NumericRepr::General,
             &s,
             true,
+            0,
+            false,
         );
         assert!(info.stats.iter().any(|l| l.label == "Distinct values"));
     }

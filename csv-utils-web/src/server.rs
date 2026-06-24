@@ -96,12 +96,17 @@ fn parse_action(name: &str, value: &serde_json::Value) -> Option<ViewAction> {
         }
         "open_column_info" => Some(ViewAction::OpenColumnInfo),
         "close_column_info" => Some(ViewAction::CloseColumnInfo),
-        "toggle_column_type_labels" => Some(ViewAction::OpenColumnInfo),
-        "toggle_types" => Some(ViewAction::OpenColumnInfo),
-        "open_column_format" => Some(ViewAction::OpenColumnFormat),
-        "close_column_format" => Some(ViewAction::CloseColumnFormat),
-        "column_format_focus_delta" => value.as_i64().map(|v| ViewAction::ColumnFormatFocusDelta(v as i32)),
-        "column_format_apply" => Some(ViewAction::ColumnFormatApply),
+        "column_info_focus_delta" => {
+            value.as_i64().map(|v| ViewAction::ColumnInfoFocusDelta(v as i32))
+        }
+        "column_info_apply" => Some(ViewAction::ColumnInfoApply),
+        "column_format_focus_delta" => {
+            value.as_i64().map(|v| ViewAction::ColumnInfoFocusDelta(v as i32))
+        }
+        "column_format_apply" => Some(ViewAction::ColumnInfoApply),
+        "open_column_format" | "cycle_column_type" => Some(ViewAction::OpenColumnInfo),
+        "close_column_format" => Some(ViewAction::CloseColumnInfo),
+        "toggle_column_type_labels" | "toggle_types" => Some(ViewAction::OpenColumnInfo),
         "set_column_kind" => {
             let col = value.get("col")?.as_u64()? as usize;
             let kind = column_kind_from_label(value.get("kind")?.as_str()?)?;
@@ -121,7 +126,6 @@ fn parse_action(name: &str, value: &serde_json::Value) -> Option<ViewAction> {
             let width = value.get("width")?.as_u64()? as u16;
             Some(ViewAction::SetColumnWidth { col, width })
         }
-        "cycle_column_type" => Some(ViewAction::OpenColumnFormat),
         "cycle_numeric_repr" => None,
         _ => None,
     }

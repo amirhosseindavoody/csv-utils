@@ -14,9 +14,7 @@ pub struct ClientView {
     pub scan_error: bool,
     pub selected_row: usize,
     pub selected_col: usize,
-    pub show_column_format: bool,
     pub show_column_info: bool,
-    pub column_format: Option<ClientColumnFormat>,
     pub column_info: Option<ColumnInfo>,
     pub show_help: bool,
     pub status_line: String,
@@ -24,17 +22,6 @@ pub struct ClientView {
     pub column_count: usize,
     pub table: ClientTable,
     pub sidebar: Vec<ClientSidebarItem>,
-}
-
-#[derive(Debug, Clone, Serialize)]
-pub struct ClientColumnFormat {
-    pub column_index: usize,
-    pub column_name: String,
-    pub stored_kind: String,
-    pub effective_kind: String,
-    pub numeric_repr: String,
-    pub repr_enabled: bool,
-    pub focus: usize,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -159,24 +146,6 @@ impl AppModel {
             }
         );
 
-        let column_format = if self.view.show_column_format {
-            let col = self.view.selected_col;
-            let stored = self.stored_column_kind(col);
-            let effective = self.effective_column_kind(col);
-            let repr = self.numeric_repr(col);
-            Some(ClientColumnFormat {
-                column_index: col,
-                column_name: headers.get(col).cloned().unwrap_or_default(),
-                stored_kind: stored.label().to_string(),
-                effective_kind: effective.label().to_string(),
-                numeric_repr: repr.label().to_string(),
-                repr_enabled: self.column_format_repr_enabled(),
-                focus: self.view.column_format_focus,
-            })
-        } else {
-            None
-        };
-
         let column_info = if self.view.show_column_info {
             Some(self.column_info(self.view.selected_col))
         } else {
@@ -190,9 +159,7 @@ impl AppModel {
             scan_error: self.preview.scan_error(),
             selected_row: self.view.selected_row,
             selected_col: self.view.selected_col,
-            show_column_format: self.view.show_column_format,
             show_column_info: self.view.show_column_info,
-            column_format,
             column_info,
             show_help: self.view.show_help,
             status_line,

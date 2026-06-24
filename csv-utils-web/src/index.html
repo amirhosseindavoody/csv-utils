@@ -173,26 +173,6 @@
       display: none; align-items: center; justify-content: center; z-index: 10;
     }
     .help-overlay.open { display: flex; }
-    .format-overlay {
-      position: fixed; inset: 0; background: var(--overlay);
-      display: none; align-items: center; justify-content: center; z-index: 11;
-    }
-    .format-overlay.open { display: flex; }
-    .format-box {
-      background: var(--panel); border: 1px solid var(--border);
-      padding: 1rem 1.25rem; min-width: 280px; max-width: 420px;
-    }
-    .format-box h2 { margin: 0 0 0.75rem; font-size: 1rem; }
-    .format-section { margin: 0.75rem 0 0.25rem; font-weight: 600; color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: 0.04em; }
-    .format-options { display: flex; flex-direction: column; gap: 0.15rem; }
-    .format-options button {
-      text-align: left; border: 1px solid transparent; background: transparent;
-      color: var(--text); font: inherit; padding: 0.3rem 0.5rem; border-radius: 4px; cursor: pointer;
-    }
-    .format-options button:hover { background: var(--hover); }
-    .format-options button.selected { color: var(--accent); font-weight: 700; }
-    .format-options button.focused { border-color: var(--accent); background: var(--hover); }
-    .format-hint { margin-top: 0.75rem; color: var(--muted); font-size: 12px; }
     .info-overlay {
       position: fixed; inset: 0; background: var(--overlay);
       display: none; align-items: center; justify-content: center; z-index: 11;
@@ -203,8 +183,15 @@
       padding: 1rem 1.25rem; min-width: 300px; max-width: 440px;
     }
     .info-box h2 { margin: 0 0 0.75rem; font-size: 1rem; }
-    .info-meta { margin: 0.35rem 0; }
-    .info-meta span { color: var(--accent); font-weight: 600; }
+    .info-box .format-section { margin: 0.75rem 0 0.25rem; font-weight: 600; color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: 0.04em; }
+    .info-box .format-options { display: flex; flex-direction: column; gap: 0.15rem; }
+    .info-box .format-options button {
+      text-align: left; border: 1px solid transparent; background: transparent;
+      color: var(--text); font: inherit; padding: 0.3rem 0.5rem; border-radius: 4px; cursor: pointer;
+    }
+    .info-box .format-options button:hover { background: var(--hover); }
+    .info-box .format-options button.selected { color: var(--accent); font-weight: 700; }
+    .info-box .format-options button.focused { border-color: var(--accent); background: var(--hover); }
     .info-stats { margin-top: 0.75rem; border-collapse: collapse; width: 100%; font-size: 13px; }
     .info-stats td { padding: 0.2rem 0; vertical-align: top; }
     .info-stats td:first-child { color: var(--muted); padding-right: 1rem; white-space: nowrap; }
@@ -234,10 +221,9 @@
         <div id="sidebar" class="sidebar"></div>
       </section>
     </main>
-    <footer id="hints">arrows navigate · drag resize · t format · c info · ? help · theme</footer>
+    <footer id="hints">arrows navigate · drag resize · c info · ? help · theme</footer>
   </div>
   <div id="help" class="help-overlay"><div class="help-box" id="help-text"></div></div>
-  <div id="format" class="format-overlay"><div class="format-box" id="format-box"></div></div>
   <div id="info" class="info-overlay"><div class="info-box" id="info-box"></div></div>
   <script>
     const HELP = `csv-utils — browser UI
@@ -245,8 +231,7 @@
   ↑/↓        previous / next row
   ←/→        previous / next column
   PgUp/PgDn  scroll 10 rows
-  t          column type & representation picker
-  c          column info (type, stats)
+  c          column info (type, format, stats)
   ?          help
   q          close panel / help
 
@@ -437,7 +422,6 @@ Theme button (header): System · Light · Dark.`;
       help.classList.toggle('open', state.show_help);
       document.getElementById('help-text').textContent = HELP;
 
-      renderFormatPane(state);
       renderInfoPane(state);
 
       schedulePoll(state);
@@ -452,60 +436,42 @@ Theme button (header): System · Light · Dark.`;
         return;
       }
       const info = state.column_info;
-      const typeLine = info.stored_kind === info.effective_kind
-        ? info.effective_kind
-        : `${info.stored_kind} (inferred: ${info.effective_kind})`;
-      const reprLine = info.numeric_repr
-        ? `<p class="info-meta">Representation: <span>${escapeHtml(info.numeric_repr)}</span></p>` : '';
+      const typeButtons = TYPE_OPTIONS.map((kind, idx) => {
+        const inferred = kind === 'auto' && info.effective_kind !== 'auto'
+          ? ` (inferred: ${info.effective_kind})` : '';
+        const selected = info.stored_kind === kind ? ' selected' : '';
+        const focused = info.focus === idx ? ' focused' : '';
+        return `<button type="button" class="info-kind${selected}${focused}" data-kind="${kind}">${kind}${inferred}${selected ? ' ✓' : ''}</button>`;
+      }).join('');
+      let reprHtml = '';
+      if (info.repr_enabled) {
+        const currentRepr = info.numeric_repr || 'general';
+        const reprButtons = REPR_OPTIONS.map((repr, offset) => {
+          const idx = 5 + offset;
+          const selected = currentRepr === repr ? ' selected' : '';
+          const focused = info.focus === idx ? ' focused' : '';
+          return `<button type="button" class="info-repr${selected}${focused}" data-repr="${repr}">${repr}${selected ? ' ✓' : ''}</button>`;
+        }).join('');
+        reprHtml = `<div class="format-section">Representation</div><div class="format-options">${reprButtons}</div>`;
+      }
       const statsRows = info.stats.map(s =>
         `<tr><td>${escapeHtml(s.label)}</td><td>${escapeHtml(s.value)}</td></tr>`
       ).join('');
       box.innerHTML = `<h2>Column ${info.column_index}: ${escapeHtml(info.column_name)}</h2>
-        <p class="info-meta">Type: <span>${escapeHtml(typeLine)}</span></p>
-        ${reprLine}
-        <table class="info-stats"><tbody>${statsRows}</tbody></table>
-        <div class="format-hint">Press t to change format. q closes.</div>`;
-    }
-
-    function renderFormatPane(state) {
-      const overlay = document.getElementById('format');
-      const box = document.getElementById('format-box');
-      overlay.classList.toggle('open', state.show_column_format);
-      if (!state.show_column_format || !state.column_format) {
-        box.innerHTML = '';
-        return;
-      }
-      const fmt = state.column_format;
-      const typeButtons = TYPE_OPTIONS.map((kind, idx) => {
-        const inferred = kind === 'auto' && fmt.effective_kind !== 'auto'
-          ? ` (inferred: ${fmt.effective_kind})` : '';
-        const selected = fmt.stored_kind === kind ? ' selected' : '';
-        const focused = fmt.focus === idx ? ' focused' : '';
-        return `<button type="button" class="format-kind${selected}${focused}" data-kind="${kind}" data-focus="${idx}">${kind}${inferred}${selected ? ' ✓' : ''}</button>`;
-      }).join('');
-      let reprHtml = '';
-      if (fmt.repr_enabled) {
-        const reprButtons = REPR_OPTIONS.map((repr, offset) => {
-          const idx = 5 + offset;
-          const selected = fmt.numeric_repr === repr ? ' selected' : '';
-          const focused = fmt.focus === idx ? ' focused' : '';
-          return `<button type="button" class="format-repr${selected}${focused}" data-repr="${repr}" data-focus="${idx}">${repr}${selected ? ' ✓' : ''}</button>`;
-        }).join('');
-        reprHtml = `<div class="format-section">Representation</div><div class="format-options">${reprButtons}</div>`;
-      }
-      box.innerHTML = `<h2>Column ${fmt.column_index}: ${escapeHtml(fmt.column_name)}</h2>
         <div class="format-section">Type</div>
         <div class="format-options">${typeButtons}</div>
         ${reprHtml}
-        <div class="format-hint">Click an option or use ↑/↓ and Enter. q closes.</div>`;
-      box.querySelectorAll('.format-kind').forEach(btn => {
+        <div class="format-section">Statistics</div>
+        <table class="info-stats"><tbody>${statsRows}</tbody></table>
+        <div class="info-hint">Click type/repr or use ↑/↓ and Enter. q closes.</div>`;
+      box.querySelectorAll('.info-kind').forEach(btn => {
         btn.addEventListener('click', () => {
-          postAction('set_column_kind', { col: fmt.column_index, kind: btn.dataset.kind });
+          postAction('set_column_kind', { col: info.column_index, kind: btn.dataset.kind });
         });
       });
-      box.querySelectorAll('.format-repr').forEach(btn => {
+      box.querySelectorAll('.info-repr').forEach(btn => {
         btn.addEventListener('click', () => {
-          postAction('set_numeric_repr', { col: fmt.column_index, repr: btn.dataset.repr });
+          postAction('set_numeric_repr', { col: info.column_index, repr: btn.dataset.repr });
         });
       });
     }
@@ -531,13 +497,9 @@ Theme button (header): System · Light · Dark.`;
     document.addEventListener('keydown', (e) => {
       if (lastState?.show_column_info) {
         if (e.key === 'q') { e.preventDefault(); postAction('close_column_info', null); return; }
-        if (e.key === 't') { e.preventDefault(); postAction('close_column_info', null); postAction('open_column_format', null); return; }
-      }
-      if (lastState?.show_column_format) {
-        if (e.key === 'ArrowUp') { e.preventDefault(); postAction('column_format_focus_delta', -1); return; }
-        if (e.key === 'ArrowDown') { e.preventDefault(); postAction('column_format_focus_delta', 1); return; }
-        if (e.key === 'Enter') { e.preventDefault(); postAction('column_format_apply', null); return; }
-        if (e.key === 'q') { e.preventDefault(); postAction('close_column_format', null); return; }
+        if (e.key === 'ArrowUp') { e.preventDefault(); postAction('column_info_focus_delta', -1); return; }
+        if (e.key === 'ArrowDown') { e.preventDefault(); postAction('column_info_focus_delta', 1); return; }
+        if (e.key === 'Enter') { e.preventDefault(); postAction('column_info_apply', null); return; }
       }
       if (lastState?.show_help) {
         if (e.key === 'q' || e.key === '?') { e.preventDefault(); postAction('close_help', null); return; }
@@ -550,7 +512,6 @@ Theme button (header): System · Light · Dark.`;
       else if (e.key === 'PageDown') { e.preventDefault(); postAction('page_rows', 10); }
       else if (e.key === 'Home') { e.preventDefault(); postAction('go_home', null); }
       else if (e.key === 'End') { e.preventDefault(); postAction('go_end', null); }
-      else if (e.key === 't') { e.preventDefault(); postAction('open_column_format', null); }
       else if (e.key === 'c') { e.preventDefault(); postAction('open_column_info', null); }
       else if (e.key === '?') { e.preventDefault(); postAction('toggle_help', null); }
     });

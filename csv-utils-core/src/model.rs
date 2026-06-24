@@ -27,10 +27,9 @@ pub struct TableViewState {
     pub column_numeric_repr: Vec<NumericRepr>,
     /// Manual resize lock per column (until file reopen).
     pub column_widths_user_set: Vec<bool>,
-    pub show_column_format: bool,
     pub show_column_info: bool,
-    /// Focus index in the format pane (0–4 type, 5–6 representation).
-    pub column_format_focus: usize,
+    /// Focus index in column info panel (0–4 type, 5–6 representation).
+    pub column_info_focus: usize,
     pub show_help: bool,
 }
 
@@ -54,9 +53,8 @@ impl Default for TableViewState {
             column_kinds: Vec::new(),
             column_numeric_repr: Vec::new(),
             column_widths_user_set: Vec::new(),
-            show_column_format: false,
             show_column_info: false,
-            column_format_focus: 0,
+            column_info_focus: 0,
             show_help: false,
         }
     }
@@ -325,34 +323,24 @@ impl AppModel {
         }
     }
 
-    pub fn open_column_format_pane(&mut self) {
+    pub fn open_column_info_pane(&mut self) {
         let col = self.view.selected_col;
-        self.view.show_column_format = true;
-        let stored = self
-            .view
-            .column_kinds
-            .get(col)
-            .copied()
-            .unwrap_or(ColumnKind::Auto);
-        self.view.column_format_focus = column_kind_index(stored);
+        self.view.show_column_info = true;
+        let stored = self.stored_column_kind(col);
+        self.view.column_info_focus = column_kind_index(stored);
     }
 
-    pub fn close_column_format_pane(&mut self) {
-        self.view.show_column_format = false;
+    pub fn close_column_info_pane(&mut self) {
+        self.view.show_column_info = false;
     }
 
-    pub fn column_format_repr_enabled(&self) -> bool {
+    pub fn column_info_repr_enabled(&self) -> bool {
         let col = self.view.selected_col;
-        let focus = self.view.column_format_focus;
+        let focus = self.view.column_info_focus;
         if (3..=4).contains(&focus) {
             return true;
         }
-        let stored = self
-            .view
-            .column_kinds
-            .get(col)
-            .copied()
-            .unwrap_or(ColumnKind::Auto);
+        let stored = self.stored_column_kind(col);
         if matches!(stored, ColumnKind::Int | ColumnKind::Float) {
             return true;
         }
@@ -362,25 +350,25 @@ impl AppModel {
         false
     }
 
-    pub fn column_format_focus_max(&self) -> usize {
-        if self.column_format_repr_enabled() {
+    pub fn column_info_focus_max(&self) -> usize {
+        if self.column_info_repr_enabled() {
             6
         } else {
             4
         }
     }
 
-    pub fn column_format_focus_delta(&mut self, delta: i32) {
-        let max = self.column_format_focus_max() as i32;
-        let next = self.view.column_format_focus as i32 + delta;
-        self.view.column_format_focus = next.clamp(0, max) as usize;
+    pub fn column_info_focus_delta(&mut self, delta: i32) {
+        let max = self.column_info_focus_max() as i32;
+        let next = self.view.column_info_focus as i32 + delta;
+        self.view.column_info_focus = next.clamp(0, max) as usize;
     }
 
-    pub fn column_format_apply_focus(&mut self) {
+    pub fn column_info_apply_focus(&mut self) {
         let col = self.view.selected_col;
-        match self.view.column_format_focus {
+        match self.view.column_info_focus {
             0..=4 => {
-                let kind = column_kind_options()[self.view.column_format_focus];
+                let kind = column_kind_options()[self.view.column_info_focus];
                 self.set_column_kind(col, kind);
             }
             5 => self.set_numeric_repr(col, NumericRepr::General),
@@ -395,14 +383,6 @@ impl AppModel {
             .get(col)
             .copied()
             .unwrap_or(ColumnKind::Auto)
-    }
-
-    pub fn open_column_info_pane(&mut self) {
-        self.view.show_column_info = true;
-    }
-
-    pub fn close_column_info_pane(&mut self) {
-        self.view.show_column_info = false;
     }
 
     pub fn column_info(&self, col: usize) -> ColumnInfo {
@@ -425,6 +405,8 @@ impl AppModel {
             repr,
             &stats,
             self.preview.scan_done(),
+            self.view.column_info_focus,
+            self.column_info_repr_enabled(),
         )
     }
 
