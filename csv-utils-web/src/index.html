@@ -241,7 +241,6 @@ Drag column header right edge to resize (4–64 chars).
 
 Theme button (header): System · Light · Dark.`;
 
-    const TYPE_OPTIONS = ['auto', 'text', 'date', 'int', 'float'];
     const REPR_OPTIONS = ['general', 'scientific'];
 
     const MIN_COL_WIDTH = 4;
@@ -436,7 +435,7 @@ Theme button (header): System · Light · Dark.`;
         return;
       }
       const info = state.column_info;
-      const typeButtons = TYPE_OPTIONS.map((kind, idx) => {
+      const typeButtons = info.available_types.map((kind, idx) => {
         const inferred = kind === 'auto' && info.effective_kind !== 'auto'
           ? ` (inferred: ${info.effective_kind})` : '';
         const selected = info.stored_kind === kind ? ' selected' : '';
@@ -444,10 +443,10 @@ Theme button (header): System · Light · Dark.`;
         return `<button type="button" class="info-kind${selected}${focused}" data-kind="${kind}">${kind}${inferred}${selected ? ' ✓' : ''}</button>`;
       }).join('');
       let reprHtml = '';
-      if (info.repr_enabled) {
+      if (info.repr_section_visible) {
         const currentRepr = info.numeric_repr || 'general';
         const reprButtons = REPR_OPTIONS.map((repr, offset) => {
-          const idx = 5 + offset;
+          const idx = info.available_types.length + offset;
           const selected = currentRepr === repr ? ' selected' : '';
           const focused = info.focus === idx ? ' focused' : '';
           return `<button type="button" class="info-repr${selected}${focused}" data-repr="${repr}">${repr}${selected ? ' ✓' : ''}</button>`;

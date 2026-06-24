@@ -80,6 +80,26 @@ pub fn column_kind_options() -> &'static [ColumnKind] {
     ]
 }
 
+/// Type choices that remain valid given incremental inference from loaded rows.
+pub fn available_column_kinds(infer: ColumnInferState) -> Vec<ColumnKind> {
+    match infer {
+        ColumnInferState::Text => vec![ColumnKind::Auto, ColumnKind::Text],
+        ColumnInferState::Date => vec![ColumnKind::Auto, ColumnKind::Text, ColumnKind::Date],
+        ColumnInferState::Int => {
+            vec![
+                ColumnKind::Auto,
+                ColumnKind::Text,
+                ColumnKind::Int,
+                ColumnKind::Float,
+            ]
+        }
+        ColumnInferState::Float => {
+            vec![ColumnKind::Auto, ColumnKind::Text, ColumnKind::Float]
+        }
+        ColumnInferState::Unknown => column_kind_options().to_vec(),
+    }
+}
+
 pub fn column_kind_index(kind: ColumnKind) -> usize {
     column_kind_options()
         .iter()
@@ -243,5 +263,34 @@ mod tests {
             observe_column_infer(&mut state, v);
         }
         assert_eq!(infer_kind_from_state(state), infer_column_kind_from_values(&vals));
+    }
+
+    #[test]
+    fn available_kinds_for_text_column() {
+        assert_eq!(
+            available_column_kinds(ColumnInferState::Text),
+            vec![ColumnKind::Auto, ColumnKind::Text]
+        );
+    }
+
+    #[test]
+    fn available_kinds_for_date_column() {
+        assert_eq!(
+            available_column_kinds(ColumnInferState::Date),
+            vec![ColumnKind::Auto, ColumnKind::Text, ColumnKind::Date]
+        );
+    }
+
+    #[test]
+    fn available_kinds_for_int_column() {
+        assert_eq!(
+            available_column_kinds(ColumnInferState::Int),
+            vec![
+                ColumnKind::Auto,
+                ColumnKind::Text,
+                ColumnKind::Int,
+                ColumnKind::Float
+            ]
+        );
     }
 }

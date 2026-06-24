@@ -4,7 +4,7 @@ use crossterm::terminal::{
     disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen,
 };
 use crossterm::ExecutableCommand;
-use csv_utils_core::column::{column_kind_options, ColumnKind, NumericRepr};
+use csv_utils_core::column::{ColumnKind, NumericRepr};
 use csv_utils_core::display::truncate_middle;
 use csv_utils_core::model::{AppModel, MAX_COLUMN_WIDTH, MIN_COLUMN_WIDTH};
 use csv_utils_core::schema;
@@ -201,9 +201,11 @@ fn handle_mouse(
                 let inner = Block::default().borders(Borders::ALL).inner(popup);
                 if inner.contains(pos) {
                     let line = mouse.row.saturating_sub(inner.y) as usize;
-                    if let Some(option) =
-                        column_info_option_at_line(line, model.column_info_repr_enabled())
-                    {
+                    if let Some(option) = column_info_option_at_line(
+                        line,
+                        model.column_info_type_kinds(model.view.selected_col).len(),
+                        model.column_info_repr_section_visible(model.view.selected_col),
+                    ) {
                         model.column_info_apply_option(option);
                     }
                 }
@@ -595,12 +597,19 @@ fn draw_column_list(frame: &mut ratatui::Frame, area: Rect, model: &AppModel) {
     );
 }
 
-fn column_info_option_at_line(line: usize, repr_enabled: bool) -> Option<usize> {
-    if (3..=7).contains(&line) {
+fn column_info_option_at_line(
+    line: usize,
+    type_count: usize,
+    repr_section_visible: bool,
+) -> Option<usize> {
+    if type_count > 0 && (3..3 + type_count).contains(&line) {
         return Some(line - 3);
     }
-    if repr_enabled && (10..=11).contains(&line) {
-        return Some(line - 5);
+    if repr_section_visible {
+        let repr_start = 3 + type_count + 2;
+        if (repr_start..repr_start + 2).contains(&line) {
+            return Some(line - repr_start + type_count);
+        }
     }
     None
 }
@@ -615,7 +624,8 @@ fn draw_column_info(frame: &mut ratatui::Frame, popup_area: Rect, model: &AppMod
     let effective = model.effective_column_kind(col);
     let repr = model.numeric_repr(col);
     let focus = model.view.column_info_focus;
-    let repr_enabled = model.column_info_repr_enabled();
+    let type_kinds = model.column_info_type_kinds(col);
+    let repr_section = model.column_info_repr_section_visible(col);
     let info = model.column_info(col);
 
     let mut lines = vec![Line::from(vec![Span::styled(
@@ -629,7 +639,7 @@ fn draw_column_info(frame: &mut ratatui::Frame, popup_area: Rect, model: &AppMod
         Style::default().add_modifier(Modifier::BOLD),
     )));
 
-    for (idx, kind) in column_kind_options().iter().enumerate() {
+    for (idx, kind) in type_kinds.iter().enumerate() {
         let marker = if focus == idx { "▸ " } else { "  " };
         let selected = stored == *kind;
         let check = if selected { " ✓" } else { "" };
@@ -653,7 +663,7 @@ fn draw_column_info(frame: &mut ratatui::Frame, popup_area: Rect, model: &AppMod
         )));
     }
 
-    if repr_enabled {
+    if repr_section {
         lines.push(Line::from(""));
         lines.push(Line::from(Span::styled(
             " Representation ",
@@ -663,7 +673,7 @@ fn draw_column_info(frame: &mut ratatui::Frame, popup_area: Rect, model: &AppMod
             .iter()
             .enumerate()
         {
-            let idx = 5 + offset;
+            let idx = type_kinds.len() + offset;
             let marker = if focus == idx { "▸ " } else { "  " };
             let selected = repr == *repr_opt;
             let check = if selected { " ✓" } else { "" };

@@ -1,7 +1,6 @@
 use crate::column::{
-    column_kind_index, column_kind_options, infer_kind_from_state, is_right_aligned,
-    is_numeric, observe_column_infer, ColumnInferState,
-    ColumnKind, NumericRepr,
+    available_column_kinds, infer_kind_from_state, is_right_aligned, is_numeric,
+    observe_column_infer, ColumnInferState, ColumnKind, NumericRepr,
 };
 use crate::column_stats::{build_column_info, ColumnInfo, ColumnStatsAccum};
 use crate::display::{format_cell_for_column, sanitize_ascii, truncate_middle};
@@ -323,38 +322,69 @@ impl AppModel {
         }
     }
 
+    pub fn column_infer_state(&self, col: usize) -> ColumnInferState {
+        self.column_layout
+            .infer_state
+            .get(col)
+            .copied()
+            .unwrap_or(ColumnInferState::Unknown)
+    }
+
+    pub fn column_info_type_kinds(&self, col: usize) -> Vec<ColumnKind> {
+        available_column_kinds(self.column_infer_state(col))
+    }
+
     pub fn open_column_info_pane(&mut self) {
         let col = self.view.selected_col;
         self.view.show_column_info = true;
         let stored = self.stored_column_kind(col);
-        self.view.column_info_focus = column_kind_index(stored);
+        let kinds = self.column_info_type_kinds(col);
+        self.view.column_info_focus = kinds
+            .iter()
+            .position(|k| *k == stored)
+            .unwrap_or(0);
     }
 
     pub fn close_column_info_pane(&mut self) {
         self.view.show_column_info = false;
     }
 
+    fn column_info_kind_shows_repr(&self, col: usize, kind: ColumnKind) -> bool {
+        match kind {
+            ColumnKind::Int | ColumnKind::Float => true,
+            ColumnKind::Auto => is_numeric(self.effective_column_kind(col)),
+            _ => false,
+        }
+    }
+
+    pub fn column_info_repr_section_visible(&self, col: usize) -> bool {
+        if self
+            .column_info_type_kinds(col)
+            .iter()
+            .any(|k| matches!(k, ColumnKind::Int | ColumnKind::Float))
+        {
+            return true;
+        }
+        self.column_info_kind_shows_repr(col, self.stored_column_kind(col))
+    }
+
     pub fn column_info_repr_enabled(&self) -> bool {
         let col = self.view.selected_col;
+        let kinds = self.column_info_type_kinds(col);
         let focus = self.view.column_info_focus;
-        if (3..=4).contains(&focus) {
-            return true;
+        if focus < kinds.len() {
+            return self.column_info_kind_shows_repr(col, kinds[focus]);
         }
-        let stored = self.stored_column_kind(col);
-        if matches!(stored, ColumnKind::Int | ColumnKind::Float) {
-            return true;
-        }
-        if stored == ColumnKind::Auto {
-            return is_numeric(self.effective_column_kind(col));
-        }
-        false
+        self.column_info_repr_section_visible(col)
     }
 
     pub fn column_info_focus_max(&self) -> usize {
-        if self.column_info_repr_enabled() {
-            6
+        let col = self.view.selected_col;
+        let type_count = self.column_info_type_kinds(col).len();
+        if self.column_info_repr_section_visible(col) {
+            type_count + 1
         } else {
-            4
+            type_count.saturating_sub(1)
         }
     }
 
@@ -366,14 +396,16 @@ impl AppModel {
 
     pub fn column_info_apply_focus(&mut self) {
         let col = self.view.selected_col;
-        match self.view.column_info_focus {
-            0..=4 => {
-                let kind = column_kind_options()[self.view.column_info_focus];
-                self.set_column_kind(col, kind);
+        let kinds = self.column_info_type_kinds(col);
+        let focus = self.view.column_info_focus;
+        if focus < kinds.len() {
+            self.set_column_kind(col, kinds[focus]);
+        } else {
+            match focus - kinds.len() {
+                0 => self.set_numeric_repr(col, NumericRepr::General),
+                1 => self.set_numeric_repr(col, NumericRepr::Scientific),
+                _ => {}
             }
-            5 => self.set_numeric_repr(col, NumericRepr::General),
-            6 => self.set_numeric_repr(col, NumericRepr::Scientific),
-            _ => {}
         }
     }
 
@@ -415,7 +447,9 @@ impl AppModel {
             &stats,
             self.preview.scan_done(),
             self.view.column_info_focus,
+            self.column_info_repr_section_visible(col),
             self.column_info_repr_enabled(),
+            &self.column_info_type_kinds(col),
         )
     }
 

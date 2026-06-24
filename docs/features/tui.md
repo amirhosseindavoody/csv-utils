@@ -39,7 +39,7 @@ Data table uses ratatui `Table`. Column sidebar uses manual `Paragraph` lines (n
 | `column_numeric_repr` | General vs scientific formatting for numeric columns |
 | `column_widths_user_set` | Manual resize lock per column |
 | `show_column_info` | Column info overlay visible |
-| `column_info_focus` | Highlighted option in info panel (0–4 type, 5–6 representation) |
+| `column_info_focus` | Highlighted option in info panel (type options, then representation) |
 | `show_help` | Help overlay visible |
 
 Each frame: `maybe_refit_column_widths()` (when loaded row count changes), `clamp_selection(viewport_rows, table_width)`, and `clamp_column_list_offset(visible_height)`.
@@ -66,7 +66,7 @@ While the panel is open, table navigation is disabled:
 | `Enter` | Apply highlighted option |
 | `q` | Close panel |
 
-The panel shows editable **type** (auto, text, date, int, float) and **representation** (general, scientific) when the column is numeric, plus type-specific **statistics** from loaded rows (note shown while scanning).
+The panel shows editable **type** options filtered by inferred data (e.g. text-only columns hide date/int/float), **representation** when numeric types apply, plus type-specific **statistics** from loaded rows (note shown while scanning).
 
 ## Mouse
 
