@@ -754,7 +754,7 @@ fn draw_table(frame: &mut ratatui::Frame, area: Rect, model: &AppModel) {
     if headers.is_empty() {
         frame.render_widget(
             Paragraph::new("No data loaded.")
-                .block(Block::default().title(" Data ").borders(Borders::ALL))
+                .block(Block::default().borders(Borders::ALL))
                 .wrap(Wrap { trim: true }),
             area,
         );
@@ -823,15 +823,9 @@ fn draw_table(frame: &mut ratatui::Frame, area: Rect, model: &AppModel) {
         .map(|col_idx| Constraint::Length(model.column_width_chars(col_idx) as u16))
         .collect();
 
-    let title = format!(
-        " Data  (rows {}–{}) ",
-        model.view.row_offset + 1,
-        (model.view.row_offset + rows.len()).min(model.preview.row_count())
-    );
-
     let table = Table::new(rows, widths)
         .header(header)
-        .block(Block::default().title(title).borders(Borders::ALL))
+        .block(Block::default().borders(Borders::ALL))
         .column_spacing(1)
         .row_highlight_style(Style::default().bg(Color::DarkGray));
 

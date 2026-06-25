@@ -6,7 +6,7 @@ Full-screen terminal table explorer. Stack: **ratatui** 0.29 + **crossterm**. Fr
 
 ```
 ┌─ csv │ file.csv │ N rows [loading…] ─────────────────────┐
-│ ┌─ Data (rows A–B) ─────────────┐ ┌─ Columns (X–Y/Z) ────────┐ │
+│ ┌───────────────────────────────┐ ┌─ Columns (X–Y/Z) ────────┐ │
 │ │ header + visible rows         │ │ idx: name                │ │
 │ │ resizable cells, col scroll   │ │ independent list scroll  │ │
 │ └───────────────────────────────┘ └──────────────────────────┘ │
