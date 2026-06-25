@@ -37,7 +37,7 @@ pub struct TableViewState {
     pub column_numeric_repr: Vec<NumericRepr>,
     /// Manual resize lock per column (until file reopen).
     pub column_widths_user_set: Vec<bool>,
-    /// Per-column decimal format override (`None` = use `csv-utils.json` default).
+    /// Per-column decimal format override (`None` = use merged settings default).
     pub column_decimal_formats: Vec<Option<String>>,
     pub show_column_info: bool,
     /// Focus index in column info panel (type, representation, decimal places).

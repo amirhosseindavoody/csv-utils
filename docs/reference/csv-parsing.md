@@ -24,7 +24,7 @@ Formatting lives in `csv-utils-core/src/display.rs`:
 - **Text / date** — middle ellipsis (`...`) when wider than the column
 - **Int / float** — rescaled to fit (reduced precision, general or scientific notation); no ellipsis
 - Column widths **auto-fit** to header + indexed row content, clamped **4–64** (`MIN_COLUMN_WIDTH` / `MAX_COLUMN_WIDTH` in `model.rs`)
-- **Numeric decimal places** — format string like `.3` (3 digits after the decimal); default from `csv-utils.json`, per-column override in the info panel
+- **Numeric decimal places** — format string like `.3` (3 digits after the decimal); default from merged settings, per-column override in the info panel
 - Manual column resize (TUI/web drag) locks that column until a new file is opened
 
 Entry point: `format_cell_for_column(text, width, kind, repr)`.

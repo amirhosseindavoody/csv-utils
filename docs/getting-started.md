@@ -46,6 +46,12 @@ csv-utils-web [file.csv] [--host HOST] [--port PORT]
 
 Pixi tasks run from the **repo root**; extra args are forwarded (`pixi run tui file.csv`, `pixi run run -- stats file.csv`).
 
+## Settings
+
+User defaults live in `~/.config/csv-utils/csv-utils.json` (created on first TUI or web
+launch). Optional project overrides go in `./csv-utils.json` in the working directory;
+local fields override global ones. See [settings config](design/settings-config.md).
+
 ## Generate test data
 
 ```bash

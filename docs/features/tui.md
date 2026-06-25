@@ -53,7 +53,7 @@ Data table uses ratatui `Table`. Column sidebar uses manual `Paragraph` lines (n
 | `multi_selected_rows` | **Space** toggles individual rows for bulk row `:hide`; cleared when column multi-select or cell range starts |
 | `cell_range_anchor` / `cell_range_focus` | Inclusive corners for Ctrl+click / Ctrl+drag cell range; `:hide` uses the row span |
 
-Settings load from `csv-utils.json` in the working directory on open; see [settings config](../design/settings-config.md).
+Settings load from `~/.config/csv-utils/csv-utils.json` (created on first open), with optional `./csv-utils.json` in the working directory overriding individual fields; see [settings config](../design/settings-config.md).
 
 Each frame: `maybe_refit_column_widths()` (when loaded row count changes), `clamp_selection(viewport_rows, table_width)`, and `clamp_column_list_offset(visible_height)`.
 
@@ -89,8 +89,8 @@ Filtered columns show `*` in the table header and column sidebar. The title bar 
 ### File picker (no file on launch)
 
 Shown when `csv` or `csv tui` is run without a path. By default only files
-matching `file_picker.file_extensions` in `csv-utils.json` (`.csv`, `.dat`) are
-listed; directories are always shown.
+matching `file_picker.file_extensions` in settings (global or local `csv-utils.json`)
+are listed; directories are always shown.
 
 | Key | Action |
 |-----|--------|
@@ -120,7 +120,7 @@ While the panel is open, table navigation is disabled:
 | `Backspace` | While editing decimal format, delete a character |
 | `q` | Close panel |
 
-The panel shows editable **type** options filtered by inferred data (e.g. text-only columns hide date/int/float), **representation** when numeric types apply, **decimal places** (text field, default `.3` from `csv-utils.json`), **row filter** (fuzzy text or numeric expression), plus type-specific **statistics** from loaded rows (note shown while scanning).
+The panel shows editable **type** options filtered by inferred data (e.g. text-only columns hide date/int/float), **representation** when numeric types apply, **decimal places** (text field, default from merged settings, e.g. `.3`), **row filter** (fuzzy text or numeric expression), plus type-specific **statistics** from loaded rows (note shown while scanning).
 
 ## Mouse
 
@@ -156,7 +156,7 @@ pixi run tui test-data/generated/test_1000x100.csv
 ./target/release/csv tui file.csv
 ```
 
-With no file argument, the TUI opens a **file picker** starting in the current working directory. Only files with extensions from `csv-utils.json` (`file_picker.file_extensions`, default `.csv` and `.dat`) are listed; type `:all` to show every file. Navigate with `→` / `←` for directories, select a file with `Enter`, or quit with `q`.
+With no file argument, the TUI opens a **file picker** starting in the current working directory. Only files with extensions from settings (`file_picker.file_extensions`, default `.csv` and `.dat`) are listed; type `:all` to show every file. Navigate with `→` / `←` for directories, select a file with `Enter`, or quit with `q`.
 
 Press `?` in the TUI for inline help.
 
