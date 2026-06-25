@@ -74,8 +74,8 @@ Each frame: `maybe_refit_column_widths()` (when loaded row count changes), `clam
 | `:` then `:open <path>` | Open another file, or browse a directory in the file picker |
 | `:` then `:close` | Close file and return to file picker (in last file's directory) |
 | `:` then `:toggle-borders` | Show or hide `│` border lines between table columns for this session |
-| `:` then `:hide` / `:h` | Hide selected column(s) when the **sidebar** is focused, or selected row(s) when the **table** is focused |
-| `:` then `:unhide` / `:u` | Unhide selected hidden column(s) when the **sidebar** is focused, or selected hidden row(s) when the **table** is focused; with no hidden targets in the selection, unhide **all** hidden rows or columns for that focus |
+| `:` then `:hide` / `:h` | Hide selected column(s) after **←/→** or sidebar focus, or selected row(s) after **↑/↓**; Ctrl+click column header/sidebar for column multi-select |
+| `:` then `:unhide` / `:u` | Unhide using the same row/column axis as `:hide`; with no hidden targets in the selection, unhide **all** hidden rows or columns for that axis |
 | `:` then `:filter <text>` / `:f <text>` | Filter **rows** on the selected column (text: fuzzy; numeric: `>10`, `(>=10) & (<20)`, etc.) |
 | `:` then `:filter` / `:f` | Clear row filter on the selected column |
 | Sidebar focused + `:filter <text>` | Filter the column **sidebar** by name (click or scroll sidebar to focus) |
