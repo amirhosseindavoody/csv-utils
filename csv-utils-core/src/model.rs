@@ -67,6 +67,10 @@ pub struct TableViewState {
     pub row_hidden: Vec<bool>,
     /// Multi-selection for bulk row actions (Ctrl+click on table body). Empty means use `selected_row` only.
     pub multi_selected_rows: Vec<usize>,
+    /// Anchor corner (row, col) for Ctrl+click / Ctrl+drag cell range selection.
+    pub cell_range_anchor: Option<(usize, usize)>,
+    /// Focus corner for cell range; inclusive rectangle with anchor.
+    pub cell_range_focus: Option<(usize, usize)>,
     /// Last arrow navigation axis; **Space** toggles multi-select on this axis.
     pub last_multi_select_axis: MultiSelectAxis,
 }
@@ -110,6 +114,8 @@ impl Default for TableViewState {
             multi_selected_cols: Vec::new(),
             row_hidden: Vec::new(),
             multi_selected_rows: Vec::new(),
+            cell_range_anchor: None,
+            cell_range_focus: None,
             last_multi_select_axis: MultiSelectAxis::default(),
         }
     }
@@ -265,6 +271,7 @@ impl AppModel {
             self.toggle_column_multi_select(col);
             self.view.selected_col = col;
         } else {
+            self.clear_cell_range();
             self.view.multi_selected_cols.clear();
             self.view.selected_col = col;
         }
@@ -324,7 +331,66 @@ impl AppModel {
         self.view.multi_selected_rows.contains(&row)
     }
 
+    pub fn cell_range_active(&self) -> bool {
+        self.view.cell_range_anchor.is_some()
+    }
+
+    fn cell_range_bounds(&self) -> Option<(usize, usize, usize, usize)> {
+        let anchor = self.view.cell_range_anchor?;
+        let focus = self.view.cell_range_focus?;
+        let (r0, c0) = anchor;
+        let (r1, c1) = focus;
+        Some((r0.min(r1), r0.max(r1), c0.min(c1), c0.max(c1)))
+    }
+
+    pub fn is_cell_in_selection_range(&self, row: usize, col: usize) -> bool {
+        let Some((min_r, max_r, min_c, max_c)) = self.cell_range_bounds() else {
+            return false;
+        };
+        row >= min_r && row <= max_r && col >= min_c && col <= max_c
+    }
+
+    pub fn clear_cell_range(&mut self) {
+        self.view.cell_range_anchor = None;
+        self.view.cell_range_focus = None;
+    }
+
+    /// Returns the anchor for an in-progress range, creating one at `(row, col)` when needed.
+    pub fn begin_cell_range_if_needed(&mut self, row: usize, col: usize) -> (usize, usize) {
+        self.view.multi_selected_cols.clear();
+        self.view.multi_selected_rows.clear();
+        if let Some(anchor) = self.view.cell_range_anchor {
+            anchor
+        } else {
+            self.view.cell_range_anchor = Some((row, col));
+            self.view.cell_range_focus = Some((row, col));
+            (row, col)
+        }
+    }
+
+    pub fn set_cell_range_focus(&mut self, row: usize, col: usize) {
+        if self.view.cell_range_anchor.is_some() {
+            self.view.cell_range_focus = Some((row, col));
+        }
+    }
+
+    pub fn set_cell_range_corners(
+        &mut self,
+        anchor_row: usize,
+        anchor_col: usize,
+        focus_row: usize,
+        focus_col: usize,
+    ) {
+        self.view.multi_selected_cols.clear();
+        self.view.multi_selected_rows.clear();
+        self.view.cell_range_anchor = Some((anchor_row, anchor_col));
+        self.view.cell_range_focus = Some((focus_row, focus_col));
+    }
+
     pub fn rows_for_bulk_action(&self) -> Vec<usize> {
+        if let Some((min_r, max_r, _, _)) = self.cell_range_bounds() {
+            return (min_r..=max_r).collect();
+        }
         if self.view.multi_selected_rows.is_empty() {
             vec![self.view.selected_row]
         } else {
@@ -343,11 +409,13 @@ impl AppModel {
     }
 
     pub fn toggle_row_multi_select(&mut self, row: usize) {
+        self.clear_cell_range();
         self.view.multi_selected_cols.clear();
         Self::toggle_sorted(&mut self.view.multi_selected_rows, row);
     }
 
     pub fn toggle_column_multi_select(&mut self, col: usize) {
+        self.clear_cell_range();
         self.view.multi_selected_rows.clear();
         Self::toggle_sorted(&mut self.view.multi_selected_cols, col);
     }
@@ -380,8 +448,10 @@ impl AppModel {
         self.view.selected_row = row;
         self.view.selected_col = col;
         if extend {
-            self.toggle_row_multi_select(row);
+            self.begin_cell_range_if_needed(row, col);
+            self.set_cell_range_focus(row, col);
         } else {
+            self.clear_cell_range();
             self.view.multi_selected_rows.clear();
         }
         self.ensure_column_list_shows_selection(column_list_height);
@@ -393,6 +463,7 @@ impl AppModel {
             self.toggle_column_multi_select(col);
             self.view.selected_col = col;
         } else {
+            self.clear_cell_range();
             self.view.multi_selected_cols.clear();
             self.view.selected_col = col;
         }
@@ -423,6 +494,12 @@ impl AppModel {
         self.view.multi_selected_rows.retain(|&row| {
             row < self.view.row_hidden.len() && !self.view.row_hidden[row]
         });
+        self.view.cell_range_anchor = self.view.cell_range_anchor.filter(|&(r, _)| {
+            r < self.view.row_hidden.len() && !self.view.row_hidden[r]
+        });
+        if self.view.cell_range_anchor.is_none() {
+            self.view.cell_range_focus = None;
+        }
         self.invalidate_row_cache();
         self.snap_selection_to_visible_rows();
         Ok(())
@@ -1451,19 +1528,40 @@ mod tests {
     }
 
     #[test]
-    fn ctrl_click_row_multi_select_toggles() {
+    fn ctrl_click_row_multi_select_builds_range() {
         let path = PathBuf::from("test-data/generated/test_1000x100.csv");
         if !path.exists() {
             return;
         }
         let mut model = AppModel::open(Some(path)).expect("open csv");
         model.select_table_cell_click(0, 0, false, 10);
-        assert!(model.view.multi_selected_rows.is_empty());
+        assert!(!model.cell_range_active());
         model.select_table_cell_click(1, 0, true, 10);
-        model.select_table_cell_click(3, 0, true, 10);
-        assert_eq!(model.view.multi_selected_rows, vec![1, 3]);
-        model.select_table_cell_click(1, 0, true, 10);
-        assert_eq!(model.view.multi_selected_rows, vec![3]);
+        assert!(model.is_cell_in_selection_range(1, 0));
+        model.select_table_cell_click(3, 2, true, 10);
+        for row in 1..=3 {
+            for col in 0..=2 {
+                assert!(model.is_cell_in_selection_range(row, col));
+            }
+        }
+        assert!(!model.is_cell_in_selection_range(0, 0));
+        assert_eq!(model.rows_for_bulk_action(), (1..=3).collect::<Vec<_>>());
+    }
+
+    #[test]
+    fn ctrl_drag_cell_range_selects_rectangle() {
+        let path = PathBuf::from("test-data/generated/test_1000x100.csv");
+        if !path.exists() {
+            return;
+        }
+        let mut model = AppModel::open(Some(path)).expect("open csv");
+        model.set_cell_range_corners(2, 1, 5, 3);
+        assert!(model.is_cell_in_selection_range(2, 1));
+        assert!(model.is_cell_in_selection_range(5, 3));
+        assert!(model.is_cell_in_selection_range(4, 2));
+        assert!(!model.is_cell_in_selection_range(1, 1));
+        assert!(!model.is_cell_in_selection_range(2, 4));
+        assert_eq!(model.rows_for_bulk_action(), vec![2, 3, 4, 5]);
     }
 
     #[test]
@@ -1512,10 +1610,10 @@ mod tests {
 
         model.view.multi_selected_cols = vec![6];
         model.select_table_cell_click(10, 5, true, 10);
-        assert_eq!(model.view.multi_selected_rows, vec![10]);
+        assert!(model.is_cell_in_selection_range(10, 5));
         assert!(model.view.multi_selected_cols.is_empty());
 
-        model.view.multi_selected_rows = vec![11, 12];
+        model.set_cell_range_corners(11, 0, 12, 0);
         model.select_column_click(7, true, 10);
         assert_eq!(model.view.multi_selected_cols, vec![7]);
         assert!(model.view.multi_selected_rows.is_empty());

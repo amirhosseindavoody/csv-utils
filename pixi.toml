@@ -1,6 +1,6 @@
 [workspace]
 name = "csv-utils"
-version = "2026.6.24+3"
+version = "2026.6.25+0"
 description = "High-performance CSV CLI + TUI explorer"
 channels = ["conda-forge"]
 platforms = ["linux-64"]
@@ -8,7 +8,7 @@ preview = ["pixi-build"]
 
 [package]
 name = "csv-utils"
-version = "2026.6.24+3"
+version = "2026.6.25+0"
 
 [package.build]
 backend = { name = "pixi-build-rattler-build", version = "0.*" }

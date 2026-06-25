@@ -36,11 +36,11 @@ csv — keyboard shortcuts
   :open      open file or browse directory by path
   :close     close file and open file picker
   :toggle-borders  show or hide table column border lines
-  :hide / :h  hide selected rows (table) or columns (sidebar); Ctrl+click to multi-select
+  :hide / :h  hide selected rows (table) or columns (sidebar); Ctrl+click/drag cell range
   /          fuzzy-find columns (filters sidebar)
   :filter    filter rows on selected column, or sidebar when focused (:f)
 
-Mouse: click table cells, column info options, or column header borders to resize; wheel on table scrolls rows; wheel on column list scrolls columns.
+Mouse: click table cells; Ctrl+click or Ctrl+drag on cells to select a range; Ctrl+click column header or sidebar for column multi-select; drag header borders to resize; wheel scrolls rows/columns.
 
 Press q or ? to close.";
 
@@ -62,6 +62,10 @@ struct ColumnResize {
     col: usize,
     start_x: u16,
     start_width: u16,
+}
+
+struct CellRangeDrag {
+    anchor: (usize, usize),
 }
 
 pub fn run(file: Option<&str>) -> Result<()> {
@@ -92,6 +96,7 @@ pub fn run(file: Option<&str>) -> Result<()> {
     };
     let mut last_redraw = Instant::now();
     let mut column_resize: Option<ColumnResize> = None;
+    let mut cell_range_drag: Option<CellRangeDrag> = None;
     let mut command_line: Option<CommandLineState> = None;
     let mut command_error: Option<String> = None;
     let mut column_finder: Option<ColumnFinderState> = None;
@@ -215,6 +220,7 @@ pub fn run(file: Option<&str>) -> Result<()> {
                         &areas,
                         column_list_height,
                         &mut column_resize,
+                        &mut cell_range_drag,
                     );
                 }
                 Event::Resize(_, _) => {}
@@ -545,6 +551,7 @@ fn handle_mouse(
     areas: &LayoutAreas,
     column_list_height: usize,
     column_resize: &mut Option<ColumnResize>,
+    cell_range_drag: &mut Option<CellRangeDrag>,
 ) {
     if model.view.show_help {
         return;
@@ -597,6 +604,33 @@ fn handle_mouse(
         return;
     }
 
+    if let Some(drag) = cell_range_drag.as_ref() {
+        match mouse.kind {
+            MouseEventKind::Drag(crossterm::event::MouseButton::Left) => {
+                if areas.table.contains(pos) {
+                    if let Some(hit) = hit_test_table(col, row, areas.table, model) {
+                        if let Some(row_idx) = hit.row {
+                            model.set_cell_range_corners(
+                                drag.anchor.0,
+                                drag.anchor.1,
+                                row_idx,
+                                hit.col,
+                            );
+                            model.view.selected_row = row_idx;
+                            model.view.selected_col = hit.col;
+                        }
+                    }
+                }
+                return;
+            }
+            MouseEventKind::Up(crossterm::event::MouseButton::Left) => {
+                *cell_range_drag = None;
+                return;
+            }
+            _ => {}
+        }
+    }
+
     match mouse.kind {
         MouseEventKind::ScrollUp if areas.columns.contains(pos) => {
             model.view.column_sidebar_focused = true;
@@ -634,9 +668,21 @@ fn handle_mouse(
             if let Some(hit) = hit_test_table(col, row, areas.table, model) {
                 let extend = mouse.modifiers.contains(KeyModifiers::CONTROL);
                 if let Some(row_idx) = hit.row {
-                    model.select_table_cell_click(row_idx, hit.col, extend, column_list_height);
+                    if extend {
+                        let anchor = model.begin_cell_range_if_needed(row_idx, hit.col);
+                        model.set_cell_range_focus(row_idx, hit.col);
+                        model.set_multi_select_axis(MultiSelectAxis::Row);
+                        model.view.selected_row = row_idx;
+                        model.view.selected_col = hit.col;
+                        model.ensure_column_list_shows_selection(column_list_height);
+                        *cell_range_drag = Some(CellRangeDrag { anchor });
+                    } else {
+                        model.select_table_cell_click(row_idx, hit.col, false, column_list_height);
+                    }
+                } else if extend {
+                    model.select_table_header_click(hit.col, true, column_list_height);
                 } else {
-                    model.select_table_header_click(hit.col, extend, column_list_height);
+                    model.select_table_header_click(hit.col, false, column_list_height);
                 }
             }
         }
@@ -724,6 +770,9 @@ fn table_cell_style(model: &AppModel, row_idx: usize, col_idx: usize) -> Style {
             .fg(Color::Black)
             .bg(Color::Yellow)
             .add_modifier(Modifier::BOLD);
+    }
+    if model.is_cell_in_selection_range(row_idx, col_idx) {
+        return Style::default().fg(Color::Black).bg(Color::Blue);
     }
     if col_idx == model.view.selected_col {
         return selected_column_body_style();
