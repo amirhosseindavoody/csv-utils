@@ -19,6 +19,7 @@ use std::io::{self, stdout};
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
+use crate::tui::column_finder::{ColumnFinderAction, ColumnFinderState};
 use crate::tui::command_line::{CommandKeyAction, CommandLineState, VIEW_COMMANDS};
 use crate::tui::file_picker::{FilePicker, FilePickerAction, resolve_path};
 
@@ -34,6 +35,8 @@ csv — keyboard shortcuts
   :open      open file or browse directory by path
   :close     close file and open file picker
   :toggle-borders  show or hide table column border lines
+  /          fuzzy-find columns (filters sidebar)
+  :filter    filter column sidebar by name (:f)
 
 Mouse: click table cells, column info options, or column header borders to resize; wheel on table scrolls rows; wheel on column list scrolls columns.
 
@@ -89,6 +92,7 @@ pub fn run(file: Option<&str>) -> Result<()> {
     let mut column_resize: Option<ColumnResize> = None;
     let mut command_line: Option<CommandLineState> = None;
     let mut command_error: Option<String> = None;
+    let mut column_finder: Option<ColumnFinderState> = None;
 
     while running {
         model.maybe_update_column_layout();
@@ -96,7 +100,7 @@ pub fn run(file: Option<&str>) -> Result<()> {
             areas = if file_picker.is_some() {
                 draw_file_picker(frame, file_picker.as_ref().unwrap())
             } else {
-                draw(frame, &model, command_line.as_ref(), command_error.as_deref())
+                draw(frame, &model, command_line.as_ref(), command_error.as_deref(), column_finder.as_ref())
             };
         })?;
 
@@ -163,6 +167,7 @@ pub fn run(file: Option<&str>) -> Result<()> {
                         column_list_height,
                         &mut command_line,
                         &mut command_error,
+                        &mut column_finder,
                     ) {
                         MainKeyAction::Continue => {}
                         MainKeyAction::Quit => running = false,
@@ -181,6 +186,7 @@ pub fn run(file: Option<&str>) -> Result<()> {
                             });
                             command_line = None;
                             command_error = None;
+                            column_finder = None;
                         }
                         MainKeyAction::OpenPath(path) => {
                             let extensions = model.settings.file_picker.normalized_extensions();
@@ -196,6 +202,7 @@ pub fn run(file: Option<&str>) -> Result<()> {
                             }
                             command_line = None;
                             command_error = None;
+                            column_finder = None;
                         }
                     }
                 }
@@ -238,13 +245,44 @@ fn column_list_visible_height(columns_area: Rect) -> usize {
         .max(1) as usize
 }
 
+fn apply_column_filter_from_command(model: &mut AppModel, cmd: &str) -> Result<(), String> {
+    if cmd == ":filter" || cmd == ":f" {
+        model.clear_column_name_filter();
+        return Ok(());
+    }
+    if let Some(query) = cmd.strip_prefix(":filter ") {
+        model.set_column_name_filter(query.trim().to_string());
+        return Ok(());
+    }
+    if let Some(query) = cmd.strip_prefix(":f ") {
+        model.set_column_name_filter(query.trim().to_string());
+        return Ok(());
+    }
+    Err(format!("Unknown command: {cmd}"))
+}
+
 fn handle_key(
     key: KeyEvent,
     model: &mut AppModel,
     column_list_height: usize,
     command_line: &mut Option<CommandLineState>,
     command_error: &mut Option<String>,
+    column_finder: &mut Option<ColumnFinderState>,
 ) -> MainKeyAction {
+    if let Some(finder) = column_finder.as_mut() {
+        match finder.handle_key(key, model, column_list_height) {
+            ColumnFinderAction::Continue => {}
+            ColumnFinderAction::Cancel => {
+                model.clear_column_name_filter();
+                *column_finder = None;
+            }
+            ColumnFinderAction::Select(_) => {
+                *column_finder = None;
+            }
+        }
+        return MainKeyAction::Continue;
+    }
+
     if let Some(command) = command_line.as_mut() {
         match command.handle_key(key, VIEW_COMMANDS) {
             CommandKeyAction::Continue => {
@@ -255,11 +293,18 @@ fn handle_key(
                 *command_error = None;
             }
             CommandKeyAction::Rejected => {
-                *command_error = Some(
-                    command
-                        .rejection_message(VIEW_COMMANDS)
-                        .to_string(),
-                );
+                if command.buf == ":filter " || command.buf == ":f " {
+                    model.clear_column_name_filter();
+                    *command_line = None;
+                    *command_error = None;
+                    model.ensure_column_list_shows_selection(column_list_height);
+                } else {
+                    *command_error = Some(
+                        command
+                            .rejection_message(VIEW_COMMANDS)
+                            .to_string(),
+                    );
+                }
             }
             CommandKeyAction::Submit(cmd) => {
                 if let Some(path_str) = cmd.strip_prefix(":open ") {
@@ -282,6 +327,15 @@ fn handle_key(
                         Err(err) => {
                             *command_error = Some(format!("Invalid path: {err}"));
                         }
+                    }
+                } else if cmd.starts_with(":filter ") || cmd.starts_with(":f ") || cmd == ":filter" || cmd == ":f" {
+                    match apply_column_filter_from_command(model, &cmd) {
+                        Ok(()) => {
+                            *command_line = None;
+                            *command_error = None;
+                            model.ensure_column_list_shows_selection(column_list_height);
+                        }
+                        Err(err) => *command_error = Some(err),
                     }
                 } else {
                     match cmd.as_str() {
@@ -343,6 +397,13 @@ fn handle_key(
         KeyCode::Char(':') => {
             *command_line = Some(CommandLineState::start());
             *command_error = None;
+            *column_finder = None;
+        }
+        KeyCode::Char('/') => {
+            *column_finder = Some(ColumnFinderState::start());
+            *command_line = None;
+            *command_error = None;
+            column_finder.as_mut().unwrap().sync_filter(model);
         }
         KeyCode::Char('?') => model.view.show_help = true,
         KeyCode::Char('c') => model.open_column_info_pane(),
@@ -477,11 +538,11 @@ fn handle_mouse(
             if !inner.contains(pos) {
                 return;
             }
+            let filtered = model.filtered_sidebar_columns();
             let rel = row.saturating_sub(inner.y) as usize;
             let idx = model.view.column_list_offset + rel;
-            if idx < model.preview.headers().len() {
-                model.view.selected_col = idx;
-                model.ensure_column_list_shows_selection(column_list_height);
+            if let Some(&col) = filtered.get(idx) {
+                model.select_sidebar_column(col, column_list_height);
             }
         }
         _ => {}
@@ -668,10 +729,12 @@ fn draw(
     model: &AppModel,
     command_line: Option<&CommandLineState>,
     command_error: Option<&str>,
+    column_finder: Option<&ColumnFinderState>,
 ) -> LayoutAreas {
     let area = frame.area();
-    let bottom_height = command_line
-        .map(|c| c.panel_height(VIEW_COMMANDS))
+    let bottom_height = column_finder
+        .map(|f| f.panel_height(model))
+        .or_else(|| command_line.map(|c| c.panel_height(VIEW_COMMANDS)))
         .unwrap_or(1);
 
     let outer = Layout::default()
@@ -720,10 +783,12 @@ fn draw(
     draw_table(frame, table_area, model);
     draw_column_list(frame, columns_area, model);
 
-    if let Some(command) = command_line {
+    if let Some(finder) = column_finder {
+        finder.draw(frame, outer[2], model);
+    } else if let Some(command) = command_line {
         command.draw(frame, outer[2], VIEW_COMMANDS, command_error);
     } else {
-        let hints = " q quit  ↑↓ rows  ←→ cols  drag resize  c info  ? help  : command ";
+        let hints = " q quit  ↑↓ rows  ←→ cols  / columns  drag resize  c info  ? help  : command ";
         frame.render_widget(
             Paragraph::new(hints).style(Style::default().fg(Color::DarkGray)),
             outer[2],
@@ -835,13 +900,14 @@ fn draw_table(frame: &mut ratatui::Frame, area: Rect, model: &AppModel) {
 
 fn draw_column_list(frame: &mut ratatui::Frame, area: Rect, model: &AppModel) {
     let headers = model.preview.headers();
+    let filtered = model.filtered_sidebar_columns();
     let inner = Block::default().borders(Borders::ALL).inner(area);
     let visible_height = inner.height.max(1) as usize;
     let mut lines = Vec::new();
 
     for i in 0..visible_height {
-        let col_idx = model.view.column_list_offset + i;
-        if let Some(name) = headers.get(col_idx) {
+        if let Some(&col_idx) = filtered.get(model.view.column_list_offset + i) {
+            let name = headers.get(col_idx).map(String::as_str).unwrap_or("");
             let text = model.format_sidebar_column_label(col_idx, name);
             let display = truncate_middle(&text, inner.width as usize);
             let style = if col_idx == model.view.selected_col {
@@ -863,21 +929,30 @@ fn draw_column_list(frame: &mut ratatui::Frame, area: Rect, model: &AppModel) {
         }
     }
 
-    let end = (model.view.column_list_offset + visible_height).min(headers.len());
-
+    let end = (model.view.column_list_offset + visible_height).min(filtered.len());
+    let title = if model.column_name_filter_active() {
+        format!(
+            " Columns ({}/{} match \"{}\") ",
+            filtered.len(),
+            headers.len(),
+            model.view.column_name_filter
+        )
+    } else {
+        format!(
+            " Columns ({}–{}/{}) ",
+            if filtered.is_empty() {
+                0
+            } else {
+                model.view.column_list_offset + 1
+            },
+            end,
+            headers.len()
+        )
+    };
     frame.render_widget(
         Paragraph::new(lines).block(
             Block::default()
-                .title(format!(
-                    " Columns ({}–{}/{}) ",
-                    if headers.is_empty() {
-                        0
-                    } else {
-                        model.view.column_list_offset + 1
-                    },
-                    end,
-                    headers.len()
-                ))
+                .title(title)
                 .borders(Borders::ALL)
                 .border_style(Style::default().fg(Color::Magenta)),
         ),

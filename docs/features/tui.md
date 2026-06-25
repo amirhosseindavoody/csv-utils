@@ -43,6 +43,7 @@ Data table uses ratatui `Table`. Column sidebar uses manual `Paragraph` lines (n
 | `column_info_decimal_editing` | TUI: editing decimal format text |
 | `show_help` | Help overlay visible |
 | `show_column_borders` | Draw column `│` lines and a header `─` rule in the table gaps (initialized from config; toggled with `:toggle-borders`). Gaps stay as whitespace when off |
+| `column_name_filter` | Fuzzy name filter for the column sidebar (`/` finder or `:filter`) |
 
 Settings load from `csv-utils.json` in the working directory on open; see [settings config](../design/settings-config.md).
 
@@ -60,11 +61,16 @@ Each frame: `maybe_refit_column_widths()` (when loaded row count changes), `clam
 | `c` | Open column info panel |
 | `?` | Help overlay |
 | `:` | Open command line (filtered suggestions, Tab complete) |
+| `/` | Open column finder (fuzzy-match column names; filters sidebar live) |
 | `:` then `:open <path>` | Open another file, or browse a directory in the file picker |
 | `:` then `:close` | Close file and return to file picker (in last file's directory) |
 | `:` then `:toggle-borders` | Show or hide `│` border lines between table columns for this session |
+| `:` then `:filter <text>` / `:f <text>` | Filter column sidebar to fuzzy-matched names |
+| `:` then `:filter` / `:f` | Clear column sidebar filter (Enter on empty `:filter ` also clears) |
 
-Command line keys: **↑/↓** select suggestion, **Tab** complete, **Enter** run (for `:open`, Enter selects the command first, then type/paste the path and press **Enter** again), **Esc** cancel.
+Command line keys: **↑/↓** select suggestion, **Tab** complete, **Enter** run (for `:open` and `:filter`, Enter selects the command first, then type the argument and press **Enter** again), **Esc** cancel.
+
+Column finder keys (**`/`**): type to fuzzy-filter the sidebar, **↑/↓** pick a match, **Enter** jump to that column (filter stays active), **Esc** cancel and clear the filter.
 
 ### File picker (no file on launch)
 

@@ -5,6 +5,7 @@ use crate::column::{
 use crate::column_stats::{build_column_info, ColumnInfo};
 use crate::display::{format_cell_for_column, sanitize_ascii, truncate_middle};
 use crate::settings::{self, normalize_decimal_format, SettingsFile};
+use crate::fuzzy::rank_by_fuzzy;
 use std::path::PathBuf;
 
 pub const MIN_COLUMN_WIDTH: usize = 4;
@@ -37,6 +38,8 @@ pub struct TableViewState {
     pub show_help: bool,
     /// One-character gap between table columns when true.
     pub show_column_borders: bool,
+    /// Non-empty when the column sidebar lists only fuzzy-matched headers.
+    pub column_name_filter: String,
 }
 
 #[derive(Debug)]
@@ -67,6 +70,7 @@ impl Default for TableViewState {
             column_info_decimal_draft: String::new(),
             show_help: false,
             show_column_borders: true,
+            column_name_filter: String::new(),
         }
     }
 }
@@ -590,6 +594,72 @@ impl AppModel {
         format!("{col_idx}: {name}")
     }
 
+    pub fn set_column_name_filter(&mut self, filter: String) {
+        self.view.column_name_filter = filter;
+        self.view.column_list_offset = 0;
+        let filtered = self.filtered_sidebar_columns();
+        if !filtered.is_empty() && !filtered.contains(&self.view.selected_col) {
+            self.view.selected_col = filtered[0];
+        }
+    }
+
+    pub fn clear_column_name_filter(&mut self) {
+        self.view.column_name_filter.clear();
+        self.view.column_list_offset = 0;
+    }
+
+    pub fn column_name_filter_active(&self) -> bool {
+        !self.view.column_name_filter.is_empty()
+    }
+
+    /// Sidebar column indices for a name filter (empty shows all columns).
+    pub fn sidebar_columns_for_filter(&self, filter: &str) -> Vec<usize> {
+        let headers = self.preview.headers();
+        if headers.is_empty() {
+            return Vec::new();
+        }
+        let query = filter.trim();
+        if query.is_empty() {
+            return (0..headers.len()).collect();
+        }
+        if query.bytes().all(|b| b.is_ascii_digit()) {
+            if let Ok(idx) = query.parse::<usize>() {
+                if idx < headers.len() {
+                    return vec![idx];
+                }
+            }
+        }
+        rank_by_fuzzy(
+            query,
+            headers
+                .iter()
+                .enumerate()
+                .map(|(idx, name)| (idx, name.as_str())),
+        )
+    }
+
+    /// Sidebar column indices after applying `column_name_filter`.
+    pub fn filtered_sidebar_columns(&self) -> Vec<usize> {
+        self.sidebar_columns_for_filter(&self.view.column_name_filter)
+    }
+
+    fn sidebar_position_of_column(&self, col: usize) -> Option<usize> {
+        self.filtered_sidebar_columns().iter().position(|&c| c == col)
+    }
+
+    pub fn select_sidebar_column(&mut self, col: usize, visible_height: usize) {
+        self.view.selected_col = col;
+        if let Some(pos) = self.sidebar_position_of_column(col) {
+            let height = visible_height.max(1);
+            if pos < self.view.column_list_offset {
+                self.view.column_list_offset = pos;
+            } else if pos >= self.view.column_list_offset + height {
+                self.view.column_list_offset = pos.saturating_sub(height - 1);
+            }
+        }
+        self.clamp_column_list_offset(visible_height);
+    }
+
     fn column_slot_width(&self, col: usize) -> u16 {
         self.column_width_chars(col) as u16 + self.column_separator_width()
     }
@@ -631,20 +701,25 @@ impl AppModel {
     }
 
     pub fn clamp_column_list_offset(&mut self, visible_height: usize) {
-        let header_count = self.preview.headers().len();
-        let max_offset = header_count.saturating_sub(visible_height.max(1));
+        let count = self.filtered_sidebar_columns().len();
+        let max_offset = count.saturating_sub(visible_height.max(1));
         self.view.column_list_offset = self.view.column_list_offset.min(max_offset);
     }
 
     pub fn ensure_column_list_shows_selection(&mut self, visible_height: usize) {
-        let sel = self.view.selected_col;
-        let off = self.view.column_list_offset;
-        if sel < off {
-            self.view.column_list_offset = sel;
-        } else if visible_height > 0 && sel >= off + visible_height {
-            self.view.column_list_offset = sel - visible_height + 1;
+        let height = visible_height.max(1);
+        if height == usize::MAX {
+            return;
         }
-        self.clamp_column_list_offset(visible_height);
+        let Some(pos) = self.sidebar_position_of_column(self.view.selected_col) else {
+            return;
+        };
+        if pos < self.view.column_list_offset {
+            self.view.column_list_offset = pos;
+        } else if pos >= self.view.column_list_offset + height {
+            self.view.column_list_offset = pos.saturating_sub(height - 1);
+        }
+        self.clamp_column_list_offset(height);
     }
 
     pub fn visible_column_range(&self, table_width: u16) -> std::ops::Range<usize> {

@@ -6,6 +6,7 @@ pub mod column_stats;
 pub mod display;
 pub mod engine;
 pub mod json_view;
+pub mod fuzzy;
 pub mod model;
 pub mod predicate;
 pub mod preview;

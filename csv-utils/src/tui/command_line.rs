@@ -64,6 +64,12 @@ pub const VIEW_COMMANDS: &[CommandSpec] = &[
         description: "Show or hide table column border lines",
         takes_args: false,
     },
+    CommandSpec {
+        primary: ":filter",
+        aliases: &[":f"],
+        description: "Filter column list by name",
+        takes_args: true,
+    },
 ];
 
 #[derive(Debug, Clone)]
@@ -90,7 +96,13 @@ impl CommandLineState {
 
     pub fn in_args_entry_mode(&self, commands: &[CommandSpec]) -> bool {
         commands.iter().any(|cmd| {
-            cmd.takes_args && self.buf.starts_with(&cmd.arg_prefix())
+            if !cmd.takes_args {
+                return false;
+            }
+            if self.buf.starts_with(&cmd.arg_prefix()) {
+                return true;
+            }
+            cmd.aliases.iter().any(|alias| self.buf.starts_with(&format!("{alias} ")))
         })
     }
 
@@ -364,7 +376,7 @@ mod tests {
             suggestion_index: 0,
         };
         assert_eq!(state.filtered(PICKER_COMMANDS).len(), 3);
-        assert_eq!(state.filtered(VIEW_COMMANDS).len(), 3);
+        assert_eq!(state.filtered(VIEW_COMMANDS).len(), 4);
     }
 
     #[test]
