@@ -48,6 +48,8 @@ Data table uses ratatui `Table`. Column sidebar uses manual `Paragraph` lines (n
 | `column_sidebar_focused` | When true, `:filter` applies to the sidebar instead of row values |
 | `column_hidden` | Per-column flag: hidden from the table but still listed in the sidebar |
 | `multi_selected_cols` | Ctrl+click multi-selection for bulk `:hide` (empty = use `selected_col` only) |
+| `row_hidden` | Per-row flag: hidden from the table (session-only) |
+| `multi_selected_rows` | Ctrl+click on table body for bulk row `:hide` (empty = use `selected_row` only) |
 
 Settings load from `csv-utils.json` in the working directory on open; see [settings config](../design/settings-config.md).
 
@@ -69,7 +71,7 @@ Each frame: `maybe_refit_column_widths()` (when loaded row count changes), `clam
 | `:` then `:open <path>` | Open another file, or browse a directory in the file picker |
 | `:` then `:close` | Close file and return to file picker (in last file's directory) |
 | `:` then `:toggle-borders` | Show or hide `│` border lines between table columns for this session |
-| `:` then `:hide` | Hide selected column(s) from the table (Ctrl+click to multi-select first) |
+| `:` then `:hide` / `:h` | Hide selected column(s) when the **sidebar** is focused, or selected row(s) when the **table** is focused |
 | `:` then `:filter <text>` / `:f <text>` | Filter **rows** on the selected column (text: fuzzy; numeric: `>10`, `(>=10) & (<20)`, etc.) |
 | `:` then `:filter` / `:f` | Clear row filter on the selected column |
 | Sidebar focused + `:filter <text>` | Filter the column **sidebar** by name (click or scroll sidebar to focus) |
@@ -121,13 +123,13 @@ The panel shows editable **type** options filtered by inferred data (e.g. text-o
 |--------|--------|
 | Column info panel | Click type/representation rows to apply; click decimal field to focus |
 | Table header border | Drag to resize column width (4–64 chars) |
-| Table header | Select column only (click, not on border); **Ctrl+click** toggles multi-select |
-| Table body cell | Select row + column |
+| Table header | Select column only (click, not on border); **Ctrl+click** toggles column multi-select |
+| Table body cell | Select row + column; **Ctrl+click** toggles row multi-select |
 | Table wheel | Move `selected_row` ±3 |
-| Column list click | Select column; **Ctrl+click** toggles multi-select |
+| Column list click | Select column; **Ctrl+click** toggles column multi-select |
 | Column list wheel | Scroll sidebar ±3 via `column_list_offset` |
 
-Multi-selected columns show a blue highlight (`◆` prefix in the sidebar). The active column keeps the primary highlight (cyan header, magenta sidebar). Hidden columns remain in the sidebar with a dim `·` prefix but are omitted from the table. At least one column must stay visible; `:hide` reports an error if the selection would hide every column.
+Multi-selected columns show a blue highlight (`◆` prefix in the sidebar). Multi-selected rows use a blue row background; the active row keeps the primary highlight (yellow cell, dark gray row). Hidden columns remain in the sidebar with a dim `·` prefix but are omitted from the table. Hidden rows are omitted from the table entirely. At least one column and one row must stay visible; `:hide` reports an error if the selection would hide every column or every row.
 
 Hit-testing: `hit_test_table` / `hit_test_column_resize` in `app.rs` (variable-width columns plus a one-character gap between columns; gap shows `│` when column borders are enabled).
 

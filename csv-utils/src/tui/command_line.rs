@@ -72,8 +72,8 @@ pub const VIEW_COMMANDS: &[CommandSpec] = &[
     },
     CommandSpec {
         primary: ":hide",
-        aliases: &[],
-        description: "Hide selected columns from the table",
+        aliases: &[":h"],
+        description: "Hide selected rows (table) or columns (sidebar)",
         takes_args: false,
     },
 ];
@@ -452,6 +452,16 @@ mod tests {
     fn submits_hide_without_args() {
         let mut state = CommandLineState {
             buf: ":hide".to_string(),
+            suggestion_index: 0,
+        };
+        let action = state.handle_key(press(KeyCode::Enter), VIEW_COMMANDS);
+        assert_eq!(action, CommandKeyAction::Submit(":hide".to_string()));
+    }
+
+    #[test]
+    fn submits_hide_alias_without_args() {
+        let mut state = CommandLineState {
+            buf: ":h".to_string(),
             suggestion_index: 0,
         };
         let action = state.handle_key(press(KeyCode::Enter), VIEW_COMMANDS);

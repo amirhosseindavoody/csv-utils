@@ -35,7 +35,7 @@ csv — keyboard shortcuts
   :open      open file or browse directory by path
   :close     close file and open file picker
   :toggle-borders  show or hide table column border lines
-  :hide      hide selected columns (Ctrl+click to multi-select)
+  :hide / :h  hide selected rows (table) or columns (sidebar); Ctrl+click to multi-select
   /          fuzzy-find columns (filters sidebar)
   :filter    filter rows on selected column, or sidebar when focused (:f)
 
@@ -396,8 +396,8 @@ fn handle_key(
                             *command_line = None;
                             *command_error = None;
                         }
-                        ":hide" => {
-                            match model.hide_selected_columns() {
+                        ":hide" | ":h" => {
+                            match model.hide_from_command() {
                                 Ok(()) => {
                                     *command_line = None;
                                     *command_error = None;
@@ -621,9 +621,10 @@ fn handle_mouse(
             if let Some(hit) = hit_test_table(col, row, areas.table, model) {
                 let extend = mouse.modifiers.contains(KeyModifiers::CONTROL);
                 if let Some(row_idx) = hit.row {
-                    model.view.selected_row = row_idx;
+                    model.select_table_cell_click(row_idx, hit.col, extend, column_list_height);
+                } else {
+                    model.select_table_header_click(hit.col, extend, column_list_height);
                 }
-                model.select_column_click(hit.col, extend, column_list_height);
             }
         }
         MouseEventKind::Down(crossterm::event::MouseButton::Left)
@@ -682,6 +683,24 @@ fn column_header_style(model: &AppModel, col_idx: usize) -> Style {
             .add_modifier(Modifier::BOLD)
     } else {
         Style::default().add_modifier(Modifier::BOLD)
+    }
+}
+
+fn table_cell_style(model: &AppModel, row_idx: usize, col_idx: usize) -> Style {
+    let row_selected = row_idx == model.view.selected_row;
+    if row_selected && col_idx == model.view.selected_col {
+        Style::default()
+            .fg(Color::Black)
+            .bg(Color::Yellow)
+            .add_modifier(Modifier::BOLD)
+    } else if row_selected {
+        Style::default().bg(Color::DarkGray)
+    } else if model.is_row_multi_selected(row_idx) {
+        Style::default()
+            .fg(Color::Black)
+            .bg(Color::Blue)
+    } else {
+        Style::default()
     }
 }
 
@@ -878,7 +897,7 @@ fn draw(
         ])
         .split(area);
 
-    let title = if model.row_value_filters_active() {
+    let title = if model.row_value_filters_active() || model.rows_hidden_active() {
         let visible = model.cached_matching_rows().map_or(0, |m| m.len());
         format!(
             " csv  │  {}  │  {visible}/{} rows",
@@ -929,7 +948,7 @@ fn draw(
     } else if let Some(command) = command_line {
         command.draw(frame, outer[2], VIEW_COMMANDS, command_error);
     } else {
-        let hints = " q quit  ↑↓ rows  ←→ cols  Ctrl+click multi-select  :hide  / columns  :filter  c info  ? help ";
+        let hints = " q quit  Ctrl+click multi-select  :hide rows/cols  / columns  :filter  c info  ? help ";
         frame.render_widget(
             Paragraph::new(hints).style(Style::default().fg(Color::DarkGray)),
             outer[2],
@@ -998,23 +1017,12 @@ fn draw_table(frame: &mut ratatui::Frame, area: Rect, model: &AppModel) {
         let Some(fields) = model.preview.row_fields(row_idx) else {
             break;
         };
-        let row_selected = row_idx == model.view.selected_row;
         let cells: Vec<Cell> = col_indices
             .iter()
             .map(|&col_idx| {
                 let text = fields.get(col_idx).map(String::as_str).unwrap_or("");
                 let display = model.format_column_cell(col_idx, text);
-                let mut style = Style::default();
-                if row_selected {
-                    style = style.bg(Color::DarkGray);
-                }
-                if row_selected && col_idx == model.view.selected_col {
-                    style = Style::default()
-                        .fg(Color::Black)
-                        .bg(Color::Yellow)
-                        .add_modifier(Modifier::BOLD);
-                }
-                Cell::from(display).style(style)
+                Cell::from(display).style(table_cell_style(model, row_idx, col_idx))
             })
             .collect();
         rows.push(Row::new(cells).height(1));

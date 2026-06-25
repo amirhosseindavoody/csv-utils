@@ -55,6 +55,10 @@ pub struct TableViewState {
     pub column_hidden: Vec<bool>,
     /// Multi-selection for bulk column actions (Ctrl+click). Empty means use `selected_col` only.
     pub multi_selected_cols: Vec<usize>,
+    /// Rows hidden from the table (session-only).
+    pub row_hidden: Vec<bool>,
+    /// Multi-selection for bulk row actions (Ctrl+click on table body). Empty means use `selected_row` only.
+    pub multi_selected_rows: Vec<usize>,
 }
 
 #[derive(Debug)]
@@ -94,6 +98,8 @@ impl Default for TableViewState {
             cached_row_count: 0,
             column_hidden: Vec::new(),
             multi_selected_cols: Vec::new(),
+            row_hidden: Vec::new(),
+            multi_selected_rows: Vec::new(),
         }
     }
 }
@@ -291,6 +297,113 @@ impl AppModel {
             .retain(|&col| col < self.view.column_hidden.len() && !self.view.column_hidden[col]);
         self.snap_selection_after_column_visibility_change();
         Ok(())
+    }
+
+    fn ensure_row_hidden(&mut self) {
+        let n = self.preview.row_count();
+        if self.view.row_hidden.len() < n {
+            self.view.row_hidden.resize(n, false);
+        }
+    }
+
+    pub fn is_row_hidden(&self, row: usize) -> bool {
+        self.view.row_hidden.get(row).copied().unwrap_or(false)
+    }
+
+    pub fn rows_hidden_active(&self) -> bool {
+        self.view.row_hidden.iter().any(|&hidden| hidden)
+    }
+
+    pub fn is_row_multi_selected(&self, row: usize) -> bool {
+        self.view.multi_selected_rows.contains(&row)
+    }
+
+    pub fn rows_for_bulk_action(&self) -> Vec<usize> {
+        if self.view.multi_selected_rows.is_empty() {
+            vec![self.view.selected_row]
+        } else {
+            self.view.multi_selected_rows.clone()
+        }
+    }
+
+    pub fn select_table_cell_click(
+        &mut self,
+        row: usize,
+        col: usize,
+        extend: bool,
+        column_list_height: usize,
+    ) {
+        self.view.selected_row = row;
+        self.view.selected_col = col;
+        if extend {
+            if let Some(pos) = self.view.multi_selected_rows.iter().position(|&r| r == row) {
+                self.view.multi_selected_rows.remove(pos);
+            } else {
+                self.view.multi_selected_rows.push(row);
+                self.view.multi_selected_rows.sort_unstable();
+                self.view.multi_selected_rows.dedup();
+            }
+        } else {
+            self.view.multi_selected_rows.clear();
+            self.view.multi_selected_cols.clear();
+        }
+        self.ensure_column_list_shows_selection(column_list_height);
+    }
+
+    pub fn select_table_header_click(&mut self, col: usize, extend: bool, column_list_height: usize) {
+        if extend {
+            if let Some(pos) = self.view.multi_selected_cols.iter().position(|&c| c == col) {
+                self.view.multi_selected_cols.remove(pos);
+            } else {
+                self.view.multi_selected_cols.push(col);
+                self.view.multi_selected_cols.sort_unstable();
+                self.view.multi_selected_cols.dedup();
+            }
+            self.view.selected_col = col;
+        } else {
+            self.view.multi_selected_rows.clear();
+            self.view.multi_selected_cols.clear();
+            self.view.selected_col = col;
+        }
+        self.ensure_column_list_shows_selection(column_list_height);
+    }
+
+    pub fn hide_selected_rows(&mut self) -> Result<(), &'static str> {
+        self.ensure_row_hidden();
+        let targets: Vec<usize> = self
+            .rows_for_bulk_action()
+            .into_iter()
+            .filter(|&row| !self.is_row_hidden(row))
+            .collect();
+        if targets.is_empty() {
+            return Ok(());
+        }
+        let visible_count = (0..self.preview.row_count())
+            .filter(|&row| !self.is_row_hidden(row))
+            .count();
+        if targets.len() >= visible_count {
+            return Err("Cannot hide every row");
+        }
+        for row in targets {
+            if row < self.view.row_hidden.len() {
+                self.view.row_hidden[row] = true;
+            }
+        }
+        self.view.multi_selected_rows.retain(|&row| {
+            row < self.view.row_hidden.len() && !self.view.row_hidden[row]
+        });
+        self.invalidate_row_cache();
+        self.snap_selection_to_visible_rows();
+        Ok(())
+    }
+
+    /// Hide rows when the table is focused, columns when the sidebar is focused.
+    pub fn hide_from_command(&mut self) -> Result<(), &'static str> {
+        if self.view.column_sidebar_focused {
+            self.hide_selected_columns()
+        } else {
+            self.hide_selected_rows()
+        }
     }
 
     fn snap_selection_after_column_visibility_change(&mut self) {
@@ -839,17 +952,17 @@ impl AppModel {
 
     /// Rebuild the cache if stale (filters changed or new rows arrived), then return a slice.
     pub fn matching_row_indices(&mut self) -> &[usize] {
+        self.ensure_row_hidden();
         let current_count = self.preview.row_count();
         let cache_valid = self.view.cached_matching_rows.is_some()
             && self.view.cached_row_count == current_count;
         if !cache_valid {
-            let rows: Vec<usize> = if !self.row_value_filters_active() {
-                (0..current_count).collect()
-            } else {
-                (0..current_count)
-                    .filter(|&row| self.row_passes_value_filters(row))
-                    .collect()
-            };
+            let rows: Vec<usize> = (0..current_count)
+                .filter(|&row| {
+                    !self.is_row_hidden(row)
+                        && (!self.row_value_filters_active() || self.row_passes_value_filters(row))
+                })
+                .collect();
             self.view.cached_matching_rows = Some(rows);
             self.view.cached_row_count = current_count;
         }
@@ -1276,5 +1389,67 @@ mod tests {
         assert_eq!(model.view.multi_selected_cols, vec![1, 2]);
         model.select_column_click(1, true, 10);
         assert_eq!(model.view.multi_selected_cols, vec![2]);
+    }
+
+    #[test]
+    fn hide_selected_rows_removes_from_table() {
+        let path = PathBuf::from("test-data/generated/test_1000x100.csv");
+        if !path.exists() {
+            return;
+        }
+        let mut model = AppModel::open(Some(path)).expect("open csv");
+        model.view.multi_selected_rows = vec![0, 1, 2];
+        model.hide_selected_rows().expect("hide rows");
+        assert!(model.is_row_hidden(0));
+        assert!(model.is_row_hidden(2));
+        let matching = model.matching_row_indices();
+        assert!(!matching.contains(&0));
+        assert!(!matching.contains(&2));
+    }
+
+    #[test]
+    fn cannot_hide_every_row() {
+        let path = PathBuf::from("test-data/generated/test_1000x100.csv");
+        if !path.exists() {
+            return;
+        }
+        let mut model = AppModel::open(Some(path)).expect("open csv");
+        let total = model.preview.row_count();
+        model.view.multi_selected_rows = (0..total).collect();
+        assert!(model.hide_selected_rows().is_err());
+    }
+
+    #[test]
+    fn ctrl_click_row_multi_select_toggles() {
+        let path = PathBuf::from("test-data/generated/test_1000x100.csv");
+        if !path.exists() {
+            return;
+        }
+        let mut model = AppModel::open(Some(path)).expect("open csv");
+        model.select_table_cell_click(0, 0, false, 10);
+        assert!(model.view.multi_selected_rows.is_empty());
+        model.select_table_cell_click(1, 0, true, 10);
+        model.select_table_cell_click(3, 0, true, 10);
+        assert_eq!(model.view.multi_selected_rows, vec![1, 3]);
+        model.select_table_cell_click(1, 0, true, 10);
+        assert_eq!(model.view.multi_selected_rows, vec![3]);
+    }
+
+    #[test]
+    fn hide_from_command_respects_sidebar_focus() {
+        let path = PathBuf::from("test-data/generated/test_1000x100.csv");
+        if !path.exists() {
+            return;
+        }
+        let mut model = AppModel::open(Some(path)).expect("open csv");
+        model.view.column_sidebar_focused = true;
+        model.view.multi_selected_cols = vec![0];
+        model.hide_from_command().expect("hide column");
+        assert!(model.is_column_hidden(0));
+
+        model.view.column_sidebar_focused = false;
+        model.view.multi_selected_rows = vec![1];
+        model.hide_from_command().expect("hide row");
+        assert!(model.is_row_hidden(1));
     }
 }
