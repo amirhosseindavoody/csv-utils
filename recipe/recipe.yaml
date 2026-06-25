@@ -19,7 +19,7 @@ build:
       cd "$SRC_DIR"
       host="$(rustc -vV | sed -n 's/^host: //p')"
       cargo build --locked --release -p csv-utils -p csv-utils-web
-      install -Dm755 "target/${host}/release/csv-utils" "$PREFIX/bin/csv-utils"
+      install -Dm755 "target/${host}/release/csv" "$PREFIX/bin/csv"
       install -Dm755 "target/${host}/release/csv-utils-web" "$PREFIX/bin/csv-utils-web"
       rm -f "$PREFIX/.crates.toml" "$PREFIX/.crates2.json"
 
@@ -30,7 +30,7 @@ requirements:
 
 tests:
   - script:
-      - csv-utils --help
+      - csv --help
       - csv-utils-web --help
 
 about:

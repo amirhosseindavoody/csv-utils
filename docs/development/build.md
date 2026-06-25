@@ -25,7 +25,7 @@ pixi run conda-package
 pixi publish --target-dir dist
 ```
 
-Output: `dist/csv-utils-<version>-<build>_0.conda` with `csv-utils` and `csv-utils-web` in `$PREFIX/bin`. Build uses conda-forge `rust` and `gcc` (no rustup required for packaging).
+Output: `dist/csv-utils-<version>-<build>_0.conda` with `csv` and `csv-utils-web` in `$PREFIX/bin`. Build uses conda-forge `rust` and `gcc` (no rustup required for packaging).
 
 Publish to an indexed local channel:
 

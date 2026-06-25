@@ -6,7 +6,7 @@ Runtime structure of csv-utils: binaries, shared core, and the view model used b
 
 ```mermaid
 flowchart TB
-  bin[csv-utils binary] --> cli[cli.rs]
+  bin[csv binary] --> cli[cli.rs]
   bin --> tui[tui/app.rs]
   web[csv-utils-web binary] --> web_srv[web/server.rs]
   cli --> engine[csv-utils-core/engine.rs]

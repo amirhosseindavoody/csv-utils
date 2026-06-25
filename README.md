@@ -36,7 +36,7 @@ Direct cargo usage (from repo root):
 
 ```bash
 cargo build --release
-./target/release/csv-utils tui test-data/generated/test_1000x100.csv
+./target/release/csv tui test-data/generated/test_1000x100.csv
 ./target/release/csv-utils-web test-data/generated/test_1000x100.csv
 ```
 
@@ -56,7 +56,7 @@ pixi run test-tui-large-capture
 
 ## Conda package
 
-Build a `.conda` package (includes `csv-utils` and `csv-utils-web` binaries):
+Build a `.conda` package (includes `csv` and `csv-utils-web` binaries):
 
 ```bash
 pixi run conda-package

@@ -16,7 +16,7 @@ pixi run build
 
 | Binary | Path | Purpose |
 |--------|------|---------|
-| `csv-utils` | `target/release/csv-utils` | CLI + TUI |
+| `csv` | `target/release/csv` | CLI + TUI |
 | `csv-utils-web` | `target/release/csv-utils-web` | Browser UI server |
 
 With pixi:
@@ -30,11 +30,11 @@ pixi run web-tui
 ## Entry points
 
 ```
-csv-utils stats <file.csv>
-csv-utils unique <file.csv> <col1[,col2,...]> [limit]
-csv-utils json <file.csv> [limit]
-csv-utils filter <file.csv> <expr> [limit]
-csv-utils tui [file.csv]
+csv stats <file.csv>
+csv unique <file.csv> <col1[,col2,...]> [limit]
+csv json <file.csv> [limit]
+csv filter <file.csv> <expr> [limit]
+csv tui [file.csv]
 
 csv-utils-web [file.csv] [--host HOST] [--port PORT]
 ```

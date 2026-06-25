@@ -6,7 +6,7 @@ license.workspace = true
 description = "High-performance CSV CLI + ratatui TUI explorer"
 
 [[bin]]
-name = "csv-utils"
+name = "csv"
 path = "src/main.rs"
 
 [dependencies]

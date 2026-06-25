@@ -157,18 +157,18 @@ fn resolve_column_indexes(headers: &[String], columns_expr: &str) -> Result<Vec<
 pub fn print_help(mut out: impl Write) -> io::Result<()> {
     writeln!(
         out,
-        "csv-utils: high-performance CSV CLI + TUI\n\n\
+        "csv: high-performance CSV CLI + TUI\n\n\
          Usage:\n\
-           csv-utils stats <file.csv>\n\
-           csv-utils unique <file.csv> <col1[,col2,...]> [limit]\n\
-           csv-utils json <file.csv> [limit]\n\
-           csv-utils filter <file.csv> <expr> [limit]\n\
+           csv stats <file.csv>\n\
+           csv unique <file.csv> <col1[,col2,...]> [limit]\n\
+           csv json <file.csv> [limit]\n\
+           csv filter <file.csv> <expr> [limit]\n\
              operators: =, !=, >, <, contains, in\n\
              examples:\n\
                city=Tehran,active=true\n\
                age>30\n\
                name contains Ali\n\
                city in Tehran|Paris\n\
-           csv-utils tui [file.csv]\n"
+           csv tui [file.csv]\n"
     )
 }

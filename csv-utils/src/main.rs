@@ -5,7 +5,7 @@ use anyhow::Result;
 use clap::{Parser, Subcommand};
 
 #[derive(Parser)]
-#[command(name = "csv-utils", about = "High-performance CSV CLI + TUI explorer")]
+#[command(name = "csv", about = "High-performance CSV CLI + TUI explorer")]
 struct Cli {
     #[command(subcommand)]
     command: Option<Commands>,

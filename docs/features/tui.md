@@ -5,7 +5,7 @@ Full-screen terminal table explorer. Stack: **ratatui** 0.29 + **crossterm**. Fr
 ## Screen layout
 
 ```
-┌─ csv-utils │ file.csv │ N rows [loading…] ─────────────────────┐
+┌─ csv │ file.csv │ N rows [loading…] ─────────────────────┐
 │ ┌─ Data (rows A–B) ─────────────┐ ┌─ Columns (X–Y/Z) ────────┐ │
 │ │ header + visible rows         │ │ idx: name                │ │
 │ │ resizable cells, col scroll   │ │ independent list scroll  │ │
@@ -99,7 +99,7 @@ Sidebar uses `column_list_offset` independent of selection. ratatui `List` was a
 
 ```bash
 pixi run tui test-data/generated/test_1000x100.csv
-./target/release/csv-utils tui file.csv
+./target/release/csv tui file.csv
 ```
 
 Press `?` in the TUI for inline help.

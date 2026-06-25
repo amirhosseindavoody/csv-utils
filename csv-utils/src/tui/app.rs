@@ -20,7 +20,7 @@ use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
 const HELP_TEXT: &str = "\
-csv-utils — keyboard shortcuts
+csv — keyboard shortcuts
 
   q          quit (closes a panel when one is open)
   ↑/↓        previous / next row
@@ -411,7 +411,7 @@ fn draw(frame: &mut ratatui::Frame, model: &AppModel) -> LayoutAreas {
         .split(area);
 
     let title = format!(
-        " csv-utils  │  {}  │  {} rows",
+        " csv  │  {}  │  {} rows",
         model.file_label(),
         model.preview.row_count()
     );
@@ -475,7 +475,7 @@ fn draw_table(frame: &mut ratatui::Frame, area: Rect, model: &AppModel) {
     let headers = model.preview.headers();
     if headers.is_empty() {
         frame.render_widget(
-            Paragraph::new("Open a CSV file:\n  csv-utils tui path/to/file.csv")
+            Paragraph::new("Open a CSV file:\n  csv tui path/to/file.csv")
                 .block(Block::default().title(" Data ").borders(Borders::ALL))
                 .wrap(Wrap { trim: true }),
             area,
