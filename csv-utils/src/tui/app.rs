@@ -26,7 +26,7 @@ use crate::tui::file_picker::{FilePicker, FilePickerAction, resolve_path};
 const HELP_TEXT: &str = "\
 csv — keyboard shortcuts
 
-  q          quit (closes a panel when one is open)
+  q          close file (picker) or quit; closes open panels first
   ↑/↓        previous / next row (then Space toggles row multi-select)
   ←/→        previous / next column (then Space toggles column multi-select)
   Space      toggle multi-select on row or column (follows last arrow axis)
@@ -492,7 +492,12 @@ fn handle_key(
     }
 
     match key.code {
-        KeyCode::Char('q') => return MainKeyAction::Quit,
+        KeyCode::Char('q') => {
+            if model.file_path.is_some() {
+                return MainKeyAction::CloseFile;
+            }
+            return MainKeyAction::Quit;
+        }
         KeyCode::Char(':') => {
             *command_line = Some(CommandLineState::start());
             *command_error = None;

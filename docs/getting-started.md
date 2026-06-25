@@ -31,17 +31,18 @@ pixi run web-tui
 
 ```
 csv [subcommand]
+csv [file.csv]              # open file in TUI (file picker if omitted)
 csv stats <file.csv>
 csv unique <file.csv> <col1[,col2,...]> [limit]
 csv json <file.csv> [limit]
 csv filter <file.csv> <expr> [limit]
-csv tui [file.csv]
+csv tui [file.csv]          # alias for csv [file.csv]
 
 csv-utils-web [file.csv] [--host HOST] [--port PORT]
 ```
 
-- **`csv`** (no subcommand) — launches the TUI with a file picker.
-- **`tui`** — full-screen TUI; optional CSV path (file picker if omitted).
+- **`csv`** or **`csv <file>`** — launches the TUI (file picker when no path is given).
+- **`tui`** — alias for `csv [file]` (optional CSV path).
 - **`csv-utils-web`** — serves browser UI at `http://127.0.0.1:8080/` by default.
 
 Pixi tasks run from the **repo root**; extra args are forwarded (`pixi run tui file.csv`, `pixi run run -- stats file.csv`).

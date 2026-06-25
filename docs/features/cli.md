@@ -2,7 +2,8 @@
 
 Streaming commands for large CSV files. Implementation: `csv-utils-core/src/engine.rs`.
 
-Running `csv` with no subcommand launches the [TUI](tui.md) with a file picker.
+Running `csv` with no arguments launches the [TUI](tui.md) file picker.
+`csv <file.csv>` opens the file in the TUI directly (`csv tui <file.csv>` is the same).
 
 Global flags: `-h` / `--help`, `-V` / `--version` (prints package version from `Cargo.toml`).
 
