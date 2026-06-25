@@ -88,9 +88,10 @@ Filtered columns show `*` in the table header and column sidebar. The title bar 
 
 ### File picker (no file on launch)
 
-Shown when `csv` or `csv tui` is run without a path. By default only files
-matching `file_picker.file_extensions` in settings (global or local `csv-utils.json`)
-are listed; directories are always shown.
+Shown when `csv` or `csv tui` is run without a path. By default **all** files and
+directories are listed. To filter by extension, add `file_picker.file_extensions` to
+settings (global or local `csv-utils.json`); then **`:filter`** / **`:f`** applies
+that filter and **`:all`** / **`:a`** shows every file again.
 
 | Key | Action |
 |-----|--------|
@@ -101,8 +102,8 @@ are listed; directories are always shown.
 | `←` | Parent directory (highlights the directory you came from) |
 | `Enter` | Enter directory or open file |
 | `:` then `:open <path>` | Open file by relative or absolute path |
-| `:` then `:all` / `:a` | Show all files |
-| `:` then `:filter` / `:f` | Restore extension filter |
+| `:` then `:all` / `:a` | Show all files (when an extension filter is active) |
+| `:` then `:filter` / `:f` | Apply extension filter from settings (when `file_picker.file_extensions` is configured) |
 | `q` / `Esc` | Quit (Esc cancels a command) |
 | Click | Select entry (same as `Enter`) |
 
@@ -156,7 +157,7 @@ pixi run tui test-data/generated/test_1000x100.csv
 ./target/release/csv tui file.csv
 ```
 
-With no file argument, the TUI opens a **file picker** starting in the current working directory. Only files with extensions from settings (`file_picker.file_extensions`, default `.csv` and `.dat`) are listed; type `:all` to show every file. Navigate with `→` / `←` for directories, select a file with `Enter`, or quit with `q`.
+With no file argument, the TUI opens a **file picker** starting in the current working directory. All files and directories are shown by default. Configure `file_picker.file_extensions` in settings to enable extension filtering (`:filter` / `:all`). Navigate with `→` / `←` for directories, select a file with `Enter`, or quit with `q`.
 
 Press `?` in the TUI for inline help.
 

@@ -82,6 +82,7 @@ impl FilePicker {
         } else {
             std::env::current_dir()?
         };
+        let show_all = file_extensions.is_empty();
         let mut picker = Self {
             current_dir,
             entries: Vec::new(),
@@ -89,7 +90,7 @@ impl FilePicker {
             list_offset: 0,
             error: None,
             file_extensions,
-            show_all: false,
+            show_all,
             command_line: None,
             command_error: None,
             name_filter: String::new(),
@@ -118,11 +119,17 @@ impl FilePicker {
     }
 
     fn file_matches_filter(&self, name: &str) -> bool {
-        if self.show_all {
+        if self.show_all || self.file_extensions.is_empty() {
             return true;
         }
         let lower = name.to_lowercase();
-        self.file_extensions.iter().any(|ext| lower.ends_with(&format!(".{ext}")))
+        self.file_extensions
+            .iter()
+            .any(|ext| lower.ends_with(&format!(".{ext}")))
+    }
+
+    fn extension_filter_configured(&self) -> bool {
+        !self.file_extensions.is_empty()
     }
 
     pub fn refresh(&mut self) -> io::Result<()> {
@@ -300,9 +307,11 @@ impl FilePicker {
                 let _ = self.refresh();
             }
             ":filter" => {
-                self.show_all = false;
+                if self.extension_filter_configured() {
+                    self.show_all = false;
+                    let _ = self.refresh();
+                }
                 self.command_line = None;
-                let _ = self.refresh();
             }
             _ => {
                 self.command_error = Some(format!("Unknown command: {cmd}"));
@@ -474,10 +483,8 @@ impl FilePicker {
     }
 
     fn filter_label(&self) -> String {
-        if self.show_all {
+        if self.show_all || !self.extension_filter_configured() {
             "all files".to_string()
-        } else if self.file_extensions.is_empty() {
-            "no extensions configured".to_string()
         } else {
             let exts = self
                 .file_extensions
@@ -542,10 +549,12 @@ impl FilePicker {
         } else if visible.is_empty() {
             if !self.name_filter.is_empty() {
                 lines.push(Line::from("(no matching files or folders)"));
-            } else if self.show_all {
+            } else if self.show_all || !self.extension_filter_configured() {
                 lines.push(Line::from("(empty directory)"));
             } else {
-                lines.push(Line::from("(no matching files — type :all to show all)"));
+                lines.push(Line::from(
+                    "(no matching files — type :all to show all or configure extensions in settings)",
+                ));
             }
         } else {
             for i in 0..visible_height {

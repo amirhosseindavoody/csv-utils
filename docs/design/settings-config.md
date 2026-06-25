@@ -83,7 +83,14 @@ When the global file is created for the first time:
   "display": {
     "numeric_decimal_format": ".3",
     "show_column_borders": true
-  },
+  }
+}
+```
+
+Optional extension filter (omit `file_picker` or use an empty list to show all files):
+
+```json
+{
   "file_picker": {
     "file_extensions": ["csv", "dat"]
   }
@@ -94,7 +101,7 @@ When the global file is created for the first time:
 |---|---|
 | `display.numeric_decimal_format` | Default decimal format for numeric columns |
 | `display.show_column_borders` | When `true`, the TUI draws `│` column lines and a `─` header rule in the one-character gaps between columns (default). When `false`, gaps stay blank |
-| `file_picker.file_extensions` | File extensions shown in the TUI file picker by default (without leading dot) |
+| `file_picker.file_extensions` | Optional. When non-empty, the file picker can filter to these extensions (`:filter`); omit or `[]` to list all files by default |
 
 ## Decimal format syntax
 
@@ -113,13 +120,19 @@ Parsing: `settings::parse_decimal_format`.
 
 ## File picker extensions
 
-The TUI file picker filters directory listings to `file_picker.file_extensions`
-by default (`.csv` and `.dat`). Directories are always shown. Override globally
-or per-project in the respective `csv-utils.json`; values may include or omit a
+By default the TUI file picker lists **all** files and directories (dotfiles are
+still hidden). To enable extension filtering, set a non-empty
+`file_picker.file_extensions` array in settings. Values may include or omit a
 leading dot (`csv` and `.csv` are equivalent).
 
-In the picker, type **`:all`** or **`:a`** to show every file, or **`:filter`**
-/ **`:f`** to restore the configured extension filter.
+When extensions are configured:
+
+- The picker starts filtered to those extensions
+- **`:all`** / **`:a`** shows every file
+- **`:filter`** / **`:f`** restores the configured extension filter
+
+When `file_extensions` is omitted or empty, the picker always shows all files and
+`:filter` has no effect.
 
 ## How settings are used
 
@@ -136,7 +149,7 @@ In the picker, type **`:all`** or **`:a`** to show every file, or **`:filter`**
         │
         ├── display.show_column_borders → TUI column gap lines on open
         │
-        ├── file_picker.file_extensions → TUI file picker filter
+        ├── file_picker.file_extensions → optional TUI file picker extension filter
         │
         └── column info panel shows default when override is None
 ```
