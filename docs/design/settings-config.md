@@ -34,7 +34,7 @@ On first run, the file is written as pretty-printed JSON:
 | Field | Meaning |
 |---|---|
 | `display.numeric_decimal_format` | Default decimal format for numeric columns |
-| `display.show_column_borders` | When `true`, the TUI draws `│` lines in the one-character gap between columns (default). When `false`, the gap stays blank |
+| `display.show_column_borders` | When `true`, the TUI draws `│` column lines and a `─` header rule in the one-character gaps between columns (default). When `false`, gaps stay blank |
 | `file_picker.file_extensions` | File extensions shown in the TUI file picker by default (without leading dot) |
 
 ## Decimal format syntax

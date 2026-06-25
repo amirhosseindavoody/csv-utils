@@ -42,7 +42,7 @@ Data table uses ratatui `Table`. Column sidebar uses manual `Paragraph` lines (n
 | `column_info_focus` | Highlighted option in info panel (type, representation, decimal places) |
 | `column_info_decimal_editing` | TUI: editing decimal format text |
 | `show_help` | Help overlay visible |
-| `show_column_borders` | Draw `│` lines in the table column gaps (initialized from config; toggled with `:toggle-borders`). Gaps stay as whitespace when off |
+| `show_column_borders` | Draw column `│` lines and a header `─` rule in the table gaps (initialized from config; toggled with `:toggle-borders`). Gaps stay as whitespace when off |
 
 Settings load from `csv-utils.json` in the working directory on open; see [settings config](../design/settings-config.md).
 

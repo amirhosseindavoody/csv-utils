@@ -530,6 +530,8 @@ fn draw_column_border_lines(
         .into_iter()
         .map(|offset| inner.x.saturating_add(offset))
         .collect();
+    // Header row + bottom_margin(1) before body rows (matches hit_test_table).
+    let header_sep_y = inner.y.saturating_add(1);
 
     let buf = frame.buffer_mut();
     for y in inner.y..inner.y.saturating_add(inner.height) {
@@ -538,6 +540,15 @@ fn draw_column_border_lines(
                 if let Some(cell) = buf.cell_mut((sep_x, y)) {
                     cell.set_char('│').set_style(style);
                 }
+            }
+        }
+    }
+
+    if header_sep_y < inner.y.saturating_add(inner.height) {
+        for x in inner.x..inner.x.saturating_add(inner.width) {
+            let ch = if sep_xs.contains(&x) { '┼' } else { '─' };
+            if let Some(cell) = buf.cell_mut((x, header_sep_y)) {
+                cell.set_char(ch).set_style(style);
             }
         }
     }
