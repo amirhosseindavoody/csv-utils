@@ -4,6 +4,8 @@ Streaming commands for large CSV files. Implementation: `csv-utils-core/src/engi
 
 Running `csv` with no subcommand launches the [TUI](tui.md) with a file picker.
 
+Global flags: `-h` / `--help`, `-V` / `--version` (prints package version from `Cargo.toml`).
+
 ## Commands
 
 | Command | Usage | Default limit | Behavior |
