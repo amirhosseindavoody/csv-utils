@@ -164,6 +164,49 @@ impl FilePicker {
         true
     }
 
+    fn resolve_user_path(&self, path_str: &str) -> PathBuf {
+        let path = PathBuf::from(path_str);
+        if path.is_absolute() {
+            path
+        } else {
+            self.current_dir.join(path)
+        }
+    }
+
+    fn handle_command_submit(&mut self, cmd: &str) -> FilePickerAction {
+        if let Some(path_str) = cmd.strip_prefix(":open ") {
+            let path_str = path_str.trim();
+            if path_str.is_empty() {
+                self.command_error = Some(":open requires a file path".to_string());
+                return FilePickerAction::Continue;
+            }
+            let resolved = self.resolve_user_path(path_str);
+            if resolved.is_file() {
+                self.command_line = None;
+                return FilePickerAction::Open(resolved);
+            }
+            self.command_error = Some(format!("Not a file: {}", resolved.display()));
+            return FilePickerAction::Continue;
+        }
+
+        match cmd {
+            ":all" => {
+                self.show_all = true;
+                self.command_line = None;
+                let _ = self.refresh();
+            }
+            ":filter" => {
+                self.show_all = false;
+                self.command_line = None;
+                let _ = self.refresh();
+            }
+            _ => {
+                self.command_error = Some(format!("Unknown command: {cmd}"));
+            }
+        }
+        FilePickerAction::Continue
+    }
+
     pub fn handle_key(&mut self, key: KeyEvent, visible_height: usize) -> FilePickerAction {
         if let Some(command) = self.command_line.as_mut() {
             match command.handle_key(key, PICKER_COMMANDS) {
@@ -177,21 +220,7 @@ impl FilePicker {
                 }
                 CommandKeyAction::Submit(cmd) => {
                     self.command_error = None;
-                    match cmd.as_str() {
-                        ":all" => {
-                            self.show_all = true;
-                            self.command_line = None;
-                            let _ = self.refresh();
-                        }
-                        ":filter" => {
-                            self.show_all = false;
-                            self.command_line = None;
-                            let _ = self.refresh();
-                        }
-                        _ => {
-                            self.command_error = Some(format!("Unknown command: {cmd}"));
-                        }
-                    }
+                    return self.handle_command_submit(&cmd);
                 }
             }
             return FilePickerAction::Continue;

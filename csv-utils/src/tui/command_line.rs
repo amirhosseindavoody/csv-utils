@@ -8,6 +8,8 @@ pub struct CommandSpec {
     pub primary: &'static str,
     pub aliases: &'static [&'static str],
     pub description: &'static str,
+    /// When true, Enter submits the full buffer (e.g. `:open path/to/file`).
+    pub takes_args: bool,
 }
 
 impl CommandSpec {
@@ -23,11 +25,19 @@ pub const PICKER_COMMANDS: &[CommandSpec] = &[
         primary: ":all",
         aliases: &[":a"],
         description: "Show all files",
+        takes_args: false,
     },
     CommandSpec {
         primary: ":filter",
         aliases: &[":f"],
         description: "Show only configured extensions",
+        takes_args: false,
+    },
+    CommandSpec {
+        primary: ":open",
+        aliases: &[],
+        description: "Open file by path  (:open path/to/file.csv)",
+        takes_args: true,
     },
 ];
 
@@ -35,6 +45,7 @@ pub const VIEW_COMMANDS: &[CommandSpec] = &[CommandSpec {
     primary: ":close",
     aliases: &[],
     description: "Close file and open file picker",
+    takes_args: false,
 }];
 
 #[derive(Debug, Clone)]
@@ -64,12 +75,14 @@ impl CommandLineState {
         if query == ":" {
             return commands.iter().collect();
         }
+        let command_part = query.split_whitespace().next().unwrap_or(&query);
         commands
             .iter()
             .filter(|cmd| {
-                cmd.names()
-                    .iter()
-                    .any(|name| name.to_ascii_lowercase().starts_with(&query))
+                cmd.names().iter().any(|name| {
+                    name.to_ascii_lowercase()
+                        .starts_with(command_part)
+                })
             })
             .collect()
     }
@@ -89,8 +102,8 @@ impl CommandLineState {
         match key.code {
             KeyCode::Esc => CommandKeyAction::Cancel,
             KeyCode::Enter => {
-                if let Some(primary) = self.resolve_submit(&matches) {
-                    CommandKeyAction::Submit(primary.to_string())
+                if let Some(submitted) = self.resolve_submit(&matches) {
+                    CommandKeyAction::Submit(submitted)
                 } else {
                     CommandKeyAction::Rejected
                 }
@@ -131,32 +144,61 @@ impl CommandLineState {
         }
     }
 
-    fn resolve_submit(&self, matches: &[&CommandSpec]) -> Option<&'static str> {
-        let query = self.buf.trim().to_ascii_lowercase();
+    fn resolve_submit(&self, matches: &[&CommandSpec]) -> Option<String> {
+        let raw = self.buf.trim();
+        let query = raw.to_ascii_lowercase();
+
+        for cmd in matches {
+            if !cmd.takes_args {
+                continue;
+            }
+            let prefix = format!("{} ", cmd.primary);
+            if query.starts_with(&prefix.to_ascii_lowercase()) {
+                let args = raw[prefix.len()..].trim();
+                if !args.is_empty() {
+                    return Some(raw.to_string());
+                }
+                return None;
+            }
+            if query == cmd.primary.to_ascii_lowercase() {
+                return None;
+            }
+        }
+
         for cmd in matches {
             if cmd
                 .names()
                 .iter()
                 .any(|name| name.to_ascii_lowercase() == query)
             {
-                return Some(cmd.primary);
+                return Some(cmd.primary.to_string());
             }
         }
-        if matches.len() == 1 {
-            return Some(matches[0].primary);
+        if matches.len() == 1 && !matches[0].takes_args {
+            return Some(matches[0].primary.to_string());
         }
         matches
             .get(self.suggestion_index)
-            .copied()
-            .map(|cmd| cmd.primary)
+            .filter(|cmd| !cmd.takes_args)
+            .map(|cmd| cmd.primary.to_string())
     }
 
     fn autocomplete(&mut self, matches: &[&CommandSpec]) {
-        let Some(cmd) = matches.get(self.suggestion_index).copied().or_else(|| matches.first().copied())
+        let Some(cmd) = matches
+            .get(self.suggestion_index)
+            .copied()
+            .or_else(|| matches.first().copied())
         else {
             return;
         };
-        self.buf = cmd.primary.to_string();
+        if cmd.takes_args {
+            let prefix = format!("{} ", cmd.primary);
+            if !self.buf.to_ascii_lowercase().starts_with(&prefix.to_ascii_lowercase()) {
+                self.buf = prefix;
+            }
+        } else {
+            self.buf = cmd.primary.to_string();
+        }
     }
 
     pub fn draw(
@@ -243,7 +285,7 @@ mod tests {
             buf: ":".to_string(),
             suggestion_index: 0,
         };
-        assert_eq!(state.filtered(PICKER_COMMANDS).len(), 2);
+        assert_eq!(state.filtered(PICKER_COMMANDS).len(), 3);
         assert_eq!(state.filtered(VIEW_COMMANDS).len(), 1);
     }
 
@@ -254,6 +296,29 @@ mod tests {
             suggestion_index: 0,
         };
         let matches = state.filtered(VIEW_COMMANDS);
-        assert_eq!(state.resolve_submit(&matches), Some(":close"));
+        assert_eq!(state.resolve_submit(&matches), Some(":close".to_string()));
+    }
+
+    #[test]
+    fn resolves_open_with_path() {
+        let state = CommandLineState {
+            buf: ":open data/file.csv".to_string(),
+            suggestion_index: 0,
+        };
+        let matches = state.filtered(PICKER_COMMANDS);
+        assert_eq!(
+            state.resolve_submit(&matches),
+            Some(":open data/file.csv".to_string())
+        );
+    }
+
+    #[test]
+    fn rejects_open_without_path() {
+        let state = CommandLineState {
+            buf: ":open".to_string(),
+            suggestion_index: 0,
+        };
+        let matches = state.filtered(PICKER_COMMANDS);
+        assert_eq!(state.resolve_submit(&matches), None);
     }
 }

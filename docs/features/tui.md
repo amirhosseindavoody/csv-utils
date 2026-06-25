@@ -76,6 +76,7 @@ listed; directories are always shown.
 | `→` | Enter selected directory or open file |
 | `←` | Parent directory |
 | `Enter` | Enter directory or open file |
+| `:` then `:open <path>` | Open file by relative or absolute path |
 | `:` then `:all` / `:a` | Show all files |
 | `:` then `:filter` / `:f` | Restore extension filter |
 | `q` / `Esc` | Quit (Esc cancels a command) |
