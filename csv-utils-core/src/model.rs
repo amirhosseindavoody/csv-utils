@@ -8,6 +8,8 @@ use crate::settings::{self, normalize_decimal_format, SettingsFile};
 use crate::column_value_filter::{numeric_cell_matches, text_cell_matches, ColumnFilterError};
 use crate::fuzzy::rank_by_fuzzy;
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 
 pub const MIN_COLUMN_WIDTH: usize = 4;
 pub const MAX_COLUMN_WIDTH: usize = 64;
@@ -84,6 +86,7 @@ pub struct AppModel {
     pub settings: SettingsFile,
     pub view: TableViewState,
     pub scan_thread: Option<std::thread::JoinHandle<()>>,
+    scan_cancel: Option<Arc<AtomicBool>>,
 }
 
 impl Default for TableViewState {
@@ -172,9 +175,15 @@ impl AppModel {
                 None
             } else {
                 let skip = preview.row_count();
-                Some(preview.start_background_scan(path, skip))
+                let cancel = Arc::new(AtomicBool::new(false));
+                let handle = preview.start_background_scan(path, skip, Arc::clone(&cancel));
+                Some((handle, cancel))
             }
         });
+        let (scan_thread, scan_cancel) = match scan_thread {
+            Some((handle, cancel)) => (Some(handle), Some(cancel)),
+            None => (None, None),
+        };
 
         let settings = settings::load_or_create().unwrap_or_default();
 
@@ -187,16 +196,32 @@ impl AppModel {
                 ..TableViewState::default()
             },
             scan_thread,
+            scan_cancel,
         };
         model.ensure_column_state();
         model.maybe_update_column_layout();
         Ok(model)
     }
 
+    fn request_scan_cancel(&self) {
+        if let Some(cancel) = &self.scan_cancel {
+            cancel.store(true, Ordering::Relaxed);
+        }
+    }
+
     pub fn join_scan_thread(&mut self) {
+        self.request_scan_cancel();
         if let Some(handle) = self.scan_thread.take() {
             let _ = handle.join();
         }
+        self.scan_cancel = None;
+    }
+
+    /// Stop the background scan without waiting for it to finish (TUI shutdown).
+    pub fn abandon_scan_thread(&mut self) {
+        self.request_scan_cancel();
+        self.scan_thread.take();
+        self.scan_cancel = None;
     }
 
     pub fn reopen(&mut self, file_path: PathBuf) -> std::io::Result<()> {

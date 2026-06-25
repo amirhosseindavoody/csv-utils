@@ -250,9 +250,7 @@ pub fn run(file: Option<&str>) -> Result<()> {
     stdout.execute(crossterm::event::DisableMouseCapture)?;
     stdout.execute(LeaveAlternateScreen)?;
 
-    if let Some(handle) = model.scan_thread.take() {
-        let _ = handle.join();
-    }
+    model.abandon_scan_thread();
 
     Ok(())
 }

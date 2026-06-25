@@ -37,9 +37,10 @@ Location: `csv-utils-core/src/preview.rs`, `csv-utils-core/src/column_layout.rs`
 
 ## Threading
 
-`AppModel` holds an optional `scan_thread` join handle. The background thread
-updates `record_offsets` and `ColumnLayoutState`. TUI and web server join the
-thread on exit (`join_scan_thread`).
+`AppModel` holds an optional `scan_thread` join handle and a cancel flag. The background thread
+updates `record_offsets` and `ColumnLayoutState`. On TUI quit the scan is cancelled and
+abandoned without blocking the shell (`abandon_scan_thread`). When switching files (`reopen`,
+`:close`) the previous scan is cancelled and joined (`join_scan_thread`).
 
 Column statistics backfill runs on the UI thread when the info panel is open
 (budget: 512 rows per `maybe_update_column_layout` call).

@@ -3,6 +3,7 @@ use crate::schema::{fields_from_byte_record, read_fields_from_slice};
 use memmap2::{Mmap, MmapOptions};
 use std::fs::File;
 use std::path::Path;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread;
 
@@ -45,11 +46,16 @@ impl PreviewData {
         load_from_path(path, limit, true)
     }
 
-    pub fn start_background_scan(&self, path: &Path, skip_body_records: usize) -> thread::JoinHandle<()> {
+    pub fn start_background_scan(
+        &self,
+        path: &Path,
+        skip_body_records: usize,
+        cancel: Arc<AtomicBool>,
+    ) -> thread::JoinHandle<()> {
         let data = Arc::clone(&self.inner);
         let layout = Arc::clone(&self.layout);
         let path = path.to_path_buf();
-        thread::spawn(move || continue_background_scan(&data, &layout, &path, skip_body_records))
+        thread::spawn(move || continue_background_scan(&data, &layout, &path, skip_body_records, cancel))
     }
 
     pub fn layout(&self) -> Arc<Mutex<ColumnLayoutState>> {
@@ -153,6 +159,7 @@ fn continue_background_scan(
     layout: &Arc<Mutex<ColumnLayoutState>>,
     path: &Path,
     skip_body_records: usize,
+    cancel: Arc<AtomicBool>,
 ) {
     let mmap = match map_file(path) {
         Ok(m) => m,
@@ -174,6 +181,9 @@ fn continue_background_scan(
     }
 
     for _ in 0..skip_body_records {
+        if cancel.load(Ordering::Relaxed) {
+            return;
+        }
         match reader.read_byte_record(&mut record) {
             Ok(true) => {}
             Ok(false) => {
@@ -188,6 +198,9 @@ fn continue_background_scan(
     }
 
     loop {
+        if cancel.load(Ordering::Relaxed) {
+            return;
+        }
         let offset = reader.position().byte();
         match reader.read_byte_record(&mut record) {
             Ok(true) => {
