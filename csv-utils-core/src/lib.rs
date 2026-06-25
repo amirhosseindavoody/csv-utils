@@ -10,6 +10,7 @@ pub mod model;
 pub mod predicate;
 pub mod preview;
 pub mod schema;
+pub mod settings;
 pub mod stats;
 pub mod unique;
 

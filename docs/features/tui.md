@@ -39,8 +39,11 @@ Data table uses ratatui `Table`. Column sidebar uses manual `Paragraph` lines (n
 | `column_numeric_repr` | General vs scientific formatting for numeric columns |
 | `column_widths_user_set` | Manual resize lock per column |
 | `show_column_info` | Column info overlay visible |
-| `column_info_focus` | Highlighted option in info panel (type options, then representation) |
+| `column_info_focus` | Highlighted option in info panel (type, representation, decimal places) |
+| `column_info_decimal_editing` | TUI: editing decimal format text |
 | `show_help` | Help overlay visible |
+
+Settings load from `csv-utils.json` in the working directory on open; see [settings config](../design/settings-config.md).
 
 Each frame: `maybe_refit_column_widths()` (when loaded row count changes), `clamp_selection(viewport_rows, table_width)`, and `clamp_column_list_offset(visible_height)`.
 
@@ -62,17 +65,19 @@ While the panel is open, table navigation is disabled:
 
 | Key | Action |
 |-----|--------|
-| `↑`/`↓` or `j`/`k` | Move highlight between type/representation options |
-| `Enter` | Apply highlighted option |
+| `↑`/`↓` or `j`/`k` | Move highlight between type, representation, and decimal places |
+| `Enter` | Apply highlighted option; on **Decimal places**, start edit or apply typed value |
+| Type directly | When decimal row is focused, type a format (e.g. `.5`) |
+| `Backspace` | While editing decimal format, delete a character |
 | `q` | Close panel |
 
-The panel shows editable **type** options filtered by inferred data (e.g. text-only columns hide date/int/float), **representation** when numeric types apply, plus type-specific **statistics** from loaded rows (note shown while scanning).
+The panel shows editable **type** options filtered by inferred data (e.g. text-only columns hide date/int/float), **representation** when numeric types apply, **decimal places** (text field, default `.3` from `csv-utils.json`), plus type-specific **statistics** from loaded rows (note shown while scanning).
 
 ## Mouse
 
 | Target | Action |
 |--------|--------|
-| Column info panel | Click type/representation rows to apply |
+| Column info panel | Click type/representation rows to apply; click decimal field to focus |
 | Table header border | Drag to resize column width (4–64 chars) |
 | Table header | Select column only (click, not on border) |
 | Table body cell | Select row + column |

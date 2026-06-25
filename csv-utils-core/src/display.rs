@@ -67,14 +67,14 @@ fn format_int_scientific(n: i64, prec: usize) -> String {
     format!("{n:.prec$e}")
 }
 
-fn format_int_with_repr(n: i64, width: usize, repr: NumericRepr) -> Option<String> {
+fn format_int_with_repr(n: i64, width: usize, repr: NumericRepr, decimal_places: usize) -> Option<String> {
     match repr {
         NumericRepr::General => {
             let plain = format_int_plain(n);
             if fits(&plain, width) {
                 return Some(plain);
             }
-            for prec in (0..=6).rev() {
+            for prec in (0..=decimal_places).rev() {
                 let s = format_int_scientific(n, prec);
                 if fits(&s, width) {
                     return Some(s);
@@ -82,7 +82,7 @@ fn format_int_with_repr(n: i64, width: usize, repr: NumericRepr) -> Option<Strin
             }
         }
         NumericRepr::Scientific => {
-            for prec in (0..=6).rev() {
+            for prec in (0..=decimal_places).rev() {
                 let s = format_int_scientific(n, prec);
                 if fits(&s, width) {
                     return Some(s);
@@ -97,13 +97,13 @@ fn format_int_with_repr(n: i64, width: usize, repr: NumericRepr) -> Option<Strin
     None
 }
 
-fn format_float_with_repr(n: f64, width: usize, repr: NumericRepr) -> Option<String> {
+fn format_float_with_repr(n: f64, width: usize, repr: NumericRepr, decimal_places: usize) -> Option<String> {
     let try_order: &[NumericRepr] = match repr {
         NumericRepr::General => &[NumericRepr::General, NumericRepr::Scientific],
         NumericRepr::Scientific => &[NumericRepr::Scientific, NumericRepr::General],
     };
     for &r in try_order {
-        for prec in (0..=12).rev() {
+        for prec in (0..=decimal_places).rev() {
             let s = match r {
                 NumericRepr::General => format_float_general(n, prec),
                 NumericRepr::Scientific => format_float_scientific(n, prec),
@@ -116,7 +116,13 @@ fn format_float_with_repr(n: f64, width: usize, repr: NumericRepr) -> Option<Str
     None
 }
 
-pub fn format_numeric_cell(text: &str, width: usize, kind: ColumnKind, repr: NumericRepr) -> String {
+pub fn format_numeric_cell(
+    text: &str,
+    width: usize,
+    kind: ColumnKind,
+    repr: NumericRepr,
+    decimal_places: usize,
+) -> String {
     if width == 0 {
         return String::new();
     }
@@ -125,17 +131,14 @@ pub fn format_numeric_cell(text: &str, width: usize, kind: ColumnKind, repr: Num
     match kind {
         ColumnKind::Int => {
             if let Ok(n) = sanitized.parse::<i64>() {
-                if let Some(s) = format_int_with_repr(n, width, repr) {
+                if let Some(s) = format_int_with_repr(n, width, repr, decimal_places) {
                     return pad_left(&s, width);
                 }
             }
         }
         ColumnKind::Float => {
             if let Ok(n) = sanitized.parse::<f64>() {
-                if repr == NumericRepr::General && fits(&sanitized, width) {
-                    return pad_left(&sanitized, width);
-                }
-                if let Some(s) = format_float_with_repr(n, width, repr) {
+                if let Some(s) = format_float_with_repr(n, width, repr, decimal_places) {
                     return pad_left(&s, width);
                 }
             }
@@ -151,13 +154,16 @@ pub fn format_cell_for_column(
     width: usize,
     kind: ColumnKind,
     repr: NumericRepr,
+    decimal_places: usize,
 ) -> String {
     if width == 0 {
         return String::new();
     }
     match kind {
         ColumnKind::Text | ColumnKind::Date => pad_right(&truncate_middle(text, width), width),
-        ColumnKind::Int | ColumnKind::Float => format_numeric_cell(text, width, kind, repr),
+        ColumnKind::Int | ColumnKind::Float => {
+            format_numeric_cell(text, width, kind, repr, decimal_places)
+        }
         ColumnKind::Auto => pad_right(&truncate_middle(text, width), width),
     }
 }
@@ -179,6 +185,7 @@ mod tests {
             10,
             ColumnKind::Float,
             NumericRepr::General,
+            3,
         );
         assert_eq!(s.len(), 10);
         assert!(!s.contains('~'));
@@ -192,23 +199,24 @@ mod tests {
             8,
             ColumnKind::Float,
             NumericRepr::Scientific,
+            3,
         );
         assert_eq!(s.len(), 8);
     }
 
     #[test]
     fn text_uses_middle_ellipsis() {
-        let s = format_cell_for_column("hello world", 8, ColumnKind::Text, NumericRepr::General);
+        let s = format_cell_for_column("hello world", 8, ColumnKind::Text, NumericRepr::General, 3);
         assert_eq!(s, "he...rld");
     }
 
     #[test]
     fn scientific_repr_when_raw_fits() {
-        let general = format_numeric_cell("770.11", 10, ColumnKind::Float, NumericRepr::General);
+        let general = format_numeric_cell("770.11", 10, ColumnKind::Float, NumericRepr::General, 3);
         assert_eq!(general.trim(), "770.11");
 
         let scientific =
-            format_numeric_cell("770.11", 10, ColumnKind::Float, NumericRepr::Scientific);
+            format_numeric_cell("770.11", 10, ColumnKind::Float, NumericRepr::Scientific, 3);
         assert!(scientific.contains('e') || scientific.contains('E'));
     }
 }

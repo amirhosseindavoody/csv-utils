@@ -93,6 +93,7 @@ impl AppModel {
                             self.column_width_chars(col_idx),
                             kind,
                             repr,
+                            self.decimal_places_for_column(col_idx),
                         ),
                         align_right: is_right_aligned(kind),
                         selected: row_selected && col_idx == self.view.selected_col,

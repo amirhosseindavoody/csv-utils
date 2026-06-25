@@ -117,6 +117,11 @@ fn parse_action(name: &str, value: &serde_json::Value) -> Option<ViewAction> {
             let repr = numeric_repr_from_label(value.get("repr")?.as_str()?)?;
             Some(ViewAction::SetNumericRepr { col, repr })
         }
+        "set_column_decimal_format" => {
+            let col = value.get("col")?.as_u64()? as usize;
+            let format = value.get("format")?.as_str()?.to_string();
+            Some(ViewAction::SetColumnDecimalFormat { col, format })
+        }
         "toggle_help" => Some(ViewAction::ToggleHelp),
         "close_help" => Some(ViewAction::CloseHelp),
         "go_home" => Some(ViewAction::GoHome),

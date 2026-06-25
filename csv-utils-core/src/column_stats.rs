@@ -110,6 +110,10 @@ pub struct ColumnInfo {
     pub focus: usize,
     pub repr_section_visible: bool,
     pub repr_enabled: bool,
+    pub decimal_section_visible: bool,
+    pub decimal_format: Option<String>,
+    pub decimal_editing: bool,
+    pub decimal_draft: String,
 }
 
 pub fn build_column_info(
@@ -124,6 +128,10 @@ pub fn build_column_info(
     repr_section_visible: bool,
     repr_enabled: bool,
     available_types: &[ColumnKind],
+    decimal_section_visible: bool,
+    decimal_format: Option<String>,
+    decimal_editing: bool,
+    decimal_draft: String,
 ) -> ColumnInfo {
     let mut lines = vec![
         stat("Rows sampled", stats.rows.to_string()),
@@ -206,6 +214,10 @@ pub fn build_column_info(
         focus,
         repr_section_visible,
         repr_enabled,
+        decimal_section_visible,
+        decimal_format,
+        decimal_editing,
+        decimal_draft,
     }
 }
 
@@ -262,6 +274,10 @@ mod tests {
             false,
             false,
             &[ColumnKind::Text],
+            false,
+            None,
+            false,
+            String::new(),
         );
         assert!(info.stats.iter().any(|l| l.label == "Distinct values"));
     }

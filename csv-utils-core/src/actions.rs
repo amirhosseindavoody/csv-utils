@@ -18,7 +18,7 @@ impl Default for ViewLayout {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ViewAction {
     RowDelta(i32),
     ColDelta(i32),
@@ -32,6 +32,9 @@ pub enum ViewAction {
     ColumnInfoApply,
     SetColumnKind { col: usize, kind: ColumnKind },
     SetNumericRepr { col: usize, repr: NumericRepr },
+    SetColumnDecimalFormat { col: usize, format: String },
+    ColumnInfoDecimalChar(char),
+    ColumnInfoDecimalBackspace,
     ToggleHelp,
     CloseHelp,
     GoHome,
@@ -105,6 +108,11 @@ impl AppModel {
             ViewAction::ColumnInfoApply => self.column_info_apply_focus(),
             ViewAction::SetColumnKind { col, kind } => self.set_column_kind(col, kind),
             ViewAction::SetNumericRepr { col, repr } => self.set_numeric_repr(col, repr),
+            ViewAction::SetColumnDecimalFormat { col, format } => {
+                self.set_column_decimal_format(col, format)
+            }
+            ViewAction::ColumnInfoDecimalChar(ch) => self.column_info_decimal_push_char(ch),
+            ViewAction::ColumnInfoDecimalBackspace => self.column_info_decimal_backspace(),
             ViewAction::ToggleHelp => self.view.show_help = true,
             ViewAction::CloseHelp => self.view.show_help = false,
             ViewAction::GoHome => self.view.selected_row = 0,

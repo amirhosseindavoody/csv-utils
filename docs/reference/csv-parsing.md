@@ -24,6 +24,7 @@ Formatting lives in `csv-utils-core/src/display.rs`:
 - **Text / date** — middle ellipsis (`...`) when wider than the column
 - **Int / float** — rescaled to fit (reduced precision, general or scientific notation); no ellipsis
 - Column widths **auto-fit** to header + indexed row content, clamped **4–64** (`MIN_COLUMN_WIDTH` / `MAX_COLUMN_WIDTH` in `model.rs`)
+- **Numeric decimal places** — format string like `.3` (3 digits after the decimal); default from `csv-utils.json`, per-column override in the info panel
 - Manual column resize (TUI/web drag) locks that column until a new file is opened
 
 Entry point: `format_cell_for_column(text, width, kind, repr)`.
@@ -41,6 +42,8 @@ Inferred from **indexed cell values** when kind is `Auto`:
 
 Location: `csv-utils-core/src/column.rs` (`infer_column_kind_from_values`).
 
-Press **`c`** to open the column info panel: change type (options depend on inferred data) and representation, and view type-specific statistics (lazy; computed from indexed rows while the panel is open).
+Press **`c`** to open the column info panel: change type (options depend on inferred data), representation, **decimal places** (e.g. `.3`), and view type-specific statistics (lazy; computed from indexed rows while the panel is open).
+
+Default decimal format: [settings config](../design/settings-config.md).
 
 Types affect alignment, sidebar labels, truncation vs rescaling, and numeric notation only; they do not change CLI parsing.

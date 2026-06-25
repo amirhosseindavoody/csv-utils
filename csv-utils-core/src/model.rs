@@ -4,6 +4,7 @@ use crate::column::{
 };
 use crate::column_stats::{build_column_info, ColumnInfo};
 use crate::display::{format_cell_for_column, sanitize_ascii, truncate_middle};
+use crate::settings::{self, normalize_decimal_format, SettingsFile};
 use std::path::PathBuf;
 
 pub const MIN_COLUMN_WIDTH: usize = 4;
@@ -26,9 +27,13 @@ pub struct TableViewState {
     pub column_numeric_repr: Vec<NumericRepr>,
     /// Manual resize lock per column (until file reopen).
     pub column_widths_user_set: Vec<bool>,
+    /// Per-column decimal format override (`None` = use `csv-utils.json` default).
+    pub column_decimal_formats: Vec<Option<String>>,
     pub show_column_info: bool,
-    /// Focus index in column info panel (0–4 type, 5–6 representation).
+    /// Focus index in column info panel (type, representation, decimal places).
     pub column_info_focus: usize,
+    pub column_info_decimal_editing: bool,
+    pub column_info_decimal_draft: String,
     pub show_help: bool,
 }
 
@@ -36,6 +41,7 @@ pub struct TableViewState {
 pub struct AppModel {
     pub file_path: Option<PathBuf>,
     pub preview: crate::preview::PreviewData,
+    pub settings: SettingsFile,
     pub view: TableViewState,
     pub scan_thread: Option<std::thread::JoinHandle<()>>,
 }
@@ -52,8 +58,11 @@ impl Default for TableViewState {
             column_kinds: Vec::new(),
             column_numeric_repr: Vec::new(),
             column_widths_user_set: Vec::new(),
+            column_decimal_formats: Vec::new(),
             show_column_info: false,
             column_info_focus: 0,
+            column_info_decimal_editing: false,
+            column_info_decimal_draft: String::new(),
             show_help: false,
         }
     }
@@ -111,9 +120,12 @@ impl AppModel {
             }
         });
 
+        let settings = settings::load_or_create().unwrap_or_default();
+
         let mut model = Self {
             file_path,
             preview,
+            settings,
             view: TableViewState::default(),
             scan_thread,
         };
@@ -149,6 +161,34 @@ impl AppModel {
         }
         if self.view.column_widths_user_set.len() != n {
             self.view.column_widths_user_set = vec![false; n];
+        }
+        if self.view.column_decimal_formats.len() != n {
+            self.view.column_decimal_formats = vec![None; n];
+        }
+    }
+
+    pub fn decimal_format_for_column(&self, col: usize) -> &str {
+        self.view
+            .column_decimal_formats
+            .get(col)
+            .and_then(|o| o.as_deref())
+            .unwrap_or(&self.settings.display.numeric_decimal_format)
+    }
+
+    pub fn decimal_places_for_column(&self, col: usize) -> usize {
+        settings::parse_decimal_format(self.decimal_format_for_column(col))
+            .unwrap_or_else(settings::default_decimal_places)
+    }
+
+    pub fn set_column_decimal_format(&mut self, col: usize, format: String) {
+        self.ensure_column_state();
+        if col >= self.view.column_decimal_formats.len() {
+            return;
+        }
+        if let Some(normalized) = normalize_decimal_format(&format) {
+            self.view.column_decimal_formats[col] = Some(normalized);
+            self.view.column_widths_user_set[col] = false;
+            self.apply_fitted_column_width(col);
         }
     }
 
@@ -262,7 +302,7 @@ impl AppModel {
         let width = self.column_width_chars(col);
         let kind = self.effective_column_kind(col);
         let repr = self.numeric_repr(col);
-        format_cell_for_column(text, width, kind, repr)
+        format_cell_for_column(text, width, kind, repr, self.decimal_places_for_column(col))
     }
 
     pub fn format_column_header(&self, col: usize, name: &str) -> String {
@@ -321,9 +361,19 @@ impl AppModel {
         available_column_kinds(self.column_infer_state(col))
     }
 
+    pub fn column_info_decimal_section_visible(&self, col: usize) -> bool {
+        self.column_info_repr_section_visible(col)
+    }
+
+    pub fn column_info_decimal_focus_index(&self, col: usize) -> usize {
+        self.column_info_type_kinds(col).len() + 2
+    }
+
     pub fn open_column_info_pane(&mut self) {
         let col = self.view.selected_col;
         self.view.show_column_info = true;
+        self.view.column_info_decimal_editing = false;
+        self.view.column_info_decimal_draft.clear();
         self.layout()
             .lock()
             .expect("layout mutex poisoned")
@@ -338,6 +388,8 @@ impl AppModel {
 
     pub fn close_column_info_pane(&mut self) {
         self.view.show_column_info = false;
+        self.view.column_info_decimal_editing = false;
+        self.view.column_info_decimal_draft.clear();
         self.layout()
             .lock()
             .expect("layout mutex poisoned")
@@ -377,22 +429,76 @@ impl AppModel {
         let col = self.view.selected_col;
         let type_count = self.column_info_type_kinds(col).len();
         if self.column_info_repr_section_visible(col) {
-            type_count + 1
+            type_count + 2
         } else {
             type_count.saturating_sub(1)
         }
     }
 
     pub fn column_info_focus_delta(&mut self, delta: i32) {
+        if self.view.column_info_decimal_editing {
+            return;
+        }
         let max = self.column_info_focus_max() as i32;
         let next = self.view.column_info_focus as i32 + delta;
         self.view.column_info_focus = next.clamp(0, max) as usize;
+    }
+
+    pub fn column_info_start_decimal_edit(&mut self) {
+        let col = self.view.selected_col;
+        self.view.column_info_decimal_editing = true;
+        self.view.column_info_decimal_draft = self.decimal_format_for_column(col).to_string();
+        self.view.column_info_focus = self.column_info_decimal_focus_index(col);
+    }
+
+    pub fn column_info_apply_decimal_draft(&mut self) {
+        let col = self.view.selected_col;
+        let draft = self.view.column_info_decimal_draft.clone();
+        self.set_column_decimal_format(col, draft);
+        self.view.column_info_decimal_editing = false;
+    }
+
+    pub fn column_info_decimal_push_char(&mut self, ch: char) {
+        if !self.view.column_info_decimal_editing {
+            return;
+        }
+        if ch == '.' || ch.is_ascii_digit() {
+            if ch == '.' && self.view.column_info_decimal_draft.contains('.') {
+                return;
+            }
+            if self.view.column_info_decimal_draft.is_empty() && ch.is_ascii_digit() {
+                self.view.column_info_decimal_draft.push('.');
+            }
+            self.view.column_info_decimal_draft.push(ch);
+        }
+    }
+
+    pub fn column_info_decimal_backspace(&mut self) {
+        if self.view.column_info_decimal_editing {
+            self.view.column_info_decimal_draft.pop();
+        }
     }
 
     pub fn column_info_apply_focus(&mut self) {
         let col = self.view.selected_col;
         let kinds = self.column_info_type_kinds(col);
         let focus = self.view.column_info_focus;
+        let decimal_idx = self.column_info_decimal_focus_index(col);
+
+        if focus == decimal_idx {
+            if self.view.column_info_decimal_editing {
+                self.column_info_apply_decimal_draft();
+            } else {
+                self.column_info_start_decimal_edit();
+            }
+            return;
+        }
+
+        if self.view.column_info_decimal_editing {
+            self.view.column_info_decimal_editing = false;
+            self.view.column_info_decimal_draft.clear();
+        }
+
         if focus < kinds.len() {
             self.set_column_kind(col, kinds[focus]);
         } else {
@@ -410,6 +516,11 @@ impl AppModel {
             return;
         }
         self.view.column_info_focus = option;
+        let col = self.view.selected_col;
+        if option == self.column_info_decimal_focus_index(col) {
+            self.column_info_start_decimal_edit();
+            return;
+        }
         self.column_info_apply_focus();
     }
 
@@ -432,6 +543,12 @@ impl AppModel {
             .lock()
             .expect("layout mutex poisoned")
             .stats(col);
+        let decimal_visible = self.column_info_decimal_section_visible(col);
+        let decimal_format = if decimal_visible {
+            Some(self.decimal_format_for_column(col).to_string())
+        } else {
+            None
+        };
         build_column_info(
             col,
             name,
@@ -444,6 +561,10 @@ impl AppModel {
             self.column_info_repr_section_visible(col),
             self.column_info_repr_enabled(),
             &self.column_info_type_kinds(col),
+            decimal_visible,
+            decimal_format,
+            self.view.column_info_decimal_editing,
+            self.view.column_info_decimal_draft.clone(),
         )
     }
 

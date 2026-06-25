@@ -126,11 +126,28 @@ fn column_list_visible_height(columns_area: Rect) -> usize {
 
 fn handle_key(key: KeyEvent, model: &mut AppModel, column_list_height: usize) -> bool {
     if model.view.show_column_info {
+        if model.view.column_info_decimal_editing {
+            match key.code {
+                KeyCode::Char('q') => model.close_column_info_pane(),
+                KeyCode::Enter => model.column_info_apply_decimal_draft(),
+                KeyCode::Backspace => model.column_info_decimal_backspace(),
+                KeyCode::Char(c) => model.column_info_decimal_push_char(c),
+                _ => {}
+            }
+            return true;
+        }
         match key.code {
             KeyCode::Char('q') => model.close_column_info_pane(),
             KeyCode::Up | KeyCode::Char('k') => model.column_info_focus_delta(-1),
             KeyCode::Down | KeyCode::Char('j') => model.column_info_focus_delta(1),
             KeyCode::Enter => model.column_info_apply_focus(),
+            KeyCode::Char(c) if c.is_ascii() && !c.is_ascii_control() => {
+                let col = model.view.selected_col;
+                if model.view.column_info_focus == model.column_info_decimal_focus_index(col) {
+                    model.column_info_start_decimal_edit();
+                    model.column_info_decimal_push_char(c);
+                }
+            }
             _ => {}
         }
         return true;
@@ -608,6 +625,10 @@ fn column_info_option_at_line(
         if (repr_start..repr_start + 2).contains(&line) {
             return Some(line - repr_start + type_count);
         }
+        let decimal_line = repr_start + 4;
+        if line == decimal_line {
+            return Some(type_count + 2);
+        }
     }
     None
 }
@@ -690,6 +711,36 @@ fn draw_column_info(frame: &mut ratatui::Frame, popup_area: Rect, model: &AppMod
                 style,
             )));
         }
+
+        lines.push(Line::from(""));
+        lines.push(Line::from(Span::styled(
+            " Decimal places ",
+            Style::default().add_modifier(Modifier::BOLD),
+        )));
+        let decimal_idx = type_kinds.len() + 2;
+        let decimal_value = if model.view.column_info_decimal_editing {
+            model.view.column_info_decimal_draft.clone()
+        } else {
+            model.decimal_format_for_column(col).to_string()
+        };
+        let decimal_marker = if focus == decimal_idx { "▸ " } else { "  " };
+        let decimal_style = if focus == decimal_idx || model.view.column_info_decimal_editing {
+            Style::default()
+                .fg(Color::Black)
+                .bg(Color::Cyan)
+                .add_modifier(Modifier::BOLD)
+        } else {
+            Style::default()
+        };
+        let edit_hint = if model.view.column_info_decimal_editing {
+            " (Enter apply)"
+        } else {
+            ""
+        };
+        lines.push(Line::from(Span::styled(
+            format!("{decimal_marker}[{decimal_value}]{edit_hint}"),
+            decimal_style,
+        )));
     }
 
     lines.push(Line::from(""));

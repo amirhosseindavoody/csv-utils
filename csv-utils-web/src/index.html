@@ -192,6 +192,16 @@
     .info-box .format-options button:hover { background: var(--hover); }
     .info-box .format-options button.selected { color: var(--accent); font-weight: 700; }
     .info-box .format-options button.focused { border-color: var(--accent); background: var(--hover); }
+    .info-box .info-decimal {
+      width: 5rem;
+      font: inherit;
+      padding: 0.35rem 0.5rem;
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      background: var(--surface-muted);
+      color: var(--text);
+    }
+    .info-box .info-decimal.focused { outline: 2px solid var(--accent); border-color: var(--accent); }
     .info-stats { margin-top: 0.75rem; border-collapse: collapse; width: 100%; font-size: 13px; }
     .info-stats td { padding: 0.2rem 0; vertical-align: top; }
     .info-stats td:first-child { color: var(--muted); padding-right: 1rem; white-space: nowrap; }
@@ -453,6 +463,14 @@ Theme button (header): System · Light · Dark.`;
         }).join('');
         reprHtml = `<div class="format-section">Representation</div><div class="format-options">${reprButtons}</div>`;
       }
+      let decimalHtml = '';
+      if (info.decimal_section_visible) {
+        const decIdx = info.available_types.length + 2;
+        const focused = info.focus === decIdx ? ' focused' : '';
+        const value = info.decimal_editing ? info.decimal_draft : (info.decimal_format || '.3');
+        decimalHtml = `<div class="format-section">Decimal places</div>
+          <input type="text" class="info-decimal${focused}" id="decimal-input" value="${escapeHtml(value)}" aria-label="Decimal format (e.g. .3)" />`;
+      }
       const statsRows = info.stats.map(s =>
         `<tr><td>${escapeHtml(s.label)}</td><td>${escapeHtml(s.value)}</td></tr>`
       ).join('');
@@ -460,9 +478,20 @@ Theme button (header): System · Light · Dark.`;
         <div class="format-section">Type</div>
         <div class="format-options">${typeButtons}</div>
         ${reprHtml}
+        ${decimalHtml}
         <div class="format-section">Statistics</div>
         <table class="info-stats"><tbody>${statsRows}</tbody></table>
-        <div class="info-hint">Click type/repr or use ↑/↓ and Enter. q closes.</div>`;
+        <div class="info-hint">Click type/repr, edit decimal format, or use ↑/↓ and Enter. q closes.</div>`;
+      const decimalInput = document.getElementById('decimal-input');
+      if (decimalInput) {
+        decimalInput.addEventListener('change', () => {
+          if (!lastState?.column_info) return;
+          postAction('set_column_decimal_format', {
+            col: lastState.column_info.column_index,
+            format: decimalInput.value,
+          });
+        });
+      }
     }
 
     function escapeHtml(s) {
@@ -532,6 +561,10 @@ Theme button (header): System · Light · Dark.`;
           col: lastState.column_info.column_index,
           repr: reprBtn.dataset.repr,
         });
+        return;
+      }
+      if (e.target.closest('#decimal-input') && lastState?.column_info) {
+        postAction('column_info_focus_delta', lastState.column_info.available_types.length + 2 - lastState.column_info.focus);
       }
     });
 
