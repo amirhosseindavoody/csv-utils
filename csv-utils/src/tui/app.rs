@@ -19,6 +19,7 @@ use std::io::{self, stdout};
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
+use crate::tui::command_line::{CommandKeyAction, CommandLineState, VIEW_COMMANDS};
 use crate::tui::file_picker::{FilePicker, FilePickerAction};
 
 const HELP_TEXT: &str = "\
@@ -83,7 +84,8 @@ pub fn run(file: Option<&str>) -> Result<()> {
     };
     let mut last_redraw = Instant::now();
     let mut column_resize: Option<ColumnResize> = None;
-    let mut command_buf: Option<String> = None;
+    let mut command_line: Option<CommandLineState> = None;
+    let mut command_error: Option<String> = None;
 
     while running {
         model.maybe_update_column_layout();
@@ -91,7 +93,7 @@ pub fn run(file: Option<&str>) -> Result<()> {
             areas = if file_picker.is_some() {
                 draw_file_picker(frame, file_picker.as_ref().unwrap())
             } else {
-                draw(frame, &model, command_buf.as_deref())
+                draw(frame, &model, command_line.as_ref(), command_error.as_deref())
             };
         })?;
 
@@ -152,7 +154,13 @@ pub fn run(file: Option<&str>) -> Result<()> {
         if event::poll(timeout)? {
             match event::read()? {
                 Event::Key(key) if key.kind == KeyEventKind::Press => {
-                    match handle_key(key, &mut model, column_list_height, &mut command_buf) {
+                    match handle_key(
+                        key,
+                        &mut model,
+                        column_list_height,
+                        &mut command_line,
+                        &mut command_error,
+                    ) {
                         MainKeyAction::Continue => {}
                         MainKeyAction::Quit => running = false,
                         MainKeyAction::CloseFile => {
@@ -168,7 +176,8 @@ pub fn run(file: Option<&str>) -> Result<()> {
                             } else {
                                 FilePicker::new(extensions)?
                             });
-                            command_buf = None;
+                            command_line = None;
+                            command_error = None;
                         }
                     }
                 }
@@ -215,28 +224,29 @@ fn handle_key(
     key: KeyEvent,
     model: &mut AppModel,
     column_list_height: usize,
-    command_buf: &mut Option<String>,
+    command_line: &mut Option<CommandLineState>,
+    command_error: &mut Option<String>,
 ) -> MainKeyAction {
-    if let Some(buf) = command_buf.as_mut() {
-        match key.code {
-            KeyCode::Esc => {
-                *command_buf = None;
+    if let Some(command) = command_line.as_mut() {
+        match command.handle_key(key, VIEW_COMMANDS) {
+            CommandKeyAction::Continue => {}
+            CommandKeyAction::Cancel => {
+                *command_line = None;
+                *command_error = None;
             }
-            KeyCode::Enter => {
-                let cmd = buf.trim().to_ascii_lowercase();
-                *command_buf = None;
-                if cmd == ":close" {
-                    return MainKeyAction::CloseFile;
+            CommandKeyAction::Rejected => {
+                *command_error = Some("No matching command".to_string());
+            }
+            CommandKeyAction::Submit(cmd) => {
+                match cmd.as_str() {
+                    ":close" => {
+                        *command_line = None;
+                        *command_error = None;
+                        return MainKeyAction::CloseFile;
+                    }
+                    _ => *command_error = Some(format!("Unknown command: {cmd}")),
                 }
             }
-            KeyCode::Backspace => {
-                buf.pop();
-                if buf.is_empty() {
-                    *command_buf = None;
-                }
-            }
-            KeyCode::Char(c) if !c.is_ascii_control() => buf.push(c),
-            _ => {}
         }
         return MainKeyAction::Continue;
     }
@@ -279,7 +289,8 @@ fn handle_key(
     match key.code {
         KeyCode::Char('q') => return MainKeyAction::Quit,
         KeyCode::Char(':') => {
-            *command_buf = Some(":".to_string());
+            *command_line = Some(CommandLineState::start());
+            *command_error = None;
         }
         KeyCode::Char('?') => model.view.show_help = true,
         KeyCode::Char('c') => model.open_column_info_pane(),
@@ -537,9 +548,16 @@ fn draw_file_picker(frame: &mut ratatui::Frame, picker: &FilePicker) -> LayoutAr
     }
 }
 
-fn draw(frame: &mut ratatui::Frame, model: &AppModel, command_buf: Option<&str>) -> LayoutAreas {
+fn draw(
+    frame: &mut ratatui::Frame,
+    model: &AppModel,
+    command_line: Option<&CommandLineState>,
+    command_error: Option<&str>,
+) -> LayoutAreas {
     let area = frame.area();
-    let bottom_height = if command_buf.is_some() { 3 } else { 1 };
+    let bottom_height = command_line
+        .map(|c| c.panel_height(VIEW_COMMANDS))
+        .unwrap_or(1);
 
     let outer = Layout::default()
         .direction(Direction::Vertical)
@@ -587,16 +605,8 @@ fn draw(frame: &mut ratatui::Frame, model: &AppModel, command_buf: Option<&str>)
     draw_table(frame, table_area, model);
     draw_column_list(frame, columns_area, model);
 
-    if let Some(buf) = command_buf {
-        frame.render_widget(
-            Paragraph::new(buf).block(
-                Block::default()
-                    .title(" Command ")
-                    .borders(Borders::ALL)
-                    .border_style(Style::default().fg(Color::Yellow)),
-            ),
-            outer[2],
-        );
+    if let Some(command) = command_line {
+        command.draw(frame, outer[2], VIEW_COMMANDS, command_error);
     } else {
         let hints = " q quit  ↑↓ rows  ←→ cols  drag resize  c info  ? help  : command ";
         frame.render_widget(

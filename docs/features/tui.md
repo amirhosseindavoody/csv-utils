@@ -58,7 +58,10 @@ Each frame: `maybe_refit_column_widths()` (when loaded row count changes), `clam
 | `Home`/`End` | First / last loaded row |
 | `c` | Open column info panel |
 | `?` | Help overlay |
+| `:` | Open command line (filtered suggestions, Tab complete) |
 | `:` then `:close` | Close file and return to file picker (in last file's directory) |
+
+Command line keys: **↑/↓** select suggestion, **Tab** complete, **Enter** run, **Esc** cancel.
 
 ### File picker (no file on launch)
 
@@ -77,6 +80,8 @@ listed; directories are always shown.
 | `:` then `:filter` / `:f` | Restore extension filter |
 | `q` / `Esc` | Quit (Esc cancels a command) |
 | Click | Select entry (same as `Enter`) |
+
+Command line keys: **↑/↓** select suggestion, **Tab** complete, **Enter** run, **Esc** cancel.
 
 ### Column info (`c`)
 

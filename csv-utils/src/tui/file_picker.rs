@@ -7,6 +7,8 @@ use std::fs;
 use std::io;
 use std::path::PathBuf;
 
+use crate::tui::command_line::{CommandKeyAction, CommandLineState, PICKER_COMMANDS};
+
 #[derive(Debug, Clone)]
 struct Entry {
     name: String,
@@ -21,8 +23,8 @@ pub struct FilePicker {
     error: Option<String>,
     file_extensions: Vec<String>,
     show_all: bool,
-    command_mode: bool,
-    command_buf: String,
+    command_line: Option<CommandLineState>,
+    command_error: Option<String>,
 }
 
 impl FilePicker {
@@ -50,8 +52,8 @@ impl FilePicker {
             error: None,
             file_extensions,
             show_all: false,
-            command_mode: false,
-            command_buf: String::new(),
+            command_line: None,
+            command_error: None,
         };
         picker.refresh()?;
         if let Some(path) = highlight_file {
@@ -162,41 +164,35 @@ impl FilePicker {
         true
     }
 
-    fn execute_command(&mut self) {
-        let cmd = self.command_buf.trim().to_ascii_lowercase();
-        match cmd.as_str() {
-            ":a" | ":all" => {
-                self.show_all = true;
-                let _ = self.refresh();
-            }
-            ":f" | ":filter" => {
-                self.show_all = false;
-                let _ = self.refresh();
-            }
-            _ => {
-                self.error = Some(format!("Unknown command: {}", self.command_buf.trim()));
-            }
-        }
-        self.command_mode = false;
-        self.command_buf.clear();
-    }
-
     pub fn handle_key(&mut self, key: KeyEvent, visible_height: usize) -> FilePickerAction {
-        if self.command_mode {
-            match key.code {
-                KeyCode::Esc => {
-                    self.command_mode = false;
-                    self.command_buf.clear();
+        if let Some(command) = self.command_line.as_mut() {
+            match command.handle_key(key, PICKER_COMMANDS) {
+                CommandKeyAction::Continue => {}
+                CommandKeyAction::Cancel => {
+                    self.command_line = None;
+                    self.command_error = None;
                 }
-                KeyCode::Enter => self.execute_command(),
-                KeyCode::Backspace => {
-                    self.command_buf.pop();
-                    if self.command_buf.is_empty() {
-                        self.command_mode = false;
+                CommandKeyAction::Rejected => {
+                    self.command_error = Some("No matching command".to_string());
+                }
+                CommandKeyAction::Submit(cmd) => {
+                    self.command_error = None;
+                    match cmd.as_str() {
+                        ":all" => {
+                            self.show_all = true;
+                            self.command_line = None;
+                            let _ = self.refresh();
+                        }
+                        ":filter" => {
+                            self.show_all = false;
+                            self.command_line = None;
+                            let _ = self.refresh();
+                        }
+                        _ => {
+                            self.command_error = Some(format!("Unknown command: {cmd}"));
+                        }
                     }
                 }
-                KeyCode::Char(c) if !c.is_ascii_control() => self.command_buf.push(c),
-                _ => {}
             }
             return FilePickerAction::Continue;
         }
@@ -204,8 +200,8 @@ impl FilePicker {
         match key.code {
             KeyCode::Char('q') | KeyCode::Esc => FilePickerAction::Quit,
             KeyCode::Char(':') => {
-                self.command_mode = true;
-                self.command_buf = ":".to_string();
+                self.command_line = Some(CommandLineState::start());
+                self.command_error = None;
                 self.error = None;
                 FilePickerAction::Continue
             }
@@ -287,7 +283,14 @@ impl FilePicker {
     }
 
     pub fn draw(&self, frame: &mut ratatui::Frame, area: Rect, visible_height: usize) {
-        let bottom_height = if self.command_mode { 3 } else { 1 };
+        let bottom_height = if self.command_line.is_some() {
+            self.command_line
+                .as_ref()
+                .map(|c| c.panel_height(PICKER_COMMANDS))
+                .unwrap_or(3)
+        } else {
+            1
+        };
         let layout = Layout::default()
             .direction(Direction::Vertical)
             .constraints([
@@ -363,16 +366,8 @@ impl FilePicker {
             layout[1],
         );
 
-        if self.command_mode {
-            frame.render_widget(
-                Paragraph::new(self.command_buf.clone()).block(
-                    Block::default()
-                        .title(" Command ")
-                        .borders(Borders::ALL)
-                        .border_style(Style::default().fg(Color::Yellow)),
-                ),
-                layout[2],
-            );
+        if let Some(command) = &self.command_line {
+            command.draw(frame, layout[2], PICKER_COMMANDS, self.command_error.as_deref());
         } else {
             let hints = " ↑↓ navigate  → open  ← parent  Enter open  : command  q quit ";
             frame.render_widget(
