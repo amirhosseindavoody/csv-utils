@@ -24,7 +24,7 @@ csv-utils = { path = "." }
 
 [tasks]
 build = "cargo build --release"
-run = "cargo run --release -p csv-utils --"
+csv = "cargo run --release -p csv-utils --"
 tui = "cargo run --release -p csv-utils -- tui"
 test = "cargo test"
 gen-test-data = "python scripts/generate_test_data.py"
