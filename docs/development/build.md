@@ -12,6 +12,16 @@
 | Unit tests | `pixi run test` |
 | Generate test CSVs | `pixi run gen-test-data` |
 | TUI snapshot | `pixi run test-tui-large-capture` → `artifacts/tui_snapshot_large.txt` |
+| Bump version | `pixi run update-version` → semver in `Cargo.toml` and `pixi.toml` |
+
+Version scheme (calendar + daily build counter):
+
+| Meaning | Example |
+|---------|---------|
+| Human / calver label | `2026.06.24.0` (YYYY.MM.DD.N) |
+| Stored in TOML (Cargo semver) | `2026.6.24+0` (YYYY.M.D+N) |
+
+`N` starts at `0` each day and increments on every `update-version` run that day. Cargo and Pixi require [semver](https://semver.org/); the fourth dotted segment is encoded as build metadata (`+N`). Script: `scripts/update-version.sh`.
 
 Tasks use `-p csv-utils` or `-p csv-utils-web` where needed (multi-binary workspace).
 
