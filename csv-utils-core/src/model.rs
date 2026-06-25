@@ -350,6 +350,13 @@ impl AppModel {
         row >= min_r && row <= max_r && col >= min_c && col <= max_c
     }
 
+    pub fn row_in_cell_range_row_span(&self, row: usize) -> bool {
+        let Some((min_r, max_r, _, _)) = self.cell_range_bounds() else {
+            return false;
+        };
+        row >= min_r && row <= max_r
+    }
+
     pub fn clear_cell_range(&mut self) {
         self.view.cell_range_anchor = None;
         self.view.cell_range_focus = None;

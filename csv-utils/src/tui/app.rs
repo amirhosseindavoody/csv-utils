@@ -729,11 +729,56 @@ fn visible_column_separator_offsets(
     offsets
 }
 
-/// Muted column stripe (lower contrast than header/sidebar accents).
-fn selected_column_body_style() -> Style {
-    Style::default().bg(Color::DarkGray).fg(Color::Gray)
+const ROW_GUTTER_WIDTH: u16 = 2;
+
+fn table_inner_area(table_area: Rect) -> Rect {
+    Block::default().borders(Borders::ALL).inner(table_area)
 }
 
+fn table_data_width(model: &AppModel, table_area: Rect) -> u16 {
+    let inner = table_inner_area(table_area);
+    inner
+        .width
+        .saturating_sub(ROW_GUTTER_WIDTH.saturating_add(model.column_separator_width() as u16))
+}
+
+fn table_data_x_offset(model: &AppModel) -> u16 {
+    ROW_GUTTER_WIDTH.saturating_add(model.column_separator_width() as u16)
+}
+
+fn row_fully_highlighted(model: &AppModel, row_idx: usize) -> bool {
+    model.is_row_multi_selected(row_idx)
+}
+
+fn row_indicator_label(model: &AppModel, row_idx: usize) -> &'static str {
+    if model.is_row_multi_selected(row_idx) {
+        "◆"
+    } else if model.view.selected_row == row_idx || model.row_in_cell_range_row_span(row_idx) {
+        "▸"
+    } else {
+        " "
+    }
+}
+
+fn row_indicator_style(model: &AppModel, row_idx: usize) -> Style {
+    if model.is_row_multi_selected(row_idx) {
+        Style::default()
+            .fg(Color::Black)
+            .bg(Color::Blue)
+            .add_modifier(Modifier::BOLD)
+    } else if model.view.selected_row == row_idx {
+        Style::default()
+            .fg(Color::Cyan)
+            .bg(Color::DarkGray)
+            .add_modifier(Modifier::BOLD)
+    } else if model.row_in_cell_range_row_span(row_idx) {
+        Style::default().fg(Color::Blue).add_modifier(Modifier::BOLD)
+    } else {
+        Style::default().fg(Color::DarkGray)
+    }
+}
+
+/// Muted column stripe (lower contrast than header/sidebar accents).
 fn selected_column_header_style() -> Style {
     Style::default()
         .bg(Color::DarkGray)
@@ -774,16 +819,10 @@ fn table_cell_style(model: &AppModel, row_idx: usize, col_idx: usize) -> Style {
     if model.is_cell_in_selection_range(row_idx, col_idx) {
         return Style::default().fg(Color::Black).bg(Color::Blue);
     }
-    if col_idx == model.view.selected_col {
-        return selected_column_body_style();
-    }
     if model.is_column_multi_selected(col_idx) {
         return multi_selected_column_body_style();
     }
-    if row_idx == model.view.selected_row {
-        return Style::default().bg(Color::DarkGray);
-    }
-    if model.is_row_multi_selected(row_idx) {
+    if row_fully_highlighted(model, row_idx) {
         return Style::default().fg(Color::Black).bg(Color::Blue);
     }
     Style::default()
@@ -816,15 +855,16 @@ fn draw_column_border_lines(
     if !model.view.show_column_borders {
         return;
     }
-    let inner = Block::default().borders(Borders::ALL).inner(table_area);
+    let inner = table_inner_area(table_area);
     if inner.width == 0 || inner.height == 0 {
         return;
     }
 
+    let data_x = inner.x.saturating_add(table_data_x_offset(model));
     let style = Style::default().fg(Color::Gray);
     let sep_xs: Vec<u16> = visible_column_separator_offsets(model, col_indices)
         .into_iter()
-        .map(|offset| inner.x.saturating_add(offset))
+        .map(|offset| data_x.saturating_add(offset))
         .collect();
     // Header row + bottom_margin(1) before body rows (matches hit_test_table).
     let header_sep_y = inner.y.saturating_add(1);
@@ -868,12 +908,16 @@ fn hit_test_column_resize(
         return None;
     }
 
-    let col_indices = model.visible_table_columns(table_area.width);
+    let col_indices = model.visible_table_columns(table_data_width(model, table_area));
     if col_indices.is_empty() {
         return None;
     }
 
     let rel_x = mouse_x.saturating_sub(inner.x);
+    if rel_x < ROW_GUTTER_WIDTH {
+        return None;
+    }
+    let rel_x = rel_x.saturating_sub(table_data_x_offset(model));
     let sep = model.column_separator_width();
     let mut x = 0u16;
     for col_idx in &col_indices {
@@ -897,12 +941,28 @@ fn hit_test_table(mouse_x: u16, mouse_y: u16, table_area: Rect, model: &AppModel
         return None;
     }
 
-    let col_indices = model.visible_table_columns(table_area.width);
+    let col_indices = model.visible_table_columns(table_data_width(model, table_area));
     if col_indices.is_empty() {
         return None;
     }
 
     let rel_x = mouse_x.saturating_sub(inner.x);
+    let rel_y = mouse_y.saturating_sub(inner.y);
+    if rel_x < ROW_GUTTER_WIDTH {
+        if rel_y >= 2 {
+            let data_row = (rel_y - 2) as usize;
+            let empty: &[usize] = &[];
+            let matching = model.cached_matching_rows().unwrap_or(empty);
+            if let Some(&row_idx) = matching.get(model.view.row_offset + data_row) {
+                return Some(TableHit {
+                    row: Some(row_idx),
+                    col: model.view.selected_col,
+                });
+            }
+        }
+        return None;
+    }
+    let rel_x = rel_x.saturating_sub(table_data_x_offset(model));
     let sep = model.column_separator_width();
     let mut x = 0u16;
     let mut col_idx = None;
@@ -916,7 +976,6 @@ fn hit_test_table(mouse_x: u16, mouse_y: u16, table_area: Rect, model: &AppModel
         x = right.saturating_add(sep);
     }
     let col_idx = col_idx?;
-    let rel_y = mouse_y.saturating_sub(inner.y);
     if rel_y == 0 {
         return Some(TableHit {
             row: None,
@@ -1071,13 +1130,14 @@ fn draw_table(frame: &mut ratatui::Frame, area: Rect, model: &AppModel) {
         return;
     }
 
-    let col_indices = model.visible_table_columns(area.width);
+    let col_indices = model.visible_table_columns(table_data_width(model, area));
     let visible_headers: Vec<_> = col_indices
         .iter()
         .map(|&i| headers[i].as_str())
         .collect();
 
-    let header = Row::new(
+    let mut header_cells = vec![Cell::from(" ").style(Style::default())];
+    header_cells.extend(
         visible_headers
             .iter()
             .enumerate()
@@ -1085,11 +1145,11 @@ fn draw_table(frame: &mut ratatui::Frame, area: Rect, model: &AppModel) {
                 let col_idx = col_indices[i];
                 Cell::from(model.format_column_header(col_idx, name))
                     .style(column_header_style(model, col_idx))
-            })
-            .collect::<Vec<_>>(),
-    )
-    .height(1)
-    .bottom_margin(1);
+            }),
+    );
+    let header = Row::new(header_cells)
+        .height(1)
+        .bottom_margin(1);
 
     let body_height = area.height.saturating_sub(3) as usize;
     let empty: &[usize] = &[];
@@ -1102,27 +1162,27 @@ fn draw_table(frame: &mut ratatui::Frame, area: Rect, model: &AppModel) {
         let Some(fields) = model.preview.row_fields(row_idx) else {
             break;
         };
-        let cells: Vec<Cell> = col_indices
-            .iter()
-            .map(|&col_idx| {
-                let text = fields.get(col_idx).map(String::as_str).unwrap_or("");
-                let display = model.format_column_cell(col_idx, text);
-                Cell::from(display).style(table_cell_style(model, row_idx, col_idx))
-            })
-            .collect();
+        let mut cells = vec![Cell::from(row_indicator_label(model, row_idx))
+            .style(row_indicator_style(model, row_idx))];
+        cells.extend(col_indices.iter().map(|&col_idx| {
+            let text = fields.get(col_idx).map(String::as_str).unwrap_or("");
+            let display = model.format_column_cell(col_idx, text);
+            Cell::from(display).style(table_cell_style(model, row_idx, col_idx))
+        }));
         rows.push(Row::new(cells).height(1));
     }
 
-    let widths: Vec<Constraint> = col_indices
-        .iter()
-        .map(|&col_idx| Constraint::Length(model.column_width_chars(col_idx) as u16))
-        .collect();
+    let mut widths = vec![Constraint::Length(ROW_GUTTER_WIDTH)];
+    widths.extend(
+        col_indices
+            .iter()
+            .map(|&col_idx| Constraint::Length(model.column_width_chars(col_idx) as u16)),
+    );
 
     let table = Table::new(rows, widths)
         .header(header)
         .block(Block::default().borders(Borders::ALL))
-        .column_spacing(1)
-        .row_highlight_style(Style::default().bg(Color::DarkGray));
+        .column_spacing(1);
 
     frame.render_widget(table, area);
     draw_column_border_lines(frame, area, model, &col_indices);
