@@ -5,7 +5,7 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Paragraph, Wrap};
 use std::fs;
 use std::io;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 #[derive(Debug, Clone)]
 struct Entry {
@@ -19,10 +19,14 @@ pub struct FilePicker {
     selected: usize,
     list_offset: usize,
     error: Option<String>,
+    file_extensions: Vec<String>,
+    show_all: bool,
+    command_mode: bool,
+    command_buf: String,
 }
 
 impl FilePicker {
-    pub fn new() -> io::Result<Self> {
+    pub fn new(file_extensions: Vec<String>) -> io::Result<Self> {
         let current_dir = std::env::current_dir()?;
         let mut picker = Self {
             current_dir,
@@ -30,6 +34,10 @@ impl FilePicker {
             selected: 0,
             list_offset: 0,
             error: None,
+            file_extensions,
+            show_all: false,
+            command_mode: false,
+            command_buf: String::new(),
         };
         picker.refresh()?;
         Ok(picker)
@@ -39,16 +47,17 @@ impl FilePicker {
         file_path.is_none()
     }
 
+    fn file_matches_filter(&self, name: &str) -> bool {
+        if self.show_all {
+            return true;
+        }
+        let lower = name.to_lowercase();
+        self.file_extensions.iter().any(|ext| lower.ends_with(&format!(".{ext}")))
+    }
+
     pub fn refresh(&mut self) -> io::Result<()> {
         self.error = None;
         self.entries.clear();
-
-        if self.current_dir.parent().is_some() {
-            self.entries.push(Entry {
-                name: "..".to_string(),
-                is_dir: true,
-            });
-        }
 
         let read_dir = match fs::read_dir(&self.current_dir) {
             Ok(rd) => rd,
@@ -73,7 +82,7 @@ impl FilePicker {
             }
             if file_type.is_dir() {
                 dirs.push(Entry { name, is_dir: true });
-            } else if file_type.is_file() {
+            } else if file_type.is_file() && self.file_matches_filter(&name) {
                 files.push(Entry { name, is_dir: false });
             }
         }
@@ -102,9 +111,78 @@ impl FilePicker {
         }
     }
 
+    fn go_parent(&mut self) {
+        if self.current_dir.parent().is_some() {
+            if let Some(parent) = self.current_dir.parent() {
+                self.current_dir = parent.to_path_buf();
+                self.selected = 0;
+                self.list_offset = 0;
+                let _ = self.refresh();
+            }
+        }
+    }
+
+    fn enter_selected_dir(&mut self) -> bool {
+        let Some(entry) = self.entries.get(self.selected) else {
+            return false;
+        };
+        if !entry.is_dir {
+            return false;
+        }
+        self.current_dir = self.current_dir.join(&entry.name);
+        self.selected = 0;
+        self.list_offset = 0;
+        let _ = self.refresh();
+        true
+    }
+
+    fn execute_command(&mut self) {
+        let cmd = self.command_buf.trim().to_ascii_lowercase();
+        match cmd.as_str() {
+            ":a" | ":all" => {
+                self.show_all = true;
+                let _ = self.refresh();
+            }
+            ":f" | ":filter" => {
+                self.show_all = false;
+                let _ = self.refresh();
+            }
+            _ => {
+                self.error = Some(format!("Unknown command: {}", self.command_buf.trim()));
+            }
+        }
+        self.command_mode = false;
+        self.command_buf.clear();
+    }
+
     pub fn handle_key(&mut self, key: KeyEvent, visible_height: usize) -> FilePickerAction {
+        if self.command_mode {
+            match key.code {
+                KeyCode::Esc => {
+                    self.command_mode = false;
+                    self.command_buf.clear();
+                }
+                KeyCode::Enter => self.execute_command(),
+                KeyCode::Backspace => {
+                    self.command_buf.pop();
+                    if self.command_buf.is_empty() {
+                        self.command_mode = false;
+                    }
+                }
+                KeyCode::Char(c) if !c.is_ascii_control() => self.command_buf.push(c),
+                _ => {}
+            }
+            return FilePickerAction::Continue;
+        }
+
         match key.code {
             KeyCode::Char('q') | KeyCode::Esc => FilePickerAction::Quit,
+            KeyCode::Char(':') => {
+                self.command_mode = true;
+                self.command_buf = ":".to_string();
+                self.error = None;
+                FilePickerAction::Continue
+            }
             KeyCode::Up | KeyCode::Char('k') => {
                 self.selected = self.selected.saturating_sub(1);
                 self.clamp_list_offset(visible_height);
@@ -129,17 +207,11 @@ impl FilePicker {
                 self.clamp_list_offset(visible_height);
                 FilePickerAction::Continue
             }
-            KeyCode::Backspace | KeyCode::Left | KeyCode::Char('h') => {
-                if self.current_dir.parent().is_some() {
-                    if let Some(parent) = self.current_dir.parent() {
-                        self.current_dir = parent.to_path_buf();
-                        self.selected = 0;
-                        self.list_offset = 0;
-                        let _ = self.refresh();
-                    }
-                }
+            KeyCode::Left => {
+                self.go_parent();
                 FilePickerAction::Continue
             }
+            KeyCode::Right => self.activate(),
             KeyCode::Enter => self.activate(),
             _ => FilePickerAction::Continue,
         }
@@ -151,17 +223,7 @@ impl FilePicker {
         };
 
         if entry.is_dir {
-            let next = if entry.name == ".." {
-                self.current_dir.parent().map(Path::to_path_buf)
-            } else {
-                Some(self.current_dir.join(&entry.name))
-            };
-            if let Some(path) = next {
-                self.current_dir = path;
-                self.selected = 0;
-                self.list_offset = 0;
-                let _ = self.refresh();
-            }
+            self.enter_selected_dir();
             FilePickerAction::Continue
         } else {
             FilePickerAction::Open(self.current_dir.join(&entry.name))
@@ -182,30 +244,52 @@ impl FilePicker {
         self.activate()
     }
 
+    fn filter_label(&self) -> String {
+        if self.show_all {
+            "all files".to_string()
+        } else if self.file_extensions.is_empty() {
+            "no extensions configured".to_string()
+        } else {
+            let exts = self
+                .file_extensions
+                .iter()
+                .map(|ext| format!(".{ext}"))
+                .collect::<Vec<_>>()
+                .join(", ");
+            format!("filtered ({exts})")
+        }
+    }
+
     pub fn draw(&self, frame: &mut ratatui::Frame, area: Rect, visible_height: usize) {
+        let bottom_height = if self.command_mode { 3 } else { 1 };
         let layout = Layout::default()
             .direction(Direction::Vertical)
             .constraints([
                 Constraint::Length(3),
                 Constraint::Min(5),
-                Constraint::Length(1),
+                Constraint::Length(bottom_height),
             ])
             .split(area);
 
         let dir_display = self.current_dir.display().to_string();
         frame.render_widget(
-            Paragraph::new(dir_display)
-                .block(
-                    Block::default()
-                        .title(" Open CSV file ")
-                        .borders(Borders::ALL)
-                        .border_style(Style::default().fg(Color::Cyan)),
-                )
-                .wrap(Wrap { trim: true }),
+            Paragraph::new(vec![
+                Line::from(dir_display),
+                Line::from(Span::styled(
+                    self.filter_label(),
+                    Style::default().fg(Color::DarkGray),
+                )),
+            ])
+            .block(
+                Block::default()
+                    .title(" Open file ")
+                    .borders(Borders::ALL)
+                    .border_style(Style::default().fg(Color::Cyan)),
+            )
+            .wrap(Wrap { trim: true }),
             layout[0],
         );
 
-        let inner = Block::default().borders(Borders::ALL).inner(layout[1]);
         let mut lines = Vec::new();
         if let Some(err) = &self.error {
             lines.push(Line::from(Span::styled(
@@ -213,7 +297,11 @@ impl FilePicker {
                 Style::default().fg(Color::Red),
             )));
         } else if self.entries.is_empty() {
-            lines.push(Line::from("(empty directory)"));
+            if self.show_all {
+                lines.push(Line::from("(empty directory)"));
+            } else {
+                lines.push(Line::from("(no matching files — type :all to show all)"));
+            }
         } else {
             for i in 0..visible_height {
                 let idx = self.list_offset + i;
@@ -249,13 +337,23 @@ impl FilePicker {
             layout[1],
         );
 
-        let hints = " ↑↓ navigate  Enter open  Backspace parent  q quit ";
-        frame.render_widget(
-            Paragraph::new(hints).style(Style::default().fg(Color::DarkGray)),
-            layout[2],
-        );
-
-        let _ = inner;
+        if self.command_mode {
+            frame.render_widget(
+                Paragraph::new(self.command_buf.clone()).block(
+                    Block::default()
+                        .title(" Command ")
+                        .borders(Borders::ALL)
+                        .border_style(Style::default().fg(Color::Yellow)),
+                ),
+                layout[2],
+            );
+        } else {
+            let hints = " ↑↓ navigate  → open  ← parent  Enter open  : command  q quit ";
+            frame.render_widget(
+                Paragraph::new(hints).style(Style::default().fg(Color::DarkGray)),
+                layout[2],
+            );
+        }
     }
 }
 

@@ -61,15 +61,20 @@ Each frame: `maybe_refit_column_widths()` (when loaded row count changes), `clam
 
 ### File picker (no file on launch)
 
-Shown when `csv` or `csv tui` is run without a path:
+Shown when `csv` or `csv tui` is run without a path. By default only files
+matching `file_picker.file_extensions` in `csv-utils.json` (`.csv`, `.dat`) are
+listed; directories are always shown.
 
 | Key | Action |
 |-----|--------|
 | `↑`/`↓` or `j`/`k` | Previous / next entry |
 | `PgUp`/`PgDn` | Move selection by one page |
-| `Enter` | Open directory or load file |
-| `Backspace` / `←` / `h` | Parent directory |
-| `q` / `Esc` | Quit |
+| `→` | Enter selected directory or open file |
+| `←` | Parent directory |
+| `Enter` | Enter directory or open file |
+| `:` then `:all` / `:a` | Show all files |
+| `:` then `:filter` / `:f` | Restore extension filter |
+| `q` / `Esc` | Quit (Esc cancels a command) |
 | Click | Select entry (same as `Enter`) |
 
 ### Column info (`c`)
@@ -117,7 +122,7 @@ pixi run tui test-data/generated/test_1000x100.csv
 ./target/release/csv tui file.csv
 ```
 
-With no file argument, the TUI opens a **file picker** starting in the current working directory. Navigate directories with `Enter` / `Backspace`, select a file with `Enter`, or quit with `q`.
+With no file argument, the TUI opens a **file picker** starting in the current working directory. Only files with extensions from `csv-utils.json` (`file_picker.file_extensions`, default `.csv` and `.dat`) are listed; type `:all` to show every file. Navigate with `→` / `←` for directories, select a file with `Enter`, or quit with `q`.
 
 Press `?` in the TUI for inline help.
 

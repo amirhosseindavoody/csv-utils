@@ -9,6 +9,10 @@ pub fn default_numeric_decimal_format() -> String {
     ".3".to_string()
 }
 
+pub fn default_file_picker_extensions() -> Vec<String> {
+    vec!["csv".to_string(), "dat".to_string()]
+}
+
 pub fn default_decimal_places() -> usize {
     3
 }
@@ -34,6 +38,33 @@ pub fn normalize_decimal_format(s: &str) -> Option<String> {
 pub struct SettingsFile {
     #[serde(default)]
     pub display: DisplaySettings,
+    #[serde(default)]
+    pub file_picker: FilePickerSettings,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FilePickerSettings {
+    #[serde(default = "default_file_picker_extensions")]
+    pub file_extensions: Vec<String>,
+}
+
+impl Default for FilePickerSettings {
+    fn default() -> Self {
+        Self {
+            file_extensions: default_file_picker_extensions(),
+        }
+    }
+}
+
+impl FilePickerSettings {
+    /// Lowercase extensions without a leading dot (e.g. `csv`, `dat`).
+    pub fn normalized_extensions(&self) -> Vec<String> {
+        self.file_extensions
+            .iter()
+            .map(|ext| ext.trim().trim_start_matches('.').to_lowercase())
+            .filter(|ext| !ext.is_empty())
+            .collect()
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -54,6 +85,7 @@ impl Default for SettingsFile {
     fn default() -> Self {
         Self {
             display: DisplaySettings::default(),
+            file_picker: FilePickerSettings::default(),
         }
     }
 }
@@ -107,7 +139,22 @@ mod tests {
         env::set_current_dir(dir.path()).unwrap();
         let settings = load_or_create().unwrap();
         assert_eq!(settings.display.numeric_decimal_format, ".3");
+        assert_eq!(
+            settings.file_picker.file_extensions,
+            vec!["csv".to_string(), "dat".to_string()]
+        );
         assert!(dir.path().join(SETTINGS_FILENAME).exists());
         env::set_current_dir(prev).unwrap();
+    }
+
+    #[test]
+    fn normalizes_file_picker_extensions() {
+        let settings = FilePickerSettings {
+            file_extensions: vec![".CSV".into(), " dat ".into(), "".into()],
+        };
+        assert_eq!(
+            settings.normalized_extensions(),
+            vec!["csv".to_string(), "dat".to_string()]
+        );
     }
 }

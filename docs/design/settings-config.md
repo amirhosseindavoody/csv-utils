@@ -23,6 +23,9 @@ On first run, the file is written as pretty-printed JSON:
 {
   "display": {
     "numeric_decimal_format": ".3"
+  },
+  "file_picker": {
+    "file_extensions": ["csv", "dat"]
   }
 }
 ```
@@ -30,6 +33,7 @@ On first run, the file is written as pretty-printed JSON:
 | Field | Meaning |
 |---|---|
 | `display.numeric_decimal_format` | Default decimal format for numeric columns |
+| `file_picker.file_extensions` | File extensions shown in the TUI file picker by default (without leading dot) |
 
 ## Decimal format syntax
 
@@ -46,6 +50,16 @@ value is kept.
 
 Parsing: `settings::parse_decimal_format`.
 
+## File picker extensions
+
+The TUI file picker filters directory listings to `file_picker.file_extensions`
+by default (`.csv` and `.dat`). Directories are always shown. Override the list
+in `csv-utils.json`; values may include or omit a leading dot (`csv` and `.csv`
+are equivalent).
+
+In the picker, type **`:all`** or **`:a`** to show every file, or **`:filter`**
+/ **`:f`** to restore the configured extension filter.
+
 ## How settings are used
 
 ```text
@@ -54,7 +68,9 @@ Parsing: `settings::parse_decimal_format`.
         ▼
   AppModel.settings          ← loaded once at open
         │
-        ├── default for new columns (no per-column override)
+        ├── display.numeric_decimal_format → column decimal default
+        │
+        ├── file_picker.file_extensions → TUI file picker filter
         │
         └── column info panel shows default when override is None
 ```

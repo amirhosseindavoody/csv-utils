@@ -52,7 +52,9 @@ pub fn run(file: Option<&str>) -> Result<()> {
     let file_path = file.map(PathBuf::from);
     let mut model = AppModel::open(file_path.clone())?;
     let mut file_picker = if FilePicker::needs_picker(&file_path) {
-        Some(FilePicker::new()?)
+        Some(FilePicker::new(
+            model.settings.file_picker.normalized_extensions(),
+        )?)
     } else {
         None
     };
