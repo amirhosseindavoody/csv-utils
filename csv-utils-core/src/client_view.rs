@@ -63,7 +63,7 @@ pub struct ClientSidebarItem {
 impl AppModel {
     pub fn client_view(&self, layout: ViewLayout) -> ClientView {
         let headers = self.preview.headers();
-        let col_range = self.visible_column_range(layout.table_width);
+        let col_indices = self.visible_table_columns(layout.table_width);
         let sidebar_start = self.view.column_list_offset;
         let sidebar_end = (sidebar_start + layout.column_list_height).min(headers.len());
 
@@ -81,9 +81,9 @@ impl AppModel {
             }
             row_end = row_idx + 1;
             let row_selected = row_idx == self.view.selected_row;
-            let cells = col_range
-                .clone()
-                .map(|col_idx| {
+            let cells = col_indices
+                .iter()
+                .map(|&col_idx| {
                     let text = fields.get(col_idx).map(String::as_str).unwrap_or("");
                     let kind = self.effective_column_kind(col_idx);
                     let repr = self.numeric_repr(col_idx);
@@ -107,9 +107,9 @@ impl AppModel {
             });
         }
 
-        let columns = col_range
-            .clone()
-            .map(|col_idx| ClientColumnHeader {
+        let columns = col_indices
+            .iter()
+            .map(|&col_idx| ClientColumnHeader {
                 index: col_idx,
                 name: self.format_column_header(col_idx, &headers[col_idx]),
                 width: self.column_width_chars(col_idx) as u16,

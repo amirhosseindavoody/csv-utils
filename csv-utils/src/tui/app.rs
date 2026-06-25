@@ -1,5 +1,5 @@
 use anyhow::Result;
-use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind, MouseEventKind};
+use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseEventKind};
 use crossterm::terminal::{
     disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen,
 };
@@ -35,6 +35,7 @@ csv — keyboard shortcuts
   :open      open file or browse directory by path
   :close     close file and open file picker
   :toggle-borders  show or hide table column border lines
+  :hide      hide selected columns (Ctrl+click to multi-select)
   /          fuzzy-find columns (filters sidebar)
   :filter    filter rows on selected column, or sidebar when focused (:f)
 
@@ -395,6 +396,15 @@ fn handle_key(
                             *command_line = None;
                             *command_error = None;
                         }
+                        ":hide" => {
+                            match model.hide_selected_columns() {
+                                Ok(()) => {
+                                    *command_line = None;
+                                    *command_error = None;
+                                }
+                                Err(msg) => *command_error = Some(msg.to_string()),
+                            }
+                        }
                         _ => *command_error = Some(format!("Unknown command: {cmd}")),
                     }
                 }
@@ -609,11 +619,11 @@ fn handle_mouse(
                 return;
             }
             if let Some(hit) = hit_test_table(col, row, areas.table, model) {
-                model.view.selected_col = hit.col;
+                let extend = mouse.modifiers.contains(KeyModifiers::CONTROL);
                 if let Some(row_idx) = hit.row {
                     model.view.selected_row = row_idx;
                 }
-                model.ensure_column_list_shows_selection(column_list_height);
+                model.select_column_click(hit.col, extend, column_list_height);
             }
         }
         MouseEventKind::Down(crossterm::event::MouseButton::Left)
@@ -628,7 +638,8 @@ fn handle_mouse(
             let rel = row.saturating_sub(inner.y) as usize;
             let idx = model.view.column_list_offset + rel;
             if let Some(&col) = filtered.get(idx) {
-                model.select_sidebar_column(col, column_list_height);
+                let extend = mouse.modifiers.contains(KeyModifiers::CONTROL);
+                model.select_column_click(col, extend, column_list_height);
             }
         }
         _ => {}
@@ -644,13 +655,13 @@ struct TableHit {
 /// except the last. Matches ratatui `Table` layout with `column_spacing(1)`.
 fn visible_column_separator_offsets(
     model: &AppModel,
-    col_range: &std::ops::Range<usize>,
+    col_indices: &[usize],
 ) -> Vec<u16> {
     let mut x = 0u16;
     let mut offsets = Vec::new();
-    for (i, col_idx) in col_range.clone().enumerate() {
+    for (i, &col_idx) in col_indices.iter().enumerate() {
         x = x.saturating_add(model.column_width_chars(col_idx) as u16);
-        if i + 1 < col_range.len() {
+        if i + 1 < col_indices.len() {
             offsets.push(x);
             x = x.saturating_add(1);
         }
@@ -658,11 +669,45 @@ fn visible_column_separator_offsets(
     offsets
 }
 
+fn column_header_style(model: &AppModel, col_idx: usize) -> Style {
+    if col_idx == model.view.selected_col {
+        Style::default()
+            .fg(Color::Black)
+            .bg(Color::Cyan)
+            .add_modifier(Modifier::BOLD)
+    } else if model.is_column_multi_selected(col_idx) {
+        Style::default()
+            .fg(Color::Black)
+            .bg(Color::Blue)
+            .add_modifier(Modifier::BOLD)
+    } else {
+        Style::default().add_modifier(Modifier::BOLD)
+    }
+}
+
+fn column_sidebar_style(model: &AppModel, col_idx: usize) -> Style {
+    if col_idx == model.view.selected_col {
+        Style::default()
+            .fg(Color::Black)
+            .bg(Color::Magenta)
+            .add_modifier(Modifier::BOLD)
+    } else if model.is_column_multi_selected(col_idx) {
+        Style::default()
+            .fg(Color::Black)
+            .bg(Color::Blue)
+            .add_modifier(Modifier::BOLD)
+    } else if model.is_column_hidden(col_idx) {
+        Style::default().fg(Color::DarkGray)
+    } else {
+        Style::default()
+    }
+}
+
 fn draw_column_border_lines(
     frame: &mut ratatui::Frame,
     table_area: Rect,
     model: &AppModel,
-    col_range: &std::ops::Range<usize>,
+    col_indices: &[usize],
 ) {
     if !model.view.show_column_borders {
         return;
@@ -673,7 +718,7 @@ fn draw_column_border_lines(
     }
 
     let style = Style::default().fg(Color::Gray);
-    let sep_xs: Vec<u16> = visible_column_separator_offsets(model, col_range)
+    let sep_xs: Vec<u16> = visible_column_separator_offsets(model, col_indices)
         .into_iter()
         .map(|offset| inner.x.saturating_add(offset))
         .collect();
@@ -719,19 +764,19 @@ fn hit_test_column_resize(
         return None;
     }
 
-    let col_range = model.visible_column_range(table_area.width);
-    if col_range.is_empty() {
+    let col_indices = model.visible_table_columns(table_area.width);
+    if col_indices.is_empty() {
         return None;
     }
 
     let rel_x = mouse_x.saturating_sub(inner.x);
     let sep = model.column_separator_width();
     let mut x = 0u16;
-    for col_idx in col_range {
-        let w = model.column_width_chars(col_idx) as u16;
+    for col_idx in &col_indices {
+        let w = model.column_width_chars(*col_idx) as u16;
         let right = x.saturating_add(w);
         if rel_x + 1 >= right && rel_x <= right.saturating_add(sep) {
-            return Some(col_idx);
+            return Some(*col_idx);
         }
         x = right.saturating_add(sep);
     }
@@ -748,8 +793,8 @@ fn hit_test_table(mouse_x: u16, mouse_y: u16, table_area: Rect, model: &AppModel
         return None;
     }
 
-    let col_range = model.visible_column_range(table_area.width);
-    if col_range.is_empty() {
+    let col_indices = model.visible_table_columns(table_area.width);
+    if col_indices.is_empty() {
         return None;
     }
 
@@ -757,7 +802,7 @@ fn hit_test_table(mouse_x: u16, mouse_y: u16, table_area: Rect, model: &AppModel
     let sep = model.column_separator_width();
     let mut x = 0u16;
     let mut col_idx = None;
-    for idx in col_range.clone() {
+    for &idx in &col_indices {
         let w = model.column_width_chars(idx) as u16;
         let right = x.saturating_add(w);
         if rel_x < right {
@@ -884,7 +929,7 @@ fn draw(
     } else if let Some(command) = command_line {
         command.draw(frame, outer[2], VIEW_COMMANDS, command_error);
     } else {
-        let hints = " q quit  ↑↓ rows  ←→ cols  / columns  :filter rows  c info  ? help ";
+        let hints = " q quit  ↑↓ rows  ←→ cols  Ctrl+click multi-select  :hide  / columns  :filter  c info  ? help ";
         frame.render_widget(
             Paragraph::new(hints).style(Style::default().fg(Color::DarkGray)),
             outer[2],
@@ -922,10 +967,10 @@ fn draw_table(frame: &mut ratatui::Frame, area: Rect, model: &AppModel) {
         return;
     }
 
-    let col_range = model.visible_column_range(area.width);
-    let visible_headers: Vec<_> = col_range
-        .clone()
-        .map(|i| headers[i].as_str())
+    let col_indices = model.visible_table_columns(area.width);
+    let visible_headers: Vec<_> = col_indices
+        .iter()
+        .map(|&i| headers[i].as_str())
         .collect();
 
     let header = Row::new(
@@ -933,16 +978,9 @@ fn draw_table(frame: &mut ratatui::Frame, area: Rect, model: &AppModel) {
             .iter()
             .enumerate()
             .map(|(i, name)| {
-                let col_idx = col_range.start + i;
-                let style = if col_idx == model.view.selected_col {
-                    Style::default()
-                        .fg(Color::Black)
-                        .bg(Color::Cyan)
-                        .add_modifier(Modifier::BOLD)
-                } else {
-                    Style::default().add_modifier(Modifier::BOLD)
-                };
-                Cell::from(model.format_column_header(col_idx, name)).style(style)
+                let col_idx = col_indices[i];
+                Cell::from(model.format_column_header(col_idx, name))
+                    .style(column_header_style(model, col_idx))
             })
             .collect::<Vec<_>>(),
     )
@@ -961,10 +999,9 @@ fn draw_table(frame: &mut ratatui::Frame, area: Rect, model: &AppModel) {
             break;
         };
         let row_selected = row_idx == model.view.selected_row;
-        let cells: Vec<Cell> = col_range
-            .clone()
-            .enumerate()
-            .map(|(_i, col_idx)| {
+        let cells: Vec<Cell> = col_indices
+            .iter()
+            .map(|&col_idx| {
                 let text = fields.get(col_idx).map(String::as_str).unwrap_or("");
                 let display = model.format_column_cell(col_idx, text);
                 let mut style = Style::default();
@@ -983,9 +1020,9 @@ fn draw_table(frame: &mut ratatui::Frame, area: Rect, model: &AppModel) {
         rows.push(Row::new(cells).height(1));
     }
 
-    let widths: Vec<Constraint> = col_range
-        .clone()
-        .map(|col_idx| Constraint::Length(model.column_width_chars(col_idx) as u16))
+    let widths: Vec<Constraint> = col_indices
+        .iter()
+        .map(|&col_idx| Constraint::Length(model.column_width_chars(col_idx) as u16))
         .collect();
 
     let table = Table::new(rows, widths)
@@ -995,7 +1032,7 @@ fn draw_table(frame: &mut ratatui::Frame, area: Rect, model: &AppModel) {
         .row_highlight_style(Style::default().bg(Color::DarkGray));
 
     frame.render_widget(table, area);
-    draw_column_border_lines(frame, area, model, &col_range);
+    draw_column_border_lines(frame, area, model, &col_indices);
 }
 
 fn draw_column_list(frame: &mut ratatui::Frame, area: Rect, model: &AppModel) {
@@ -1009,17 +1046,16 @@ fn draw_column_list(frame: &mut ratatui::Frame, area: Rect, model: &AppModel) {
         if let Some(&col_idx) = filtered.get(model.view.column_list_offset + i) {
             let name = headers.get(col_idx).map(String::as_str).unwrap_or("");
             let text = model.format_sidebar_column_label(col_idx, name);
-            let display = truncate_middle(&text, inner.width as usize);
-            let style = if col_idx == model.view.selected_col {
-                Style::default()
-                    .fg(Color::Black)
-                    .bg(Color::Magenta)
-                    .add_modifier(Modifier::BOLD)
+            let display = if model.is_column_hidden(col_idx) {
+                truncate_middle(&format!("· {text}"), inner.width as usize)
             } else {
-                Style::default()
+                truncate_middle(&text, inner.width as usize)
             };
+            let style = column_sidebar_style(model, col_idx);
             let prefix = if col_idx == model.view.selected_col {
                 "▸ "
+            } else if model.is_column_multi_selected(col_idx) {
+                "◆ "
             } else {
                 "  "
             };

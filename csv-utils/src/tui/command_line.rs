@@ -70,6 +70,12 @@ pub const VIEW_COMMANDS: &[CommandSpec] = &[
         description: "Filter rows (selected column) or sidebar when focused",
         takes_args: true,
     },
+    CommandSpec {
+        primary: ":hide",
+        aliases: &[],
+        description: "Hide selected columns from the table",
+        takes_args: false,
+    },
 ];
 
 #[derive(Debug, Clone)]
@@ -376,7 +382,7 @@ mod tests {
             suggestion_index: 0,
         };
         assert_eq!(state.filtered(PICKER_COMMANDS).len(), 3);
-        assert_eq!(state.filtered(VIEW_COMMANDS).len(), 4);
+        assert_eq!(state.filtered(VIEW_COMMANDS).len(), 5);
     }
 
     #[test]
@@ -440,6 +446,16 @@ mod tests {
             action,
             CommandKeyAction::Submit(":toggle-borders".to_string())
         );
+    }
+
+    #[test]
+    fn submits_hide_without_args() {
+        let mut state = CommandLineState {
+            buf: ":hide".to_string(),
+            suggestion_index: 0,
+        };
+        let action = state.handle_key(press(KeyCode::Enter), VIEW_COMMANDS);
+        assert_eq!(action, CommandKeyAction::Submit(":hide".to_string()));
     }
 
     #[test]

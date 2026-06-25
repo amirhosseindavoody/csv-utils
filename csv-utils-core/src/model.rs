@@ -51,6 +51,10 @@ pub struct TableViewState {
     pub(crate) cached_matching_rows: Option<Vec<usize>>,
     /// Row count at the time the cache was built, used to detect new rows arriving.
     pub(crate) cached_row_count: usize,
+    /// Columns hidden from the table (still listed in the sidebar).
+    pub column_hidden: Vec<bool>,
+    /// Multi-selection for bulk column actions (Ctrl+click). Empty means use `selected_col` only.
+    pub multi_selected_cols: Vec<usize>,
 }
 
 #[derive(Debug)]
@@ -88,6 +92,8 @@ impl Default for TableViewState {
             column_info_filter_draft: String::new(),
             cached_matching_rows: None,
             cached_row_count: 0,
+            column_hidden: Vec::new(),
+            multi_selected_cols: Vec::new(),
         }
     }
 }
@@ -207,6 +213,96 @@ impl AppModel {
         if self.view.column_value_filters.len() != n {
             self.view.column_value_filters = vec![None; n];
         }
+        if self.view.column_hidden.len() != n {
+            self.view.column_hidden = vec![false; n];
+        }
+    }
+
+    pub fn is_column_hidden(&self, col: usize) -> bool {
+        self.view.column_hidden.get(col).copied().unwrap_or(false)
+    }
+
+    /// Non-hidden column indices in header order (shown in the table).
+    pub fn table_visible_columns(&self) -> Vec<usize> {
+        let n = self.preview.headers().len();
+        (0..n)
+            .filter(|&col| !self.is_column_hidden(col))
+            .collect()
+    }
+
+    pub fn is_column_multi_selected(&self, col: usize) -> bool {
+        self.view.multi_selected_cols.contains(&col)
+    }
+
+    pub fn columns_for_bulk_action(&self) -> Vec<usize> {
+        if self.view.multi_selected_cols.is_empty() {
+            vec![self.view.selected_col]
+        } else {
+            self.view.multi_selected_cols.clone()
+        }
+    }
+
+    pub fn select_column_click(&mut self, col: usize, extend: bool, column_list_height: usize) {
+        if extend {
+            if let Some(pos) = self.view.multi_selected_cols.iter().position(|&c| c == col) {
+                self.view.multi_selected_cols.remove(pos);
+            } else {
+                self.view.multi_selected_cols.push(col);
+                self.view.multi_selected_cols.sort_unstable();
+                self.view.multi_selected_cols.dedup();
+            }
+            self.view.selected_col = col;
+        } else {
+            self.view.multi_selected_cols.clear();
+            self.view.selected_col = col;
+        }
+        if let Some(pos) = self.sidebar_position_of_column(col) {
+            let height = column_list_height.max(1);
+            if pos < self.view.column_list_offset {
+                self.view.column_list_offset = pos;
+            } else if pos >= self.view.column_list_offset + height {
+                self.view.column_list_offset = pos.saturating_sub(height - 1);
+            }
+        }
+        self.clamp_column_list_offset(column_list_height);
+    }
+
+    pub fn hide_selected_columns(&mut self) -> Result<(), &'static str> {
+        self.ensure_column_state();
+        let targets: Vec<usize> = self
+            .columns_for_bulk_action()
+            .into_iter()
+            .filter(|&col| !self.is_column_hidden(col))
+            .collect();
+        if targets.is_empty() {
+            return Ok(());
+        }
+        let visible_count = self.table_visible_columns().len();
+        if targets.len() >= visible_count {
+            return Err("Cannot hide every column");
+        }
+        for col in targets {
+            if col < self.view.column_hidden.len() {
+                self.view.column_hidden[col] = true;
+            }
+        }
+        self.view
+            .multi_selected_cols
+            .retain(|&col| col < self.view.column_hidden.len() && !self.view.column_hidden[col]);
+        self.snap_selection_after_column_visibility_change();
+        Ok(())
+    }
+
+    fn snap_selection_after_column_visibility_change(&mut self) {
+        let table_cols = self.table_visible_columns();
+        if table_cols.is_empty() {
+            return;
+        }
+        if !table_cols.contains(&self.view.selected_col) {
+            self.view.selected_col = table_cols[0];
+        }
+        let max_offset = table_cols.len().saturating_sub(1);
+        self.view.col_offset = self.view.col_offset.min(max_offset);
     }
 
     pub fn decimal_format_for_column(&self, col: usize) -> &str {
@@ -878,16 +974,7 @@ impl AppModel {
     }
 
     pub fn select_sidebar_column(&mut self, col: usize, visible_height: usize) {
-        self.view.selected_col = col;
-        if let Some(pos) = self.sidebar_position_of_column(col) {
-            let height = visible_height.max(1);
-            if pos < self.view.column_list_offset {
-                self.view.column_list_offset = pos;
-            } else if pos >= self.view.column_list_offset + height {
-                self.view.column_list_offset = pos.saturating_sub(height - 1);
-            }
-        }
-        self.clamp_column_list_offset(visible_height);
+        self.select_column_click(col, false, visible_height);
     }
 
     fn column_slot_width(&self, col: usize) -> u16 {
@@ -903,7 +990,7 @@ impl AppModel {
     }
 
     pub fn max_visible_columns(&self, table_width: u16) -> usize {
-        self.visible_column_range(table_width).len().max(1)
+        self.visible_table_columns(table_width).len().max(1)
     }
 
     pub fn clamp_selection(&mut self, viewport_rows: usize, table_width: u16) {
@@ -916,6 +1003,7 @@ impl AppModel {
         let selected_pos = m.iter().position(|&r| r == sel).unwrap_or(0);
         let match_len = m.len();
         let max_cols = self.preview.headers().len().saturating_sub(1);
+        let table_cols = self.table_visible_columns();
         let max_visible = self.max_visible_columns(table_width);
 
         self.view.selected_col = self.view.selected_col.min(max_cols);
@@ -934,11 +1022,16 @@ impl AppModel {
         }
         self.view.row_offset = self.view.row_offset.min(max_offset);
 
-        if self.view.selected_col < self.view.col_offset {
-            self.view.col_offset = self.view.selected_col;
-        }
-        if max_visible > 0 && self.view.selected_col >= self.view.col_offset + max_visible {
-            self.view.col_offset = self.view.selected_col - max_visible + 1;
+        if !table_cols.is_empty() {
+            let max_col_offset = table_cols.len().saturating_sub(1);
+            self.view.col_offset = self.view.col_offset.min(max_col_offset);
+            if let Some(sel_pos) = table_cols.iter().position(|&c| c == self.view.selected_col) {
+                if sel_pos < self.view.col_offset {
+                    self.view.col_offset = sel_pos;
+                } else if max_visible > 0 && sel_pos >= self.view.col_offset + max_visible {
+                    self.view.col_offset = sel_pos.saturating_sub(max_visible - 1);
+                }
+            }
         }
     }
 
@@ -964,31 +1057,32 @@ impl AppModel {
         self.clamp_column_list_offset(height);
     }
 
-    pub fn visible_column_range(&self, table_width: u16) -> std::ops::Range<usize> {
-        let headers_len = self.preview.headers().len();
-        if headers_len == 0 {
-            return 0..0;
+    /// Column indices shown in the table viewport (non-hidden, within horizontal scroll).
+    pub fn visible_table_columns(&self, table_width: u16) -> Vec<usize> {
+        let table_cols = self.table_visible_columns();
+        if table_cols.is_empty() {
+            return Vec::new();
         }
-        let start = self.view.col_offset.min(headers_len.saturating_sub(1));
+        let start_idx = self.view.col_offset.min(table_cols.len().saturating_sub(1));
         let mut used = 0u16;
-        let mut end = start;
-        while end < headers_len {
-            let slot = self.column_slot_width(end);
-            if used > 0 && used.saturating_add(slot) > table_width {
+        let mut result = Vec::new();
+        for &col in &table_cols[start_idx..] {
+            let slot = self.column_slot_width(col);
+            if !result.is_empty() && used.saturating_add(slot) > table_width {
                 break;
             }
             used = used.saturating_add(slot);
-            end += 1;
+            result.push(col);
         }
-        if end == start {
-            end = (start + 1).min(headers_len);
+        if result.is_empty() {
+            result.push(table_cols[start_idx]);
         }
-        start..end
+        result
     }
 
     pub fn snapshot(&self, viewport_rows: usize, table_width: u16) -> ViewSnapshot {
         let headers = self.preview.headers();
-        let col_range = self.visible_column_range(table_width);
+        let col_indices = self.visible_table_columns(table_width);
 
         let mut visible_rows = Vec::new();
         let mut visible_row_indices = Vec::new();
@@ -1000,9 +1094,9 @@ impl AppModel {
             }
         }
 
-        let visible_columns = col_range
-            .clone()
-            .filter_map(|col_idx| {
+        let visible_columns = col_indices
+            .iter()
+            .filter_map(|&col_idx| {
                 let name = headers.get(col_idx)?.clone();
                 let kind = self.effective_column_kind(col_idx);
                 Some(VisibleColumn {
@@ -1140,5 +1234,47 @@ mod tests {
         let mut model = AppModel::open(Some(path)).expect("open csv");
         model.set_column_kind(0, ColumnKind::Text);
         assert_eq!(model.view.column_kinds[0], ColumnKind::Text);
+    }
+
+    #[test]
+    fn hide_selected_columns_removes_from_table() {
+        let path = PathBuf::from("test-data/generated/test_1000x100.csv");
+        if !path.exists() {
+            return;
+        }
+        let mut model = AppModel::open(Some(path)).expect("open csv");
+        model.view.multi_selected_cols = vec![0, 1];
+        model.hide_selected_columns().expect("hide");
+        assert!(model.is_column_hidden(0));
+        assert!(model.is_column_hidden(1));
+        assert!(!model.table_visible_columns().contains(&0));
+        assert_eq!(model.table_visible_columns().len(), 98);
+    }
+
+    #[test]
+    fn cannot_hide_every_column() {
+        let path = PathBuf::from("test-data/generated/test_1000x100.csv");
+        if !path.exists() {
+            return;
+        }
+        let mut model = AppModel::open(Some(path)).expect("open csv");
+        model.view.multi_selected_cols = (0..100).collect();
+        assert!(model.hide_selected_columns().is_err());
+    }
+
+    #[test]
+    fn ctrl_click_multi_select_toggles() {
+        let path = PathBuf::from("test-data/generated/test_1000x100.csv");
+        if !path.exists() {
+            return;
+        }
+        let mut model = AppModel::open(Some(path)).expect("open csv");
+        model.select_column_click(0, false, 10);
+        assert!(!model.is_column_multi_selected(0));
+        model.select_column_click(1, true, 10);
+        model.select_column_click(2, true, 10);
+        assert_eq!(model.view.multi_selected_cols, vec![1, 2]);
+        model.select_column_click(1, true, 10);
+        assert_eq!(model.view.multi_selected_cols, vec![2]);
     }
 }

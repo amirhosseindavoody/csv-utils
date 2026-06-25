@@ -2,7 +2,7 @@
 
 Living documentation for behavior, architecture, and development workflows. Update these docs in the same change as user-visible code changes.
 
-Last verified against: `main` (row-filter cache, column/row filter UI, June 2026).
+Last verified against: `main` (column hide, multi-select, row-filter cache, June 2026).
 
 ---
 
