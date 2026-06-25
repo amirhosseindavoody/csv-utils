@@ -7,7 +7,28 @@ Design and behavior: **[docs/index.md](docs/index.md)** (structured guide; [DESI
 ## Prerequisites
 
 - [Pixi](https://pixi.sh/latest/)
-- [rustup](https://rustup.rs/) (for `cargo`; pixi tasks source `$HOME/.cargo/env`)
+
+## Install with pixi
+
+In another pixi workspace, enable git source builds and add csv-utils from GitHub:
+
+```toml
+# pixi.toml
+[workspace]
+preview = ["pixi-build"]
+```
+
+```bash
+pixi add --git https://github.com/amirhosseindavoody/csv-utils.git --branch main csv-utils
+```
+
+After install, `csv` and `csv-utils-web` are available in the pixi environment.
+
+Install globally (available in the user's PATH):
+
+```bash
+pixi global install --git https://github.com/amirhosseindavoody/csv-utils.git --branch main csv-utils
+```
 
 ## Setup
 
