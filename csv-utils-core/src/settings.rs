@@ -14,7 +14,7 @@ pub fn default_numeric_decimal_format() -> String {
 }
 
 pub fn default_file_picker_extensions() -> Vec<String> {
-    vec!["csv".to_string(), "dat".to_string()]
+    Vec::new()
 }
 
 pub fn default_decimal_places() -> usize {
@@ -266,12 +266,9 @@ mod tests {
             let path = config_dir.join(SETTINGS_FILENAME);
             let (settings, created) = load_or_create_global(&path).unwrap();
             assert!(created);
-            assert_eq!(settings.display.numeric_decimal_format, ".3");
-            assert!(settings.display.show_column_borders);
-            assert_eq!(
-                settings.file_picker.file_extensions,
-                vec!["csv".to_string(), "dat".to_string()]
-            );
+        assert_eq!(settings.display.numeric_decimal_format, ".3");
+        assert!(settings.display.show_column_borders);
+        assert!(settings.file_picker.file_extensions.is_empty());
             assert!(path.exists());
         });
     }

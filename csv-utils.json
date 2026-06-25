@@ -1,11 +1,5 @@
 {
   "display": {
     "numeric_decimal_format": ".3"
-  },
-  "file_picker": {
-    "file_extensions": [
-      "csv",
-      "dat"
-    ]
   }
 }

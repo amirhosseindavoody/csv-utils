@@ -34,7 +34,7 @@ pub const PICKER_COMMANDS: &[CommandSpec] = &[
     CommandSpec {
         primary: ":filter",
         aliases: &[":f"],
-        description: "Show only configured extensions",
+        description: "Apply extension filter from settings (when configured)",
         takes_args: false,
     },
     CommandSpec {
