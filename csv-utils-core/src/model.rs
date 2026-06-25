@@ -554,22 +554,29 @@ impl AppModel {
         Ok(())
     }
 
-    /// Hide rows when the table is focused, columns when the sidebar is focused.
+    /// Hide columns when the sidebar is focused or the last arrow axis was column;
+    /// otherwise hide rows (including cell-range spans).
     pub fn hide_from_command(&mut self) -> Result<(), &'static str> {
-        if self.view.column_sidebar_focused {
+        if self.hide_command_targets_columns() {
             self.hide_selected_columns()
         } else {
             self.hide_selected_rows()
         }
     }
 
-    /// Unhide rows when the table is focused, columns when the sidebar is focused.
+    /// Unhide columns when the sidebar is focused or the last arrow axis was column;
+    /// otherwise unhide rows.
     pub fn unhide_from_command(&mut self) -> Result<(), &'static str> {
-        if self.view.column_sidebar_focused {
+        if self.hide_command_targets_columns() {
             self.unhide_selected_columns()
         } else {
             self.unhide_selected_rows()
         }
+    }
+
+    fn hide_command_targets_columns(&self) -> bool {
+        self.view.column_sidebar_focused
+            || self.view.last_multi_select_axis == MultiSelectAxis::Column
     }
 
     /// Move column selection by `delta`, skipping hidden columns.
@@ -1735,6 +1742,21 @@ mod tests {
         model.view.multi_selected_rows = vec![1];
         model.hide_from_command().expect("hide row");
         assert!(model.is_row_hidden(1));
+    }
+
+    #[test]
+    fn hide_from_command_hides_columns_when_table_has_column_axis() {
+        let path = PathBuf::from("test-data/generated/test_1000x100.csv");
+        if !path.exists() {
+            return;
+        }
+        let mut model = AppModel::open(Some(path)).expect("open csv");
+        model.view.column_sidebar_focused = false;
+        model.set_multi_select_axis(MultiSelectAxis::Column);
+        model.view.multi_selected_cols = vec![2];
+        model.hide_from_command().expect("hide column from table");
+        assert!(model.is_column_hidden(2));
+        assert!(!model.is_row_hidden(2));
     }
 
     #[test]

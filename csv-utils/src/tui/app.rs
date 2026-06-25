@@ -36,8 +36,8 @@ csv — keyboard shortcuts
   :open      open file or browse directory by path
   :close     close file and open file picker
   :toggle-borders  show or hide table column border lines
-  :hide / :h  hide selected rows (table) or columns (sidebar); Ctrl+click/drag cell range
-  :unhide / :u  unhide selected or all hidden rows (table) or columns (sidebar)
+  :hide / :h  hide selected columns (←/→ or sidebar) or rows (↑/↓); Ctrl+click/drag cell range
+  :unhide / :u  unhide selected or all hidden columns/rows (same axis as :hide)
   /          fuzzy-find columns (filters sidebar)
   :filter    filter rows on selected column, or sidebar when focused (:f)
 
