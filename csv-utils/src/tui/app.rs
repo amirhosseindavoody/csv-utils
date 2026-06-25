@@ -20,7 +20,7 @@ use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
 use crate::tui::command_line::{CommandKeyAction, CommandLineState, VIEW_COMMANDS};
-use crate::tui::file_picker::{FilePicker, FilePickerAction};
+use crate::tui::file_picker::{FilePicker, FilePickerAction, resolve_path};
 
 const HELP_TEXT: &str = "\
 csv — keyboard shortcuts
@@ -31,6 +31,7 @@ csv — keyboard shortcuts
   PgUp/PgDn  scroll 10 rows
   c          column info (type, stats, format)
   ?          this help
+  :open      open file or browse directory by path
   :close     close file and open file picker
 
 Mouse: click table cells, column info options, or column header borders to resize; wheel on table scrolls rows; wheel on column list scrolls columns.
@@ -41,6 +42,7 @@ enum MainKeyAction {
     Continue,
     Quit,
     CloseFile,
+    OpenPath(PathBuf),
 }
 
 struct LayoutAreas {
@@ -179,6 +181,21 @@ pub fn run(file: Option<&str>) -> Result<()> {
                             command_line = None;
                             command_error = None;
                         }
+                        MainKeyAction::OpenPath(path) => {
+                            let extensions = model.settings.file_picker.normalized_extensions();
+                            if path.is_dir() {
+                                model.close_file()?;
+                                file_picker = Some(FilePicker::in_dir(path, extensions, None)?);
+                            } else if path.is_file() {
+                                model.reopen(path)?;
+                            } else {
+                                command_error =
+                                    Some(format!("Path not found: {}", path.display()));
+                                continue;
+                            }
+                            command_line = None;
+                            command_error = None;
+                        }
                     }
                 }
                 Event::Mouse(mouse) => {
@@ -238,13 +255,36 @@ fn handle_key(
                 *command_error = Some("No matching command".to_string());
             }
             CommandKeyAction::Submit(cmd) => {
-                match cmd.as_str() {
-                    ":close" => {
-                        *command_line = None;
-                        *command_error = None;
-                        return MainKeyAction::CloseFile;
+                if let Some(path_str) = cmd.strip_prefix(":open ") {
+                    let path_str = path_str.trim();
+                    if path_str.is_empty() {
+                        *command_error = Some(":open requires a path".to_string());
+                        return MainKeyAction::Continue;
                     }
-                    _ => *command_error = Some(format!("Unknown command: {cmd}")),
+                    let base = model
+                        .file_path
+                        .as_ref()
+                        .and_then(|p| p.parent())
+                        .filter(|p| !p.as_os_str().is_empty());
+                    match resolve_path(path_str, base) {
+                        Ok(path) => {
+                            *command_line = None;
+                            *command_error = None;
+                            return MainKeyAction::OpenPath(path);
+                        }
+                        Err(err) => {
+                            *command_error = Some(format!("Invalid path: {err}"));
+                        }
+                    }
+                } else {
+                    match cmd.as_str() {
+                        ":close" => {
+                            *command_line = None;
+                            *command_error = None;
+                            return MainKeyAction::CloseFile;
+                        }
+                        _ => *command_error = Some(format!("Unknown command: {cmd}")),
+                    }
                 }
             }
         }

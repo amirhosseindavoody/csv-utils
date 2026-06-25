@@ -59,6 +59,7 @@ Each frame: `maybe_refit_column_widths()` (when loaded row count changes), `clam
 | `c` | Open column info panel |
 | `?` | Help overlay |
 | `:` | Open command line (filtered suggestions, Tab complete) |
+| `:` then `:open <path>` | Open another file, or browse a directory in the file picker |
 | `:` then `:close` | Close file and return to file picker (in last file's directory) |
 
 Command line keys: **↑/↓** select suggestion, **Tab** complete, **Enter** run, **Esc** cancel.

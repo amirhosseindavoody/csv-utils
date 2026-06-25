@@ -41,12 +41,20 @@ pub const PICKER_COMMANDS: &[CommandSpec] = &[
     },
 ];
 
-pub const VIEW_COMMANDS: &[CommandSpec] = &[CommandSpec {
-    primary: ":close",
-    aliases: &[],
-    description: "Close file and open file picker",
-    takes_args: false,
-}];
+pub const VIEW_COMMANDS: &[CommandSpec] = &[
+    CommandSpec {
+        primary: ":open",
+        aliases: &[],
+        description: "Open file or browse directory  (:open path)",
+        takes_args: true,
+    },
+    CommandSpec {
+        primary: ":close",
+        aliases: &[],
+        description: "Close file and open file picker",
+        takes_args: false,
+    },
+];
 
 #[derive(Debug, Clone)]
 pub struct CommandLineState {
@@ -286,7 +294,7 @@ mod tests {
             suggestion_index: 0,
         };
         assert_eq!(state.filtered(PICKER_COMMANDS).len(), 3);
-        assert_eq!(state.filtered(VIEW_COMMANDS).len(), 1);
+        assert_eq!(state.filtered(VIEW_COMMANDS).len(), 2);
     }
 
     #[test]

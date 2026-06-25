@@ -9,6 +9,18 @@ use std::path::PathBuf;
 
 use crate::tui::command_line::{CommandKeyAction, CommandLineState, PICKER_COMMANDS};
 
+pub fn resolve_path(path_str: &str, base: Option<&std::path::Path>) -> io::Result<PathBuf> {
+    let path = PathBuf::from(path_str);
+    let abs = if path.is_absolute() {
+        path
+    } else if let Some(base) = base.filter(|p| !p.as_os_str().is_empty()) {
+        base.join(path)
+    } else {
+        std::env::current_dir()?.join(path)
+    };
+    normalize_dir(abs)
+}
+
 fn normalize_dir(path: PathBuf) -> io::Result<PathBuf> {
     let abs = if path.is_absolute() {
         path
@@ -185,14 +197,7 @@ impl FilePicker {
     }
 
     fn resolve_user_path(&self, path_str: &str) -> PathBuf {
-        let path = PathBuf::from(path_str);
-        if path.is_absolute() {
-            path
-        } else {
-            normalize_dir(self.current_dir.clone())
-                .unwrap_or_else(|_| self.current_dir.clone())
-                .join(path)
-        }
+        resolve_path(path_str, Some(&self.current_dir)).unwrap_or_else(|_| self.current_dir.clone())
     }
 
     fn handle_command_submit(&mut self, cmd: &str) -> FilePickerAction {
