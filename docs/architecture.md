@@ -47,7 +47,7 @@ Interactive UIs do not duplicate CSV state. They use:
 
 | Type | Location | Role |
 |------|----------|------|
-| `AppModel` | `model.rs` | File path, `PreviewData`, `TableViewState`, scan thread |
+| `AppModel` | `model.rs` | File path, `PreviewData`, `TableViewState`, merged settings, scan thread |
 | `TableViewState` | `model.rs` | Selection, scroll offsets, column widths, UI flags, filter state, row-filter cache |
 | `ViewAction` | `actions.rs` | Keyboard/mouse-style mutations (row/col delta, resize, etc.) |
 | `ViewLayout` | `actions.rs` | Viewport dimensions for clamping (rows, table width, sidebar height) |
@@ -90,6 +90,7 @@ csv-utils-core/src/
   column.rs               # ColumnKind, value-based type inference
   display.rs              # truncate_middle, numeric rescaling, format_cell_for_column
   model.rs                # AppModel, TableViewState, row-filter cache, auto-fit
+  settings.rs             # layered global + local csv-utils.json load/merge
   actions.rs              # ViewAction, apply_action
   client_view.rs          # ClientView JSON
   fuzzy.rs                # fuzzy_score (subsequence), rank_by_fuzzy
@@ -112,5 +113,5 @@ csv-utils-web/src/
 
 - [Data loading](reference/data-loading.md) — preview APIs and threading
 - [CSV parsing](reference/csv-parsing.md) — `csv` crate parsing and display rules
-- [Row filtering design](design/row-filtering.md) — filter evaluation, caching, and performance
+- [Settings config](design/settings-config.md) — global home config + local overrides
 - [Build & packaging](development/build.md) — pixi tasks and conda recipe

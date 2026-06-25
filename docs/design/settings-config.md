@@ -2,22 +2,81 @@
 
 Status: **implemented**.
 
-csv-utils reads a JSON settings file from the **current working directory** when
-TUI or web starts. If the file is missing, it is created with documented defaults.
+csv-utils loads settings from a **global** file in the user config directory, then
+applies optional **local** overrides from the process working directory. Local
+fields win over global fields at each JSON key (deep merge for nested objects).
 
-## File location and name
+## File locations
 
-| Property | Value |
+| Layer | Path | Role |
+|---|---|---|
+| **Global** | `~/.config/csv-utils/csv-utils.json` | User defaults; created on first TUI/web open if missing |
+| **Local** | `./csv-utils.json` (cwd at startup) | Optional project overrides; never auto-created |
+
+Resolution order:
+
+1. Load global (or create with defaults when the global file is missing).
+2. If `./csv-utils.json` exists in the working directory, merge it on top.
+3. Use the merged result in `AppModel.settings`.
+
+Environment overrides (mainly for tests):
+
+| Variable | Effect |
 |---|---|
-| Filename | `csv-utils.json` |
-| Directory | Process working directory at startup |
-| Created when | First successful `AppModel::open` (TUI / web) if file absent |
+| `CSV_UTILS_CONFIG_DIR` | Directory for the global settings file instead of `~/.config/csv-utils` |
+| `XDG_CONFIG_HOME` | When set, global dir is `$XDG_CONFIG_HOME/csv-utils` |
+| `HOME` | Fallback: `$HOME/.config/csv-utils` |
 
-Implementation: `csv-utils-core/src/settings.rs`
+Implementation: `csv-utils-core/src/settings.rs` (`load_merged`, `merge_settings`).
+
+## Merge semantics
+
+Merge is **field-level** on JSON objects:
+
+- Top-level keys (`display`, `file_picker`) merge recursively.
+- Leaf values in the local file replace the global value.
+- Keys omitted in the local file keep the global value.
+
+Example:
+
+**Global** (`~/.config/csv-utils/csv-utils.json`):
+
+```json
+{
+  "display": {
+    "numeric_decimal_format": ".2",
+    "show_column_borders": true
+  },
+  "file_picker": {
+    "file_extensions": ["csv", "dat"]
+  }
+}
+```
+
+**Local** (`./csv-utils.json` in a project directory):
+
+```json
+{
+  "display": {
+    "numeric_decimal_format": ".5"
+  },
+  "file_picker": {
+    "file_extensions": ["tsv", "csv"]
+  }
+}
+```
+
+**Merged result:**
+
+| Field | Value | Source |
+|---|---|---|
+| `display.numeric_decimal_format` | `.5` | local |
+| `display.show_column_borders` | `true` | global (unchanged) |
+| `file_picker.file_extensions` | `["tsv", "csv"]` | local (whole array replaced) |
 
 ## Default contents
 
-On first run, the file is written as pretty-printed JSON:
+When the global file is created for the first time:
 
 ```json
 {
@@ -55,9 +114,9 @@ Parsing: `settings::parse_decimal_format`.
 ## File picker extensions
 
 The TUI file picker filters directory listings to `file_picker.file_extensions`
-by default (`.csv` and `.dat`). Directories are always shown. Override the list
-in `csv-utils.json`; values may include or omit a leading dot (`csv` and `.csv`
-are equivalent).
+by default (`.csv` and `.dat`). Directories are always shown. Override globally
+or per-project in the respective `csv-utils.json`; values may include or omit a
+leading dot (`csv` and `.csv` are equivalent).
 
 In the picker, type **`:all`** or **`:a`** to show every file, or **`:filter`**
 / **`:f`** to restore the configured extension filter.
@@ -65,10 +124,13 @@ In the picker, type **`:all`** or **`:a`** to show every file, or **`:filter`**
 ## How settings are used
 
 ```text
-  csv-utils.json (cwd)
-        │
-        ▼
-  AppModel.settings          ← loaded once at open
+  ~/.config/csv-utils/csv-utils.json   (global; created if missing)
+              │
+              ▼ deep merge (local wins per field)
+  ./csv-utils.json                     (optional local overrides)
+              │
+              ▼
+  AppModel.settings                    ← loaded once at open
         │
         ├── display.numeric_decimal_format → column decimal default
         │
@@ -81,11 +143,12 @@ In the picker, type **`:all`** or **`:a`** to show every file, or **`:filter`**
 
 | Scope | Storage | Lifetime |
 |---|---|---|
-| **Global default** | `csv-utils.json` | Persistent on disk |
+| **Global defaults** | `~/.config/csv-utils/csv-utils.json` | Persistent; auto-created on first open |
+| **Project overrides** | `./csv-utils.json` | Optional; manual edit only |
 | **Per-column override** | `TableViewState.column_decimal_formats` | Session only (cleared on new file) |
 
 Per-column overrides are set in the column info panel (`c` → **Decimal places**
-text field). They do not write back to `csv-utils.json` automatically.
+text field). They do not write back to either settings file automatically.
 
 ## Column info panel
 
@@ -93,7 +156,7 @@ When the column is numeric (int/float, or inferred as such):
 
 1. **Type** — text / date / int / float / auto
 2. **Representation** — general / scientific
-3. **Decimal places** — text input, default from config (e.g. `.3`)
+3. **Decimal places** — text input, default from merged config (e.g. `.3`)
 
 TUI: focus the row, press **Enter** to edit, type (e.g. `.5`), **Enter** to apply.
 
@@ -105,9 +168,22 @@ Display code uses the resolved format when formatting cells (`display.rs`).
 
 | Situation | Behavior |
 |---|---|
-| File missing | Create with defaults |
-| File unreadable / invalid JSON | Use in-memory defaults; do not overwrite |
-| Cannot create file (read-only cwd) | Use in-memory defaults silently |
+| Global file missing | Create global file with defaults |
+| Global unreadable / invalid JSON | Use in-memory defaults; do not overwrite |
+| Cannot create global file (read-only home) | Use in-memory defaults silently |
+| Local file missing | Use global settings only |
+| Local unreadable / invalid JSON | Ignore local file; use global settings only |
+| Local present but empty `{}` | Same as global (no overrides) |
+
+## Migration from cwd-only config
+
+Older releases wrote `./csv-utils.json` in the working directory only. That file
+still works as a **local override**. On first run after this change, a global file
+is created in the home config directory; existing project-level `csv-utils.json`
+files continue to override it when you launch csv-utils from that directory.
+
+To promote a project file to global defaults, copy its contents to
+`~/.config/csv-utils/csv-utils.json` and trim any keys you do not want globally.
 
 ## Future extensions
 
@@ -116,6 +192,7 @@ The JSON schema is intentionally small. Likely additions:
 - Persist per-column overrides under a `columns` key
 - Theme / TUI defaults
 - CLI default limits
+- Explicit `settings save` command to write session changes back to global or local
 
 New fields should use `#[serde(default)]` so older config files keep working.
 

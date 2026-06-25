@@ -64,7 +64,7 @@ Example action:
 {"action": "set_column_decimal_format", "value": {"col": 0, "format": ".3"}}
 ```
 
-On startup, `csv-utils.json` in the working directory is loaded or created with defaults (see [settings config](../design/settings-config.md)).
+On startup, settings are loaded from `~/.config/csv-utils/csv-utils.json` with optional `./csv-utils.json` overrides in the working directory (see [settings config](../design/settings-config.md)).
 
 The page polls `/api/state` while the background scan runs (`scan_done: false`).
 
