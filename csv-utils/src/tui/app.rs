@@ -246,13 +246,19 @@ fn handle_key(
 ) -> MainKeyAction {
     if let Some(command) = command_line.as_mut() {
         match command.handle_key(key, VIEW_COMMANDS) {
-            CommandKeyAction::Continue => {}
+            CommandKeyAction::Continue => {
+                *command_error = None;
+            }
             CommandKeyAction::Cancel => {
                 *command_line = None;
                 *command_error = None;
             }
             CommandKeyAction::Rejected => {
-                *command_error = Some("No matching command".to_string());
+                *command_error = Some(
+                    command
+                        .rejection_message(VIEW_COMMANDS)
+                        .to_string(),
+                );
             }
             CommandKeyAction::Submit(cmd) => {
                 if let Some(path_str) = cmd.strip_prefix(":open ") {

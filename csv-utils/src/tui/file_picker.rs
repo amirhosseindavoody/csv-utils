@@ -237,13 +237,17 @@ impl FilePicker {
     pub fn handle_key(&mut self, key: KeyEvent, visible_height: usize) -> FilePickerAction {
         if let Some(command) = self.command_line.as_mut() {
             match command.handle_key(key, PICKER_COMMANDS) {
-                CommandKeyAction::Continue => {}
+                CommandKeyAction::Continue => {
+                    self.command_error = None;
+                }
                 CommandKeyAction::Cancel => {
                     self.command_line = None;
                     self.command_error = None;
                 }
                 CommandKeyAction::Rejected => {
-                    self.command_error = Some("No matching command".to_string());
+                    self.command_error = Some(
+                        command.rejection_message(PICKER_COMMANDS).to_string(),
+                    );
                 }
                 CommandKeyAction::Submit(cmd) => {
                     self.command_error = None;

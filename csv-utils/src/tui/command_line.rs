@@ -8,7 +8,7 @@ pub struct CommandSpec {
     pub primary: &'static str,
     pub aliases: &'static [&'static str],
     pub description: &'static str,
-    /// When true, Enter submits the full buffer (e.g. `:open path/to/file`).
+    /// When true, Enter selects the command first, then waits for a path argument.
     pub takes_args: bool,
 }
 
@@ -17,6 +17,10 @@ impl CommandSpec {
         let mut names = vec![self.primary];
         names.extend_from_slice(self.aliases);
         names
+    }
+
+    fn arg_prefix(&self) -> String {
+        format!("{} ", self.primary)
     }
 }
 
@@ -36,7 +40,7 @@ pub const PICKER_COMMANDS: &[CommandSpec] = &[
     CommandSpec {
         primary: ":open",
         aliases: &[],
-        description: "Open file by path  (:open path/to/file.csv)",
+        description: "Open file by path",
         takes_args: true,
     },
 ];
@@ -45,7 +49,7 @@ pub const VIEW_COMMANDS: &[CommandSpec] = &[
     CommandSpec {
         primary: ":open",
         aliases: &[],
-        description: "Open file or browse directory  (:open path)",
+        description: "Open file or browse directory by path",
         takes_args: true,
     },
     CommandSpec {
@@ -78,7 +82,24 @@ impl CommandLineState {
         }
     }
 
+    pub fn in_args_entry_mode(&self, commands: &[CommandSpec]) -> bool {
+        commands.iter().any(|cmd| {
+            cmd.takes_args && self.buf.starts_with(&cmd.arg_prefix())
+        })
+    }
+
+    pub fn rejection_message(&self, commands: &[CommandSpec]) -> &'static str {
+        if self.in_args_entry_mode(commands) {
+            "Path required"
+        } else {
+            "No matching command"
+        }
+    }
+
     pub fn filtered<'a>(&self, commands: &'a [CommandSpec]) -> Vec<&'a CommandSpec> {
+        if self.in_args_entry_mode(commands) {
+            return Vec::new();
+        }
         let query = self.buf.trim().to_ascii_lowercase();
         if query == ":" {
             return commands.iter().collect();
@@ -88,14 +109,16 @@ impl CommandLineState {
             .iter()
             .filter(|cmd| {
                 cmd.names().iter().any(|name| {
-                    name.to_ascii_lowercase()
-                        .starts_with(command_part)
+                    name.to_ascii_lowercase().starts_with(command_part)
                 })
             })
             .collect()
     }
 
     pub fn panel_height(&self, commands: &[CommandSpec]) -> u16 {
+        if self.in_args_entry_mode(commands) {
+            return 5;
+        }
         let matches = self.filtered(commands);
         let lines = 1 + matches.len().clamp(1, 5);
         (lines + 2) as u16
@@ -110,18 +133,31 @@ impl CommandLineState {
         match key.code {
             KeyCode::Esc => CommandKeyAction::Cancel,
             KeyCode::Enter => {
-                if let Some(submitted) = self.resolve_submit(&matches) {
-                    CommandKeyAction::Submit(submitted)
-                } else {
-                    CommandKeyAction::Rejected
+                if self.in_args_entry_mode(commands) {
+                    return if let Some(submitted) = self.resolve_args_submit(commands) {
+                        CommandKeyAction::Submit(submitted)
+                    } else {
+                        CommandKeyAction::Rejected
+                    };
                 }
+                if let Some(cmd) = self.resolve_select_for_enter(&matches) {
+                    if cmd.takes_args {
+                        self.buf = cmd.arg_prefix();
+                        self.suggestion_index = 0;
+                        return CommandKeyAction::Continue;
+                    }
+                    return CommandKeyAction::Submit(cmd.primary.to_string());
+                }
+                CommandKeyAction::Rejected
             }
             KeyCode::Tab => {
-                self.autocomplete(&matches);
+                if !self.in_args_entry_mode(commands) {
+                    self.autocomplete(&matches);
+                }
                 CommandKeyAction::Continue
             }
             KeyCode::Up | KeyCode::Char('k') => {
-                if !matches.is_empty() {
+                if !self.in_args_entry_mode(commands) && !matches.is_empty() {
                     self.suggestion_index = self
                         .suggestion_index
                         .checked_sub(1)
@@ -130,7 +166,7 @@ impl CommandLineState {
                 CommandKeyAction::Continue
             }
             KeyCode::Down | KeyCode::Char('j') => {
-                if !matches.is_empty() {
+                if !self.in_args_entry_mode(commands) && !matches.is_empty() {
                     self.suggestion_index = (self.suggestion_index + 1) % matches.len();
                 }
                 CommandKeyAction::Continue
@@ -152,26 +188,36 @@ impl CommandLineState {
         }
     }
 
-    fn resolve_submit(&self, matches: &[&CommandSpec]) -> Option<String> {
-        let raw = self.buf.trim();
-        let query = raw.to_ascii_lowercase();
-
-        for cmd in matches {
+    fn resolve_args_submit(&self, commands: &[CommandSpec]) -> Option<String> {
+        for cmd in commands {
             if !cmd.takes_args {
                 continue;
             }
-            let prefix = format!("{} ", cmd.primary);
-            if query.starts_with(&prefix.to_ascii_lowercase()) {
-                let args = raw[prefix.len()..].trim();
+            let prefix = cmd.arg_prefix();
+            if self.buf.starts_with(&prefix) {
+                let args = self.buf[prefix.len()..].trim();
                 if !args.is_empty() {
-                    return Some(raw.to_string());
+                    return Some(self.buf.trim().to_string());
                 }
                 return None;
             }
-            if query == cmd.primary.to_ascii_lowercase() {
-                return None;
-            }
         }
+        None
+    }
+
+    fn clamped_suggestion_index(&self, match_count: usize) -> usize {
+        if match_count == 0 {
+            0
+        } else {
+            self.suggestion_index.min(match_count - 1)
+        }
+    }
+
+    fn resolve_select_for_enter<'a>(
+        &self,
+        matches: &'a [&'a CommandSpec],
+    ) -> Option<&'a CommandSpec> {
+        let query = self.buf.trim().to_ascii_lowercase();
 
         for cmd in matches {
             if cmd
@@ -179,16 +225,15 @@ impl CommandLineState {
                 .iter()
                 .any(|name| name.to_ascii_lowercase() == query)
             {
-                return Some(cmd.primary.to_string());
+                return Some(cmd);
             }
         }
-        if matches.len() == 1 && !matches[0].takes_args {
-            return Some(matches[0].primary.to_string());
+
+        if !matches.is_empty() {
+            return Some(matches[self.clamped_suggestion_index(matches.len())]);
         }
-        matches
-            .get(self.suggestion_index)
-            .filter(|cmd| !cmd.takes_args)
-            .map(|cmd| cmd.primary.to_string())
+
+        None
     }
 
     fn autocomplete(&mut self, matches: &[&CommandSpec]) {
@@ -200,9 +245,8 @@ impl CommandLineState {
             return;
         };
         if cmd.takes_args {
-            let prefix = format!("{} ", cmd.primary);
-            if !self.buf.to_ascii_lowercase().starts_with(&prefix.to_ascii_lowercase()) {
-                self.buf = prefix;
+            if !self.buf.starts_with(&cmd.arg_prefix()) {
+                self.buf = cmd.arg_prefix();
             }
         } else {
             self.buf = cmd.primary.to_string();
@@ -227,6 +271,11 @@ impl CommandLineState {
                 err.to_string(),
                 Style::default().fg(Color::Red),
             )));
+        } else if self.in_args_entry_mode(commands) {
+            lines.push(Line::from(Span::styled(
+                "Type or paste path, then Enter",
+                Style::default().fg(Color::DarkGray),
+            )));
         } else if matches.is_empty() {
             lines.push(Line::from(Span::styled(
                 "(no matching commands)",
@@ -234,7 +283,7 @@ impl CommandLineState {
             )));
         } else {
             for (idx, cmd) in matches.iter().take(5).enumerate() {
-                let selected = idx == self.suggestion_index;
+                let selected = idx == self.clamped_suggestion_index(matches.len());
                 let marker = if selected { "▸ " } else { "  " };
                 let name_style = if selected {
                     Style::default()
@@ -249,9 +298,13 @@ impl CommandLineState {
                 } else {
                     format!(" ({})", cmd.aliases.join(", "))
                 };
+                let arg_hint = if cmd.takes_args { " …" } else { "" };
                 lines.push(Line::from(vec![
                     Span::raw(marker),
-                    Span::styled(format!("{}{alias_hint}", cmd.primary), name_style),
+                    Span::styled(
+                        format!("{}{alias_hint}{arg_hint}", cmd.primary),
+                        name_style,
+                    ),
                     Span::styled(
                         format!("  {}", cmd.description),
                         Style::default().fg(Color::DarkGray),
@@ -275,6 +328,16 @@ impl CommandLineState {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyEventState};
+
+    fn press(code: KeyCode) -> KeyEvent {
+        KeyEvent {
+            code,
+            modifiers: crossterm::event::KeyModifiers::empty(),
+            kind: KeyEventKind::Press,
+            state: KeyEventState::empty(),
+        }
+    }
 
     #[test]
     fn filters_commands_by_prefix() {
@@ -298,35 +361,66 @@ mod tests {
     }
 
     #[test]
-    fn resolves_single_match_on_submit() {
-        let state = CommandLineState {
-            buf: ":cl".to_string(),
+    fn selects_open_then_waits_for_path() {
+        let mut state = CommandLineState {
+            buf: ":open".to_string(),
             suggestion_index: 0,
         };
-        let matches = state.filtered(VIEW_COMMANDS);
-        assert_eq!(state.resolve_submit(&matches), Some(":close".to_string()));
-    }
+        let action = state.handle_key(press(KeyCode::Enter), PICKER_COMMANDS);
+        assert_eq!(action, CommandKeyAction::Continue);
+        assert_eq!(state.buf, ":open ");
+        assert!(state.in_args_entry_mode(PICKER_COMMANDS));
 
-    #[test]
-    fn resolves_open_with_path() {
-        let state = CommandLineState {
-            buf: ":open data/file.csv".to_string(),
-            suggestion_index: 0,
-        };
-        let matches = state.filtered(PICKER_COMMANDS);
+        state.buf.push_str("data/file.csv");
+        let action = state.handle_key(press(KeyCode::Enter), PICKER_COMMANDS);
         assert_eq!(
-            state.resolve_submit(&matches),
-            Some(":open data/file.csv".to_string())
+            action,
+            CommandKeyAction::Submit(":open data/file.csv".to_string())
         );
     }
 
     #[test]
-    fn rejects_open_without_path() {
-        let state = CommandLineState {
-            buf: ":open".to_string(),
+    fn rejects_empty_path_after_selecting_open() {
+        let mut state = CommandLineState {
+            buf: ":open ".to_string(),
             suggestion_index: 0,
         };
-        let matches = state.filtered(PICKER_COMMANDS);
-        assert_eq!(state.resolve_submit(&matches), None);
+        let action = state.handle_key(press(KeyCode::Enter), PICKER_COMMANDS);
+        assert_eq!(action, CommandKeyAction::Rejected);
+        assert_eq!(state.rejection_message(PICKER_COMMANDS), "Path required");
+    }
+
+    #[test]
+    fn submits_close_without_args_step() {
+        let mut state = CommandLineState {
+            buf: ":close".to_string(),
+            suggestion_index: 0,
+        };
+        let action = state.handle_key(press(KeyCode::Enter), VIEW_COMMANDS);
+        assert_eq!(action, CommandKeyAction::Submit(":close".to_string()));
+    }
+
+    #[test]
+    fn selects_highlighted_command_when_only_colon_typed() {
+        let mut state = CommandLineState {
+            buf: ":".to_string(),
+            suggestion_index: 0,
+        };
+        state.handle_key(press(KeyCode::Down), PICKER_COMMANDS);
+        let action = state.handle_key(press(KeyCode::Enter), PICKER_COMMANDS);
+        assert_eq!(action, CommandKeyAction::Submit(":filter".to_string()));
+    }
+
+    #[test]
+    fn selects_highlighted_open_from_colon_via_arrows() {
+        let mut state = CommandLineState {
+            buf: ":".to_string(),
+            suggestion_index: 0,
+        };
+        state.handle_key(press(KeyCode::Down), PICKER_COMMANDS);
+        state.handle_key(press(KeyCode::Down), PICKER_COMMANDS);
+        let action = state.handle_key(press(KeyCode::Enter), PICKER_COMMANDS);
+        assert_eq!(action, CommandKeyAction::Continue);
+        assert_eq!(state.buf, ":open ");
     }
 }

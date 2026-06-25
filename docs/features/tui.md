@@ -62,7 +62,7 @@ Each frame: `maybe_refit_column_widths()` (when loaded row count changes), `clam
 | `:` then `:open <path>` | Open another file, or browse a directory in the file picker |
 | `:` then `:close` | Close file and return to file picker (in last file's directory) |
 
-Command line keys: **↑/↓** select suggestion, **Tab** complete, **Enter** run, **Esc** cancel.
+Command line keys: **↑/↓** select suggestion, **Tab** complete, **Enter** run (for `:open`, Enter selects the command first, then type/paste the path and press **Enter** again), **Esc** cancel.
 
 ### File picker (no file on launch)
 
@@ -83,7 +83,7 @@ listed; directories are always shown.
 | `q` / `Esc` | Quit (Esc cancels a command) |
 | Click | Select entry (same as `Enter`) |
 
-Command line keys: **↑/↓** select suggestion, **Tab** complete, **Enter** run, **Esc** cancel.
+Command line keys: **↑/↓** select suggestion, **Tab** complete, **Enter** run (for `:open`, Enter selects the command first, then type/paste the path and press **Enter** again), **Esc** cancel.
 
 ### Column info (`c`)
 
