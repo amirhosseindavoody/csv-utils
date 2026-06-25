@@ -37,6 +37,7 @@ csv — keyboard shortcuts
   :close     close file and open file picker
   :toggle-borders  show or hide table column border lines
   :hide / :h  hide selected rows (table) or columns (sidebar); Ctrl+click/drag cell range
+  :unhide / :u  unhide selected or all hidden rows (table) or columns (sidebar)
   /          fuzzy-find columns (filters sidebar)
   :filter    filter rows on selected column, or sidebar when focused (:f)
 
@@ -412,6 +413,15 @@ fn handle_key(
                                 Err(msg) => *command_error = Some(msg.to_string()),
                             }
                         }
+                        ":unhide" | ":u" => {
+                            match model.unhide_from_command() {
+                                Ok(()) => {
+                                    *command_line = None;
+                                    *command_error = None;
+                                }
+                                Err(msg) => *command_error = Some(msg.to_string()),
+                            }
+                        }
                         _ => *command_error = Some(format!("Unknown command: {cmd}")),
                     }
                 }
@@ -501,14 +511,12 @@ fn handle_key(
         KeyCode::Left | KeyCode::Char('h') => {
             model.view.column_sidebar_focused = false;
             model.set_multi_select_axis(MultiSelectAxis::Column);
-            model.view.selected_col = model.view.selected_col.saturating_sub(1);
-            model.ensure_column_list_shows_selection(column_list_height);
+            model.move_selected_column(-1, column_list_height);
         }
         KeyCode::Right | KeyCode::Char('l') => {
             model.view.column_sidebar_focused = false;
             model.set_multi_select_axis(MultiSelectAxis::Column);
-            model.view.selected_col = model.view.selected_col.saturating_add(1);
-            model.ensure_column_list_shows_selection(column_list_height);
+            model.move_selected_column(1, column_list_height);
         }
         KeyCode::PageUp => {
             model.view.column_sidebar_focused = false;
@@ -1092,7 +1100,7 @@ fn draw(
     } else if let Some(command) = command_line {
         command.draw(frame, outer[2], VIEW_COMMANDS, command_error);
     } else {
-        let hints = " q quit  Space multi-select  Ctrl+click  :hide  / columns  :filter  c info  ? help ";
+        let hints = " q quit  Space multi-select  Ctrl+click  :hide  :unhide  / columns  :filter  c info  ? help ";
         frame.render_widget(
             Paragraph::new(hints).style(Style::default().fg(Color::DarkGray)),
             outer[2],
