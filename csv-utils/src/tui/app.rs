@@ -41,7 +41,7 @@ csv — keyboard shortcuts
   /          fuzzy-find columns (filters sidebar)
   :filter    filter rows on selected column, or sidebar when focused (:f)
 
-Mouse: click table cells; Ctrl+click or Ctrl+drag on cells to select a range; Ctrl+click column header or sidebar for column multi-select; drag header borders to resize; wheel scrolls rows/columns.
+Mouse: click table cells; Ctrl+click or Ctrl+drag on cells to select a range; Ctrl+click column header or sidebar for column multi-select; drag header borders to resize columns; drag sidebar left border to resize sidebar; wheel scrolls rows/columns. Click sidebar to focus it — then ↑/↓ navigate columns.
 
 Press q or ? to close.";
 
@@ -64,6 +64,15 @@ struct ColumnResize {
     start_x: u16,
     start_width: u16,
 }
+
+struct SidebarResize {
+    start_x: u16,
+    start_width: u16,
+}
+
+const MIN_SIDEBAR_WIDTH: u16 = 16;
+const MAX_SIDEBAR_WIDTH: u16 = 80;
+const MIN_TABLE_WIDTH: u16 = 20;
 
 struct CellRangeDrag {
     anchor: (usize, usize),
@@ -97,6 +106,7 @@ pub fn run(file: Option<&str>) -> Result<()> {
     };
     let mut last_redraw = Instant::now();
     let mut column_resize: Option<ColumnResize> = None;
+    let mut sidebar_resize: Option<SidebarResize> = None;
     let mut cell_range_drag: Option<CellRangeDrag> = None;
     let mut command_line: Option<CommandLineState> = None;
     let mut command_error: Option<String> = None;
@@ -221,6 +231,7 @@ pub fn run(file: Option<&str>) -> Result<()> {
                         &areas,
                         column_list_height,
                         &mut column_resize,
+                        &mut sidebar_resize,
                         &mut cell_range_drag,
                     );
                 }
@@ -499,14 +510,22 @@ fn handle_key(
         KeyCode::Char('?') => model.view.show_help = true,
         KeyCode::Char('c') => model.open_column_info_pane(),
         KeyCode::Up | KeyCode::Char('k') => {
-            model.view.column_sidebar_focused = false;
-            model.set_multi_select_axis(MultiSelectAxis::Row);
-            model.move_selected_row(-1);
+            if model.view.column_sidebar_focused {
+                model.move_selected_sidebar_column(-1, column_list_height);
+            } else {
+                model.view.column_sidebar_focused = false;
+                model.set_multi_select_axis(MultiSelectAxis::Row);
+                model.move_selected_row(-1);
+            }
         }
         KeyCode::Down | KeyCode::Char('j') => {
-            model.view.column_sidebar_focused = false;
-            model.set_multi_select_axis(MultiSelectAxis::Row);
-            model.move_selected_row(1);
+            if model.view.column_sidebar_focused {
+                model.move_selected_sidebar_column(1, column_list_height);
+            } else {
+                model.view.column_sidebar_focused = false;
+                model.set_multi_select_axis(MultiSelectAxis::Row);
+                model.move_selected_row(1);
+            }
         }
         KeyCode::Left | KeyCode::Char('h') => {
             model.view.column_sidebar_focused = false;
@@ -559,6 +578,7 @@ fn handle_mouse(
     areas: &LayoutAreas,
     column_list_height: usize,
     column_resize: &mut Option<ColumnResize>,
+    sidebar_resize: &mut Option<SidebarResize>,
     cell_range_drag: &mut Option<CellRangeDrag>,
 ) {
     if model.view.show_help {
@@ -606,6 +626,29 @@ fn handle_mouse(
             }
             MouseEventKind::Up(crossterm::event::MouseButton::Left) => {
                 *column_resize = None;
+            }
+            _ => {}
+        }
+        return;
+    }
+
+    if let Some(resize) = sidebar_resize.as_ref() {
+        match mouse.kind {
+            MouseEventKind::Drag(crossterm::event::MouseButton::Left)
+            | MouseEventKind::Moved => {
+                let delta = col as i32 - resize.start_x as i32;
+                let max_width = areas
+                    .table
+                    .width
+                    .saturating_add(areas.columns.width)
+                    .saturating_sub(MIN_TABLE_WIDTH)
+                    .min(MAX_SIDEBAR_WIDTH);
+                let new_width = (resize.start_width as i32 - delta)
+                    .clamp(MIN_SIDEBAR_WIDTH as i32, max_width as i32) as u16;
+                model.view.column_sidebar_width = new_width;
+            }
+            MouseEventKind::Up(crossterm::event::MouseButton::Left) => {
+                *sidebar_resize = None;
             }
             _ => {}
         }
@@ -697,6 +740,13 @@ fn handle_mouse(
         MouseEventKind::Down(crossterm::event::MouseButton::Left)
             if areas.columns.contains(pos) =>
         {
+            if hit_test_sidebar_resize(col, row, areas.columns) {
+                *sidebar_resize = Some(SidebarResize {
+                    start_x: col,
+                    start_width: model.view.column_sidebar_width,
+                });
+                return;
+            }
             model.view.column_sidebar_focused = true;
             let inner = Block::default().borders(Borders::ALL).inner(areas.columns);
             if !inner.contains(pos) {
@@ -939,6 +989,17 @@ fn hit_test_column_resize(
     None
 }
 
+/// Left border of the column sidebar pane (drag to resize width).
+fn hit_test_sidebar_resize(mouse_x: u16, mouse_y: u16, columns_area: Rect) -> bool {
+    if !columns_area.contains(Position {
+        x: mouse_x,
+        y: mouse_y,
+    }) {
+        return false;
+    }
+    mouse_x <= columns_area.x.saturating_add(1)
+}
+
 /// Map a screen coordinate to a table row/column (must match `draw_table` layout).
 fn hit_test_table(mouse_x: u16, mouse_y: u16, table_area: Rect, model: &AppModel) -> Option<TableHit> {
     let inner = Block::default().borders(Borders::ALL).inner(table_area);
@@ -1086,7 +1147,10 @@ fn draw(
 
     let main = Layout::default()
         .direction(Direction::Horizontal)
-        .constraints([Constraint::Min(20), Constraint::Length(32)])
+        .constraints([
+            Constraint::Min(MIN_TABLE_WIDTH as u16),
+            Constraint::Length(model.view.column_sidebar_width),
+        ])
         .split(outer[1]);
 
     let table_area = main[0];

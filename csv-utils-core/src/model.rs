@@ -73,6 +73,8 @@ pub struct TableViewState {
     pub cell_range_focus: Option<(usize, usize)>,
     /// Last arrow navigation axis; **Space** toggles multi-select on this axis.
     pub last_multi_select_axis: MultiSelectAxis,
+    /// Width of the column sidebar pane in terminal columns.
+    pub column_sidebar_width: u16,
 }
 
 #[derive(Debug)]
@@ -117,6 +119,7 @@ impl Default for TableViewState {
             cell_range_anchor: None,
             cell_range_focus: None,
             last_multi_select_axis: MultiSelectAxis::default(),
+            column_sidebar_width: 32,
         }
     }
 }
@@ -1185,6 +1188,20 @@ impl AppModel {
         self.view.selected_row = target;
     }
 
+    /// Move selection up/down in the filtered column sidebar list.
+    pub fn move_selected_sidebar_column(&mut self, delta: i32, visible_height: usize) {
+        let filtered = self.filtered_sidebar_columns();
+        if filtered.is_empty() {
+            return;
+        }
+        let pos = self
+            .sidebar_position_of_column(self.view.selected_col)
+            .unwrap_or(0);
+        let next = ((pos as i32) + delta).clamp(0, filtered.len() as i32 - 1) as usize;
+        let col = filtered[next];
+        self.select_sidebar_column(col, visible_height);
+    }
+
     pub fn column_info_filter_focus_index(&self, col: usize) -> usize {
         let type_count = self.column_info_type_kinds(col).len();
         if self.column_info_repr_section_visible(col) {
@@ -1778,6 +1795,20 @@ mod tests {
         model.move_selected_column(1, 20);
         assert_eq!(model.view.selected_col, 2);
         model.move_selected_column(-1, 20);
+        assert_eq!(model.view.selected_col, 0);
+    }
+
+    #[test]
+    fn move_selected_sidebar_column_changes_selection() {
+        let path = PathBuf::from("test-data/generated/test_1000x100.csv");
+        if !path.exists() {
+            return;
+        }
+        let mut model = AppModel::open(Some(path)).expect("open csv");
+        model.view.selected_col = 0;
+        model.move_selected_sidebar_column(1, 20);
+        assert_eq!(model.view.selected_col, 1);
+        model.move_selected_sidebar_column(-1, 20);
         assert_eq!(model.view.selected_col, 0);
     }
 }

@@ -1,4 +1,5 @@
 use crossterm::event::{KeyCode, KeyEvent};
+use csv_utils_core::fuzzy::rank_by_fuzzy;
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
@@ -51,6 +52,17 @@ pub struct FilePicker {
     show_all: bool,
     command_line: Option<CommandLineState>,
     command_error: Option<String>,
+    /// Fuzzy name filter (`/` finder); empty means show all entries.
+    name_filter: String,
+    /// Active `/` filter input line (includes leading `/`).
+    filter_line: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum FilePickerAction {
+    Continue,
+    Open(PathBuf),
+    Quit,
 }
 
 impl FilePicker {
@@ -80,16 +92,20 @@ impl FilePicker {
             show_all: false,
             command_line: None,
             command_error: None,
+            name_filter: String::new(),
+            filter_line: None,
         };
         picker.refresh()?;
         if let Some(path) = highlight_file {
             if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
-                if let Some(idx) = picker
-                    .entries
-                    .iter()
-                    .position(|e| !e.is_dir && e.name == name)
-                {
-                    picker.selected = idx;
+                let visible = picker.visible_indices();
+                if let Some(pos) = visible.iter().position(|&idx| {
+                    picker
+                        .entries
+                        .get(idx)
+                        .is_some_and(|e| !e.is_dir && e.name == name)
+                }) {
+                    picker.selected = pos;
                     picker.clamp_list_offset(1);
                 }
             }
@@ -150,14 +166,54 @@ impl FilePicker {
         if self.entries.is_empty() {
             self.selected = 0;
         } else {
-            self.selected = self.selected.min(self.entries.len() - 1);
+            self.clamp_selected_visible(1);
         }
-        self.clamp_list_offset(1);
         Ok(())
     }
 
+    fn visible_indices(&self) -> Vec<usize> {
+        if self.name_filter.is_empty() {
+            (0..self.entries.len()).collect()
+        } else {
+            rank_by_fuzzy(
+                &self.name_filter,
+                self.entries
+                    .iter()
+                    .enumerate()
+                    .map(|(idx, entry)| (idx, entry.name.as_str())),
+            )
+        }
+    }
+
+    fn clamp_selected_visible(&mut self, visible_height: usize) {
+        let visible = self.visible_indices();
+        if visible.is_empty() {
+            self.selected = 0;
+        } else {
+            self.selected = self.selected.min(visible.len() - 1);
+        }
+        self.clamp_list_offset(visible_height);
+    }
+
+    fn selected_entry_index(&self) -> Option<usize> {
+        self.visible_indices().get(self.selected).copied()
+    }
+
+    fn apply_name_filter(&mut self, query: &str, visible_height: usize) {
+        self.name_filter = query.to_string();
+        self.selected = 0;
+        self.list_offset = 0;
+        self.clamp_selected_visible(visible_height);
+    }
+
+    fn clear_name_filter(&mut self) {
+        self.name_filter.clear();
+        self.filter_line = None;
+    }
+
     fn clamp_list_offset(&mut self, visible_height: usize) {
-        let max_offset = self.entries.len().saturating_sub(visible_height.max(1));
+        let visible_len = self.visible_indices().len();
+        let max_offset = visible_len.saturating_sub(visible_height.max(1));
         self.list_offset = self.list_offset.min(max_offset);
         if self.selected < self.list_offset {
             self.list_offset = self.selected;
@@ -166,10 +222,14 @@ impl FilePicker {
         }
     }
 
-    fn go_parent(&mut self) {
+    fn go_parent(&mut self, visible_height: usize) {
         let Ok(abs) = normalize_dir(self.current_dir.clone()) else {
             return;
         };
+        let child_name = abs
+            .file_name()
+            .and_then(|n| n.to_str())
+            .map(|s| s.to_string());
         let Some(parent) = abs.parent() else {
             return;
         };
@@ -177,19 +237,36 @@ impl FilePicker {
             return;
         }
         self.current_dir = parent.to_path_buf();
-        self.selected = 0;
         self.list_offset = 0;
         let _ = self.refresh();
+        if let Some(name) = child_name {
+            let visible = self.visible_indices();
+            if let Some(pos) = visible.iter().position(|&idx| {
+                self.entries
+                    .get(idx)
+                    .is_some_and(|e| e.is_dir && e.name == name)
+            }) {
+                self.selected = pos;
+                self.clamp_list_offset(visible_height);
+                return;
+            }
+        }
+        self.selected = 0;
+        self.clamp_list_offset(visible_height);
     }
 
     fn enter_selected_dir(&mut self) -> bool {
-        let Some(entry) = self.entries.get(self.selected) else {
+        let Some(entry_idx) = self.selected_entry_index() else {
+            return false;
+        };
+        let Some(entry) = self.entries.get(entry_idx) else {
             return false;
         };
         if !entry.is_dir {
             return false;
         }
-        self.current_dir = self.current_dir.join(&entry.name);
+        let name = entry.name.clone();
+        self.current_dir = self.current_dir.join(name);
         self.selected = 0;
         self.list_offset = 0;
         let _ = self.refresh();
@@ -257,12 +334,76 @@ impl FilePicker {
             return FilePickerAction::Continue;
         }
 
+        if self.filter_line.is_some() {
+            match key.code {
+                KeyCode::Esc => {
+                    self.clear_name_filter();
+                }
+                KeyCode::Backspace => {
+                    let mut clear = false;
+                    if let Some(filter_line) = self.filter_line.as_mut() {
+                        filter_line.pop();
+                        clear = filter_line.is_empty();
+                    }
+                    if clear {
+                        self.clear_name_filter();
+                    } else {
+                        let query = self
+                            .filter_line
+                            .as_deref()
+                            .and_then(|line| line.strip_prefix('/'))
+                            .unwrap_or("")
+                            .trim()
+                            .to_string();
+                        self.apply_name_filter(&query, visible_height);
+                    }
+                }
+                KeyCode::Char(c) if !c.is_ascii_control() => {
+                    if let Some(filter_line) = self.filter_line.as_mut() {
+                        filter_line.push(c);
+                    }
+                    let query = self
+                        .filter_line
+                        .as_deref()
+                        .and_then(|line| line.strip_prefix('/'))
+                        .unwrap_or("")
+                        .trim()
+                        .to_string();
+                    self.apply_name_filter(&query, visible_height);
+                }
+                KeyCode::Up | KeyCode::Char('k') => {
+                    self.selected = self.selected.saturating_sub(1);
+                    self.clamp_list_offset(visible_height);
+                }
+                KeyCode::Down | KeyCode::Char('j') => {
+                    let visible_len = self.visible_indices().len();
+                    if visible_len > 0 {
+                        self.selected = (self.selected + 1).min(visible_len - 1);
+                    }
+                    self.clamp_list_offset(visible_height);
+                }
+                KeyCode::Enter => return self.activate(),
+                KeyCode::Left => {
+                    self.go_parent(visible_height);
+                }
+                KeyCode::Right => return self.activate(),
+                _ => {}
+            }
+            return FilePickerAction::Continue;
+        }
+
         match key.code {
-            KeyCode::Char('q') | KeyCode::Esc => FilePickerAction::Quit,
+            KeyCode::Char('q') => FilePickerAction::Quit,
+            KeyCode::Esc => FilePickerAction::Quit,
             KeyCode::Char(':') => {
                 self.command_line = Some(CommandLineState::start());
                 self.command_error = None;
                 self.error = None;
+                FilePickerAction::Continue
+            }
+            KeyCode::Char('/') => {
+                self.filter_line = Some("/".to_string());
+                self.apply_name_filter("", visible_height);
                 FilePickerAction::Continue
             }
             KeyCode::Up | KeyCode::Char('k') => {
@@ -271,8 +412,9 @@ impl FilePicker {
                 FilePickerAction::Continue
             }
             KeyCode::Down | KeyCode::Char('j') => {
-                if !self.entries.is_empty() {
-                    self.selected = (self.selected + 1).min(self.entries.len() - 1);
+                let visible_len = self.visible_indices().len();
+                if visible_len > 0 {
+                    self.selected = (self.selected + 1).min(visible_len - 1);
                 }
                 self.clamp_list_offset(visible_height);
                 FilePickerAction::Continue
@@ -283,14 +425,15 @@ impl FilePicker {
                 FilePickerAction::Continue
             }
             KeyCode::PageDown => {
-                if !self.entries.is_empty() {
-                    self.selected = (self.selected + visible_height.max(1)).min(self.entries.len() - 1);
+                let visible_len = self.visible_indices().len();
+                if visible_len > 0 {
+                    self.selected = (self.selected + visible_height.max(1)).min(visible_len - 1);
                 }
                 self.clamp_list_offset(visible_height);
                 FilePickerAction::Continue
             }
             KeyCode::Left => {
-                self.go_parent();
+                self.go_parent(visible_height);
                 FilePickerAction::Continue
             }
             KeyCode::Right => self.activate(),
@@ -300,7 +443,10 @@ impl FilePicker {
     }
 
     fn activate(&mut self) -> FilePickerAction {
-        let Some(entry) = self.entries.get(self.selected) else {
+        let Some(entry_idx) = self.selected_entry_index() else {
+            return FilePickerAction::Continue;
+        };
+        let Some(entry) = self.entries.get(entry_idx) else {
             return FilePickerAction::Continue;
         };
 
@@ -318,8 +464,9 @@ impl FilePicker {
             return FilePickerAction::Continue;
         }
         let rel = (row - inner.y) as usize;
+        let visible = self.visible_indices();
         let idx = self.list_offset + rel;
-        if idx >= self.entries.len() {
+        if idx >= visible.len() {
             return FilePickerAction::Continue;
         }
         self.selected = idx;
@@ -348,6 +495,8 @@ impl FilePicker {
                 .as_ref()
                 .map(|c| c.panel_height(PICKER_COMMANDS))
                 .unwrap_or(3)
+        } else if self.filter_line.is_some() {
+            3
         } else {
             1
         };
@@ -361,11 +510,15 @@ impl FilePicker {
             .split(area);
 
         let dir_display = self.current_dir.display().to_string();
+        let mut subtitle = self.filter_label();
+        if !self.name_filter.is_empty() {
+            subtitle = format!("{subtitle}  / name: {}", self.name_filter);
+        }
         frame.render_widget(
             Paragraph::new(vec![
                 Line::from(dir_display),
                 Line::from(Span::styled(
-                    self.filter_label(),
+                    subtitle,
                     Style::default().fg(Color::DarkGray),
                 )),
             ])
@@ -379,28 +532,39 @@ impl FilePicker {
             layout[0],
         );
 
+        let visible = self.visible_indices();
         let mut lines = Vec::new();
         if let Some(err) = &self.error {
             lines.push(Line::from(Span::styled(
                 err.clone(),
                 Style::default().fg(Color::Red),
             )));
-        } else if self.entries.is_empty() {
-            if self.show_all {
+        } else if visible.is_empty() {
+            if !self.name_filter.is_empty() {
+                lines.push(Line::from("(no matching files or folders)"));
+            } else if self.show_all {
                 lines.push(Line::from("(empty directory)"));
             } else {
                 lines.push(Line::from("(no matching files — type :all to show all)"));
             }
         } else {
             for i in 0..visible_height {
-                let idx = self.list_offset + i;
-                let Some(entry) = self.entries.get(idx) else {
+                let visible_idx = self.list_offset + i;
+                let Some(&entry_idx) = visible.get(visible_idx) else {
                     lines.push(Line::from(" "));
                     continue;
                 };
-                let marker = if idx == self.selected { "▸ " } else { "  " };
+                let Some(entry) = self.entries.get(entry_idx) else {
+                    lines.push(Line::from(" "));
+                    continue;
+                };
+                let marker = if visible_idx == self.selected {
+                    "▸ "
+                } else {
+                    "  "
+                };
                 let suffix = if entry.is_dir { "/" } else { "" };
-                let style = if idx == self.selected {
+                let style = if visible_idx == self.selected {
                     Style::default()
                         .fg(Color::Black)
                         .bg(Color::Cyan)
@@ -428,8 +592,22 @@ impl FilePicker {
 
         if let Some(command) = &self.command_line {
             command.draw(frame, layout[2], PICKER_COMMANDS, self.command_error.as_deref());
+        } else if let Some(filter_line) = &self.filter_line {
+            frame.render_widget(
+                Paragraph::new(vec![Line::from(Span::styled(
+                    filter_line.clone(),
+                    Style::default().add_modifier(Modifier::BOLD),
+                ))])
+                .block(
+                    Block::default()
+                        .title(" File filter ")
+                        .borders(Borders::ALL)
+                        .border_style(Style::default().fg(Color::Magenta)),
+                ),
+                layout[2],
+            );
         } else {
-            let hints = " ↑↓ navigate  → open  ← parent  Enter open  : command  q quit ";
+            let hints = " ↑↓ navigate  / filter  → open  ← parent  Enter open  : command  q quit ";
             frame.render_widget(
                 Paragraph::new(hints).style(Style::default().fg(Color::DarkGray)),
                 layout[2],
@@ -438,8 +616,94 @@ impl FilePicker {
     }
 }
 
-pub enum FilePickerAction {
-    Continue,
-    Open(PathBuf),
-    Quit,
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyEventState};
+
+    fn press(code: KeyCode) -> KeyEvent {
+        KeyEvent {
+            code,
+            modifiers: crossterm::event::KeyModifiers::empty(),
+            kind: KeyEventKind::Press,
+            state: KeyEventState::empty(),
+        }
+    }
+
+    #[test]
+    fn name_filter_narrows_visible_entries() {
+        let mut picker = FilePicker {
+            current_dir: PathBuf::from("/"),
+            entries: vec![
+                Entry {
+                    name: "alpha.csv".to_string(),
+                    is_dir: false,
+                },
+                Entry {
+                    name: "beta.csv".to_string(),
+                    is_dir: false,
+                },
+                Entry {
+                    name: "archive".to_string(),
+                    is_dir: true,
+                },
+            ],
+            selected: 0,
+            list_offset: 0,
+            error: None,
+            file_extensions: vec!["csv".to_string()],
+            show_all: true,
+            command_line: None,
+            command_error: None,
+            name_filter: String::new(),
+            filter_line: None,
+        };
+        picker.apply_name_filter("beta", 10);
+        let visible = picker.visible_indices();
+        assert_eq!(visible.len(), 1);
+        assert_eq!(picker.entries[visible[0]].name, "beta.csv");
+    }
+
+    #[test]
+    fn go_parent_highlights_child_directory() {
+        let base = std::env::temp_dir().join(format!(
+            "csv_utils_file_picker_test_{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&base);
+        std::fs::create_dir_all(base.join("child")).unwrap();
+        std::fs::create_dir_all(base.join("other")).unwrap();
+
+        let mut picker =
+            FilePicker::in_dir(base.join("child"), vec!["csv".to_string()], None).unwrap();
+        picker.go_parent(10);
+        assert_eq!(picker.current_dir, base);
+        let visible = picker.visible_indices();
+        let selected_entry = picker.entries[visible[picker.selected]].name.clone();
+        assert_eq!(selected_entry, "child");
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn slash_opens_filter_mode() {
+        let mut picker = FilePicker {
+            current_dir: PathBuf::from("/"),
+            entries: vec![Entry {
+                name: "data.csv".to_string(),
+                is_dir: false,
+            }],
+            selected: 0,
+            list_offset: 0,
+            error: None,
+            file_extensions: vec!["csv".to_string()],
+            show_all: true,
+            command_line: None,
+            command_error: None,
+            name_filter: String::new(),
+            filter_line: None,
+        };
+        let action = picker.handle_key(press(KeyCode::Char('/')), 10);
+        assert_eq!(action, FilePickerAction::Continue);
+        assert_eq!(picker.filter_line.as_deref(), Some("/"));
+    }
 }

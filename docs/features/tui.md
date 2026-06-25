@@ -18,7 +18,7 @@ Full-screen terminal table explorer. Stack: **ratatui** 0.29 + **crossterm**. Fr
 |--------|-------------|
 | **Title** | File basename, live row count, `loading…` or `ERROR` |
 | **Data table** | Horizontal window (`col_offset`) + vertical window (`row_offset`). Selected column dim gray stripe (full height); selected row dimmed; active cell yellow |
-| **Columns pane** | 32-char wide; title `Columns (X–Y/Z)`; selected line `▸` + magenta |
+| **Columns pane** | Resizable width (drag left border, 16–80 chars); title `Columns (X–Y/Z)`; selected line `▸` + magenta |
 | **Help** | Centered overlay; `?` opens; `q` / `?` closes |
 | **Column info** | Centered overlay; `c` opens; edit type/representation and view statistics; `q` closes |
 
@@ -45,7 +45,8 @@ Data table uses ratatui `Table`. Column sidebar uses manual `Paragraph` lines (n
 | `show_column_borders` | Draw column `│` lines and a header `─` rule in the table gaps (initialized from config; toggled with `:toggle-borders`). Gaps stay as whitespace when off |
 | `column_name_filter` | Fuzzy name filter for the column sidebar (`/` finder) |
 | `column_value_filters` | Per-column row value filters (`:filter` on selected column) |
-| `column_sidebar_focused` | When true, `:filter` applies to the sidebar instead of row values |
+| `column_sidebar_focused` | When true, `:filter` applies to the sidebar instead of row values; **↑/↓** navigate columns |
+| `column_sidebar_width` | Column sidebar pane width in terminal columns (default 32; drag left border to resize) |
 | `column_hidden` | Per-column flag: hidden from the table but still listed in the sidebar |
 | `multi_selected_cols` | Ctrl+click multi-selection for bulk `:hide` (empty = use `selected_col` only); cleared when row **Space** multi-select or cell range starts |
 | `row_hidden` | Per-row flag: hidden from the table (session-only) |
@@ -61,7 +62,7 @@ Each frame: `maybe_refit_column_widths()` (when loaded row count changes), `clam
 | Key | Action |
 |-----|--------|
 | `q` | Quit; closes an open panel when one is visible |
-| `↑`/`↓` or `j`/`k` | Previous / next row |
+| `↑`/`↓` or `j`/`k` | Previous / next row; when the **sidebar is focused** (click or scroll it), previous / next column |
 | `←`/`→` or `h`/`l` | Previous / next **visible** column (hidden columns are skipped) |
 | `Space` | Toggle multi-select on the current row or column (follows the last arrow axis) |
 | `PgUp`/`PgDn` | Move selection ±10 rows |
@@ -94,9 +95,10 @@ listed; directories are always shown.
 | Key | Action |
 |-----|--------|
 | `↑`/`↓` or `j`/`k` | Previous / next entry |
+| `/` | Fuzzy-filter files and folders by name (live; **Esc** clears) |
 | `PgUp`/`PgDn` | Move selection by one page |
 | `→` | Enter selected directory or open file |
-| `←` | Parent directory |
+| `←` | Parent directory (highlights the directory you came from) |
 | `Enter` | Enter directory or open file |
 | `:` then `:open <path>` | Open file by relative or absolute path |
 | `:` then `:all` / `:a` | Show all files |
@@ -130,6 +132,7 @@ The panel shows editable **type** options filtered by inferred data (e.g. text-o
 | Table body cell | Select row + column; **Ctrl+click** extends a cell range from the anchor; **Ctrl+drag** selects a rectangular cell range |
 | Table wheel | Move `selected_row` ±3 |
 | Column list click | Select column; **Ctrl+click** toggles column multi-select |
+| Column list left border | Drag to resize sidebar width (16–80 chars) |
 | Column list wheel | Scroll sidebar ±3 via `column_list_offset` |
 
 Multi-selected columns show a blue highlight down the full column (`◆` prefix in the sidebar). Multi-selected rows use a blue row background; **Ctrl+click** or **Ctrl+drag** on table cells highlights a blue rectangle (anchor fixed until a plain click clears it). With only the cursor on a cell (no row/column multi-select), the **column header** and a **`▸` row gutter** mark the current row/column — body cells are not striped. The active cell keeps the yellow highlight. Row/column multi-select (**Space** or Ctrl+click on headers/sidebar) and cell-range select are mutually exclusive — toggling one clears the others. Arrow keys and plain clicks move focus without clearing the other selection mode. Hidden columns remain in the sidebar with a dim `·` prefix but are omitted from the table and skipped by `←`/`→`. Select a hidden column in the sidebar and run `:unhide` to show it again; run `:unhide` on the table to restore hidden rows. Hidden rows are omitted from the table entirely. At least one column and one row must stay visible; `:hide` reports an error if the selection would hide every column or every row. With an active cell range, `:hide` on the table hides every row spanned by the range.
