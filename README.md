@@ -40,6 +40,7 @@ pixi install
 
 ```bash
 pixi run build
+pixi run csv
 pixi run run -- stats sample.csv
 pixi run run -- unique sample.csv city,active 100
 pixi run run -- filter sample.csv city=Tehran,active=true 25
@@ -47,6 +48,7 @@ pixi run run -- filter sample.csv age>30 50
 pixi run run -- filter sample.csv "name contains Ali" 20
 pixi run run -- filter sample.csv "city in Tehran|Paris" 20
 pixi run run -- json sample.csv 10
+pixi run tui
 pixi run tui test-data/generated/test_1000x100.csv
 pixi run web-tui   # browser UI at http://127.0.0.1:8080/
 ```
@@ -57,6 +59,7 @@ Direct cargo usage (from repo root):
 
 ```bash
 cargo build --release
+./target/release/csv
 ./target/release/csv tui test-data/generated/test_1000x100.csv
 ./target/release/csv-utils-web test-data/generated/test_1000x100.csv
 ```

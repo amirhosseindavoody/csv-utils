@@ -19,6 +19,8 @@ use std::io::{self, stdout};
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
+use crate::tui::file_picker::{FilePicker, FilePickerAction};
+
 const HELP_TEXT: &str = "\
 csv — keyboard shortcuts
 
@@ -37,6 +39,7 @@ struct LayoutAreas {
     table: Rect,
     columns: Rect,
     column_info_popup: Option<Rect>,
+    file_picker_list: Option<Rect>,
 }
 
 struct ColumnResize {
@@ -47,7 +50,12 @@ struct ColumnResize {
 
 pub fn run(file: Option<&str>) -> Result<()> {
     let file_path = file.map(PathBuf::from);
-    let mut model = AppModel::open(file_path)?;
+    let mut model = AppModel::open(file_path.clone())?;
+    let mut file_picker = if FilePicker::needs_picker(&file_path) {
+        Some(FilePicker::new()?)
+    } else {
+        None
+    };
 
     enable_raw_mode()?;
     let mut stdout = stdout();
@@ -62,6 +70,7 @@ pub fn run(file: Option<&str>) -> Result<()> {
         table: Rect::default(),
         columns: Rect::default(),
         column_info_popup: None,
+        file_picker_list: None,
     };
     let mut last_redraw = Instant::now();
     let mut column_resize: Option<ColumnResize> = None;
@@ -69,8 +78,58 @@ pub fn run(file: Option<&str>) -> Result<()> {
     while running {
         model.maybe_update_column_layout();
         terminal.draw(|frame| {
-            areas = draw(frame, &model);
+            areas = if file_picker.is_some() {
+                draw_file_picker(frame, file_picker.as_ref().unwrap())
+            } else {
+                draw(frame, &model)
+            };
         })?;
+
+        if file_picker.is_some() {
+            let list_area = areas.file_picker_list.unwrap_or_default();
+            let visible_height = Block::default()
+                .borders(Borders::ALL)
+                .inner(list_area)
+                .height
+                .max(1) as usize;
+
+            let timeout = Duration::from_millis(50);
+            if event::poll(timeout)? {
+                match event::read()? {
+                    Event::Key(key) if key.kind == KeyEventKind::Press => {
+                        if let Some(picker) = file_picker.as_mut() {
+                            match picker.handle_key(key, visible_height) {
+                                FilePickerAction::Continue => {}
+                                FilePickerAction::Quit => running = false,
+                                FilePickerAction::Open(path) => {
+                                    model.reopen(path)?;
+                                    file_picker = None;
+                                }
+                            }
+                        }
+                    }
+                    Event::Mouse(mouse) if matches!(
+                        mouse.kind,
+                        MouseEventKind::Down(crossterm::event::MouseButton::Left)
+                    ) =>
+                    {
+                        if let Some(picker) = file_picker.as_mut() {
+                            match picker.handle_click(mouse.row, list_area) {
+                                FilePickerAction::Continue => {}
+                                FilePickerAction::Quit => running = false,
+                                FilePickerAction::Open(path) => {
+                                    model.reopen(path)?;
+                                    file_picker = None;
+                                }
+                            }
+                        }
+                    }
+                    Event::Resize(_, _) => {}
+                    _ => {}
+                }
+            }
+            continue;
+        }
 
         let size = terminal.size()?;
         let table_width = areas.table.width;
@@ -398,6 +457,26 @@ fn hit_test_table(mouse_x: u16, mouse_y: u16, table_area: Rect, model: &AppModel
     })
 }
 
+fn draw_file_picker(frame: &mut ratatui::Frame, picker: &FilePicker) -> LayoutAreas {
+    let area = frame.area();
+    let layout = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Length(3), Constraint::Min(5), Constraint::Length(1)])
+        .split(area);
+    let visible_height = Block::default()
+        .borders(Borders::ALL)
+        .inner(layout[1])
+        .height
+        .max(1) as usize;
+    picker.draw(frame, area, visible_height);
+    LayoutAreas {
+        table: Rect::default(),
+        columns: Rect::default(),
+        column_info_popup: None,
+        file_picker_list: Some(layout[1]),
+    }
+}
+
 fn draw(frame: &mut ratatui::Frame, model: &AppModel) -> LayoutAreas {
     let area = frame.area();
 
@@ -468,6 +547,7 @@ fn draw(frame: &mut ratatui::Frame, model: &AppModel) -> LayoutAreas {
         table: table_area,
         columns: columns_area,
         column_info_popup,
+        file_picker_list: None,
     }
 }
 
@@ -475,7 +555,7 @@ fn draw_table(frame: &mut ratatui::Frame, area: Rect, model: &AppModel) {
     let headers = model.preview.headers();
     if headers.is_empty() {
         frame.render_widget(
-            Paragraph::new("Open a CSV file:\n  csv tui path/to/file.csv")
+            Paragraph::new("No data loaded.")
                 .block(Block::default().title(" Data ").borders(Borders::ALL))
                 .wrap(Wrap { trim: true }),
             area,

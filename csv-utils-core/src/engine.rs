@@ -159,6 +159,7 @@ pub fn print_help(mut out: impl Write) -> io::Result<()> {
         out,
         "csv: high-performance CSV CLI + TUI\n\n\
          Usage:\n\
+           csv                         launch TUI with file picker\n\
            csv stats <file.csv>\n\
            csv unique <file.csv> <col1[,col2,...]> [limit]\n\
            csv json <file.csv> [limit]\n\

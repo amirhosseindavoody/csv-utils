@@ -140,6 +140,12 @@ impl AppModel {
         }
     }
 
+    pub fn reopen(&mut self, file_path: PathBuf) -> std::io::Result<()> {
+        self.join_scan_thread();
+        *self = Self::open(Some(file_path))?;
+        Ok(())
+    }
+
     pub fn file_label(&self) -> &str {
         self.file_path
             .as_ref()

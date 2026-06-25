@@ -3,11 +3,6 @@ use csv_utils_core::engine::{self, EngineError};
 use std::io::{self, Write};
 use std::path::Path;
 
-pub fn run_help() -> Result<()> {
-    engine::print_help(io::stdout())?;
-    Ok(())
-}
-
 pub fn run_stats(file: &str) -> Result<()> {
     run_engine(file, |path, out| engine::print_basic_stats(path, out))
 }

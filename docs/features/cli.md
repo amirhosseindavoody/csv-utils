@@ -2,6 +2,8 @@
 
 Streaming commands for large CSV files. Implementation: `csv-utils-core/src/engine.rs`.
 
+Running `csv` with no subcommand launches the [TUI](tui.md) with a file picker.
+
 ## Commands
 
 | Command | Usage | Default limit | Behavior |

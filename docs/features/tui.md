@@ -59,6 +59,19 @@ Each frame: `maybe_refit_column_widths()` (when loaded row count changes), `clam
 | `c` | Open column info panel |
 | `?` | Help overlay |
 
+### File picker (no file on launch)
+
+Shown when `csv` or `csv tui` is run without a path:
+
+| Key | Action |
+|-----|--------|
+| `↑`/`↓` or `j`/`k` | Previous / next entry |
+| `PgUp`/`PgDn` | Move selection by one page |
+| `Enter` | Open directory or load file |
+| `Backspace` / `←` / `h` | Parent directory |
+| `q` / `Esc` | Quit |
+| Click | Select entry (same as `Enter`) |
+
 ### Column info (`c`)
 
 While the panel is open, table navigation is disabled:
@@ -98,9 +111,13 @@ Sidebar uses `column_list_offset` independent of selection. ratatui `List` was a
 ## Run
 
 ```bash
+pixi run tui
 pixi run tui test-data/generated/test_1000x100.csv
+./target/release/csv
 ./target/release/csv tui file.csv
 ```
+
+With no file argument, the TUI opens a **file picker** starting in the current working directory. Navigate directories with `Enter` / `Backspace`, select a file with `Enter`, or quit with `q`.
 
 Press `?` in the TUI for inline help.
 

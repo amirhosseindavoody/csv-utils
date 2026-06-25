@@ -51,6 +51,6 @@ fn main() -> Result<()> {
         Some(Commands::Json { file, limit }) => cli::run_json(&file, limit),
         Some(Commands::Filter { file, expr, limit }) => cli::run_filter(&file, &expr, limit),
         Some(Commands::Tui { file }) => tui::run(file.as_deref()),
-        None => cli::run_help(),
+        None => tui::run(None),
     }
 }

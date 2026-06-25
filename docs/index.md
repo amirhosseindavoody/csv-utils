@@ -2,7 +2,7 @@
 
 Living documentation for behavior, architecture, and development workflows. Update these docs in the same change as user-visible code changes.
 
-Last verified against: `main` (settings config, decimal places, June 2025).
+Last verified against: `main` (default TUI + file picker, June 2026).
 
 ---
 
