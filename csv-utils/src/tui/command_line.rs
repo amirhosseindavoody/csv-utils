@@ -58,6 +58,12 @@ pub const VIEW_COMMANDS: &[CommandSpec] = &[
         description: "Close file and open file picker",
         takes_args: false,
     },
+    CommandSpec {
+        primary: ":toggle-borders",
+        aliases: &[],
+        description: "Show or hide table column border lines",
+        takes_args: false,
+    },
 ];
 
 #[derive(Debug, Clone)]
@@ -358,7 +364,7 @@ mod tests {
             suggestion_index: 0,
         };
         assert_eq!(state.filtered(PICKER_COMMANDS).len(), 3);
-        assert_eq!(state.filtered(VIEW_COMMANDS).len(), 2);
+        assert_eq!(state.filtered(VIEW_COMMANDS).len(), 3);
     }
 
     #[test]
@@ -409,6 +415,19 @@ mod tests {
         };
         assert!(state.in_args_entry_mode(VIEW_COMMANDS));
         assert_eq!(state.panel_height(VIEW_COMMANDS), 4);
+    }
+
+    #[test]
+    fn submits_toggle_borders_without_args_step() {
+        let mut state = CommandLineState {
+            buf: ":toggle-borders".to_string(),
+            suggestion_index: 0,
+        };
+        let action = state.handle_key(press(KeyCode::Enter), VIEW_COMMANDS);
+        assert_eq!(
+            action,
+            CommandKeyAction::Submit(":toggle-borders".to_string())
+        );
     }
 
     #[test]

@@ -35,6 +35,8 @@ pub struct TableViewState {
     pub column_info_decimal_editing: bool,
     pub column_info_decimal_draft: String,
     pub show_help: bool,
+    /// One-character gap between table columns when true.
+    pub show_column_borders: bool,
 }
 
 #[derive(Debug)]
@@ -64,6 +66,7 @@ impl Default for TableViewState {
             column_info_decimal_editing: false,
             column_info_decimal_draft: String::new(),
             show_help: false,
+            show_column_borders: true,
         }
     }
 }
@@ -125,8 +128,11 @@ impl AppModel {
         let mut model = Self {
             file_path,
             preview,
-            settings,
-            view: TableViewState::default(),
+            settings: settings.clone(),
+            view: TableViewState {
+                show_column_borders: settings.display.show_column_borders,
+                ..TableViewState::default()
+            },
             scan_thread,
         };
         model.ensure_column_state();
@@ -585,7 +591,15 @@ impl AppModel {
     }
 
     fn column_slot_width(&self, col: usize) -> u16 {
-        self.column_width_chars(col) as u16 + 1
+        self.column_width_chars(col) as u16 + self.column_separator_width()
+    }
+
+    pub fn column_separator_width(&self) -> u16 {
+        1
+    }
+
+    pub fn toggle_column_borders(&mut self) {
+        self.view.show_column_borders = !self.view.show_column_borders;
     }
 
     pub fn max_visible_columns(&self, table_width: u16) -> usize {
@@ -769,6 +783,19 @@ mod tests {
         let w = model.column_width_chars(0);
         model.refit_column_widths();
         assert_eq!(model.column_width_chars(0), w);
+    }
+
+    #[test]
+    fn toggle_column_borders_flips_session_state() {
+        let path = PathBuf::from("test-data/generated/test_1000x100.csv");
+        if !path.exists() {
+            return;
+        }
+        let mut model = AppModel::open(Some(path)).expect("open csv");
+        let initial = model.view.show_column_borders;
+        model.toggle_column_borders();
+        assert_ne!(model.view.show_column_borders, initial);
+        assert_eq!(model.column_separator_width(), 1);
     }
 
     #[test]

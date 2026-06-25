@@ -33,6 +33,7 @@ csv — keyboard shortcuts
   ?          this help
   :open      open file or browse directory by path
   :close     close file and open file picker
+  :toggle-borders  show or hide table column border lines
 
 Mouse: click table cells, column info options, or column header borders to resize; wheel on table scrolls rows; wheel on column list scrolls columns.
 
@@ -289,6 +290,11 @@ fn handle_key(
                             *command_error = None;
                             return MainKeyAction::CloseFile;
                         }
+                        ":toggle-borders" => {
+                            model.toggle_column_borders();
+                            *command_line = None;
+                            *command_error = None;
+                        }
                         _ => *command_error = Some(format!("Unknown command: {cmd}")),
                     }
                 }
@@ -487,6 +493,56 @@ struct TableHit {
     col: usize,
 }
 
+/// X offsets (within the table inner area) of the one-char gap after each visible column
+/// except the last. Matches ratatui `Table` layout with `column_spacing(1)`.
+fn visible_column_separator_offsets(
+    model: &AppModel,
+    col_range: &std::ops::Range<usize>,
+) -> Vec<u16> {
+    let mut x = 0u16;
+    let mut offsets = Vec::new();
+    for (i, col_idx) in col_range.clone().enumerate() {
+        x = x.saturating_add(model.column_width_chars(col_idx) as u16);
+        if i + 1 < col_range.len() {
+            offsets.push(x);
+            x = x.saturating_add(1);
+        }
+    }
+    offsets
+}
+
+fn draw_column_border_lines(
+    frame: &mut ratatui::Frame,
+    table_area: Rect,
+    model: &AppModel,
+    col_range: &std::ops::Range<usize>,
+) {
+    if !model.view.show_column_borders {
+        return;
+    }
+    let inner = Block::default().borders(Borders::ALL).inner(table_area);
+    if inner.width == 0 || inner.height == 0 {
+        return;
+    }
+
+    let style = Style::default().fg(Color::Gray);
+    let sep_xs: Vec<u16> = visible_column_separator_offsets(model, col_range)
+        .into_iter()
+        .map(|offset| inner.x.saturating_add(offset))
+        .collect();
+
+    let buf = frame.buffer_mut();
+    for y in inner.y..inner.y.saturating_add(inner.height) {
+        for &sep_x in &sep_xs {
+            if sep_x < inner.x.saturating_add(inner.width) {
+                if let Some(cell) = buf.cell_mut((sep_x, y)) {
+                    cell.set_char('│').set_style(style);
+                }
+            }
+        }
+    }
+}
+
 /// Map a screen coordinate to a column border for resize (header row only).
 fn hit_test_column_resize(
     mouse_x: u16,
@@ -511,14 +567,15 @@ fn hit_test_column_resize(
     }
 
     let rel_x = mouse_x.saturating_sub(inner.x);
+    let sep = model.column_separator_width();
     let mut x = 0u16;
     for col_idx in col_range {
         let w = model.column_width_chars(col_idx) as u16;
         let right = x.saturating_add(w);
-        if rel_x + 1 >= right && rel_x <= right.saturating_add(1) {
+        if rel_x + 1 >= right && rel_x <= right.saturating_add(sep) {
             return Some(col_idx);
         }
-        x = right.saturating_add(1);
+        x = right.saturating_add(sep);
     }
     None
 }
@@ -539,6 +596,7 @@ fn hit_test_table(mouse_x: u16, mouse_y: u16, table_area: Rect, model: &AppModel
     }
 
     let rel_x = mouse_x.saturating_sub(inner.x);
+    let sep = model.column_separator_width();
     let mut x = 0u16;
     let mut col_idx = None;
     for idx in col_range.clone() {
@@ -548,7 +606,7 @@ fn hit_test_table(mouse_x: u16, mouse_y: u16, table_area: Rect, model: &AppModel
             col_idx = Some(idx);
             break;
         }
-        x = right.saturating_add(1);
+        x = right.saturating_add(sep);
     }
     let col_idx = col_idx?;
     let rel_y = mouse_y.saturating_sub(inner.y);
@@ -767,6 +825,7 @@ fn draw_table(frame: &mut ratatui::Frame, area: Rect, model: &AppModel) {
         .row_highlight_style(Style::default().bg(Color::DarkGray));
 
     frame.render_widget(table, area);
+    draw_column_border_lines(frame, area, model, &col_range);
 }
 
 fn draw_column_list(frame: &mut ratatui::Frame, area: Rect, model: &AppModel) {

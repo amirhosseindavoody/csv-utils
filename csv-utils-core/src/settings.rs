@@ -17,6 +17,10 @@ pub fn default_decimal_places() -> usize {
     3
 }
 
+pub fn default_show_column_borders() -> bool {
+    true
+}
+
 /// Parse a format string like `.3` → 3 digits after the decimal point.
 pub fn parse_decimal_format(s: &str) -> Option<usize> {
     let s = s.trim();
@@ -71,12 +75,15 @@ impl FilePickerSettings {
 pub struct DisplaySettings {
     #[serde(default = "default_numeric_decimal_format")]
     pub numeric_decimal_format: String,
+    #[serde(default = "default_show_column_borders")]
+    pub show_column_borders: bool,
 }
 
 impl Default for DisplaySettings {
     fn default() -> Self {
         Self {
             numeric_decimal_format: default_numeric_decimal_format(),
+            show_column_borders: default_show_column_borders(),
         }
     }
 }
@@ -139,6 +146,7 @@ mod tests {
         env::set_current_dir(dir.path()).unwrap();
         let settings = load_or_create().unwrap();
         assert_eq!(settings.display.numeric_decimal_format, ".3");
+        assert!(settings.display.show_column_borders);
         assert_eq!(
             settings.file_picker.file_extensions,
             vec!["csv".to_string(), "dat".to_string()]

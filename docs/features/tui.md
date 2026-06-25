@@ -42,6 +42,7 @@ Data table uses ratatui `Table`. Column sidebar uses manual `Paragraph` lines (n
 | `column_info_focus` | Highlighted option in info panel (type, representation, decimal places) |
 | `column_info_decimal_editing` | TUI: editing decimal format text |
 | `show_help` | Help overlay visible |
+| `show_column_borders` | Draw `│` lines in the table column gaps (initialized from config; toggled with `:toggle-borders`). Gaps stay as whitespace when off |
 
 Settings load from `csv-utils.json` in the working directory on open; see [settings config](../design/settings-config.md).
 
@@ -61,6 +62,7 @@ Each frame: `maybe_refit_column_widths()` (when loaded row count changes), `clam
 | `:` | Open command line (filtered suggestions, Tab complete) |
 | `:` then `:open <path>` | Open another file, or browse a directory in the file picker |
 | `:` then `:close` | Close file and return to file picker (in last file's directory) |
+| `:` then `:toggle-borders` | Show or hide `│` border lines between table columns for this session |
 
 Command line keys: **↑/↓** select suggestion, **Tab** complete, **Enter** run (for `:open`, Enter selects the command first, then type/paste the path and press **Enter** again), **Esc** cancel.
 
@@ -111,7 +113,7 @@ The panel shows editable **type** options filtered by inferred data (e.g. text-o
 | Column list click | Select column |
 | Column list wheel | Scroll sidebar ±3 via `column_list_offset` |
 
-Hit-testing: `hit_test_table` / `hit_test_column_resize` in `app.rs` (variable-width columns + 1-char spacing).
+Hit-testing: `hit_test_table` / `hit_test_column_resize` in `app.rs` (variable-width columns plus a one-character gap between columns; gap shows `│` when column borders are enabled).
 
 ## Column list scrolling
 

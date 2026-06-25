@@ -22,7 +22,8 @@ On first run, the file is written as pretty-printed JSON:
 ```json
 {
   "display": {
-    "numeric_decimal_format": ".3"
+    "numeric_decimal_format": ".3",
+    "show_column_borders": true
   },
   "file_picker": {
     "file_extensions": ["csv", "dat"]
@@ -33,6 +34,7 @@ On first run, the file is written as pretty-printed JSON:
 | Field | Meaning |
 |---|---|
 | `display.numeric_decimal_format` | Default decimal format for numeric columns |
+| `display.show_column_borders` | When `true`, the TUI draws `│` lines in the one-character gap between columns (default). When `false`, the gap stays blank |
 | `file_picker.file_extensions` | File extensions shown in the TUI file picker by default (without leading dot) |
 
 ## Decimal format syntax
@@ -69,6 +71,8 @@ In the picker, type **`:all`** or **`:a`** to show every file, or **`:filter`**
   AppModel.settings          ← loaded once at open
         │
         ├── display.numeric_decimal_format → column decimal default
+        │
+        ├── display.show_column_borders → TUI column gap lines on open
         │
         ├── file_picker.file_extensions → TUI file picker filter
         │
