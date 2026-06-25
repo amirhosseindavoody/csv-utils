@@ -44,6 +44,17 @@ thread on exit (`join_scan_thread`).
 Column statistics backfill runs on the UI thread when the info panel is open
 (budget: 512 rows per `maybe_update_column_layout` call).
 
+### Interaction with row-filter cache
+
+`TableViewState` caches the filtered row index list (`cached_matching_rows`) and
+records the row count at cache build time (`cached_row_count`). When the
+background scan adds new rows, the next call to `matching_row_indices` detects
+`cached_row_count != preview.row_count()` and rebuilds the cache. The rebuild
+happens at most once per event-loop tick (inside `maybe_update_column_layout`),
+so the rendering cost of filtering scales with tick rate, not with the number of
+draw calls per tick. See [Row filtering design](../design/row-filtering.md) for
+the full caching strategy.
+
 ## Status display
 
 | State | TUI title | Web meta |
@@ -56,3 +67,8 @@ Column statistics backfill runs on the UI thread when the info panel is open
 
 - Run from repo root for `test-data/…` paths in pixi tasks
 - Embedded newlines inside quoted fields are supported (RFC 4180 via `csv` crate)
+
+## Related
+
+- [Large-file preview design](../design/large-file-preview.md)
+- [Row filtering design](../design/row-filtering.md)

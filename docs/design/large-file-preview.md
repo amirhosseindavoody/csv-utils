@@ -79,6 +79,7 @@ frame budget). Stats over a partial scan are labeled partial in the panel.
 | Column width auto-fit | Background scan (progressive) |
 | Type inference | Background scan (progressive) |
 | Column statistics | Info panel open, incremental backfill |
+| Filtered row index list | Once per tick in `maybe_update_column_layout`; cache invalidated on filter change or new rows |
 
 ## CLI path
 
@@ -103,4 +104,5 @@ loader; the interactive path stays mmap + index + on-demand `csv` parsing.
 
 - [Data loading](../reference/data-loading.md)
 - [Architecture](../architecture.md)
+- [Row filtering design](row-filtering.md) — filter cache and its interaction with the background scan
 - [Known limitations](../reference/limitations.md)

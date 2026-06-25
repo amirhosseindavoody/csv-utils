@@ -2,7 +2,7 @@
 
 Living documentation for behavior, architecture, and development workflows. Update these docs in the same change as user-visible code changes.
 
-Last verified against: `main` (default TUI + file picker, June 2026).
+Last verified against: `main` (row-filter cache, column/row filter UI, June 2026).
 
 ---
 
@@ -25,6 +25,7 @@ Last verified against: `main` (default TUI + file picker, June 2026).
 - **[Guiding principles](principles.md)** — goals and design values
 - **[Architecture](architecture.md)** — crates, shared model, module map
 - **[Large-file preview (design)](design/large-file-preview.md)** — mmap, offset index, `csv` crate loader
+- **[Row filtering (design)](design/row-filtering.md)** — filter evaluation, caching, performance model
 - **[Settings config (design)](design/settings-config.md)** — `csv-utils.json`, decimal format defaults
 - **[Build & packaging](development/build.md)** — pixi tasks, conda package, dependencies
 - **[Test data generation](test-data-generation.md)** — synthetic CSV generator
@@ -34,6 +35,7 @@ Last verified against: `main` (default TUI + file picker, June 2026).
 | Topic | Document |
 |-------|----------|
 | Filter expression syntax | [features/cli.md](features/cli.md#filter-expressions) |
+| TUI row / column filter | [design/row-filtering.md](design/row-filtering.md) |
 | TUI keyboard bindings | [features/tui.md](features/tui.md#keyboard) |
 | Web `/api/action` | [features/web.md](features/web.md#json-api) |
 | Pixi / conda build | [development/build.md](development/build.md) |

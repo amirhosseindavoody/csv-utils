@@ -48,7 +48,7 @@ Interactive UIs do not duplicate CSV state. They use:
 | Type | Location | Role |
 |------|----------|------|
 | `AppModel` | `model.rs` | File path, `PreviewData`, `TableViewState`, scan thread |
-| `TableViewState` | `model.rs` | Selection, scroll offsets, column widths, UI flags |
+| `TableViewState` | `model.rs` | Selection, scroll offsets, column widths, UI flags, filter state, row-filter cache |
 | `ViewAction` | `actions.rs` | Keyboard/mouse-style mutations (row/col delta, resize, etc.) |
 | `ViewLayout` | `actions.rs` | Viewport dimensions for clamping (rows, table width, sidebar height) |
 | `ClientView` | `client_view.rs` | JSON snapshot for browser clients |
@@ -59,6 +59,11 @@ Flow:
 1. **Input** → TUI event loop or web `POST /api/action` parses intent.
 2. **`apply_action`** → mutates `TableViewState`, runs `tick()` (clamp selection/scroll).
 3. **Render** → TUI draws from `AppModel`; web returns `ClientView` JSON.
+
+### Row-filter cache
+
+`TableViewState` holds `cached_matching_rows: Option<Vec<usize>>` and `cached_row_count: usize`.
+`AppModel::matching_row_indices(&mut self) -> &[usize]` returns the cache, rebuilding it only when the loaded row count changes or a filter is mutated. Draw code uses the read-only `cached_matching_rows(&self) -> Option<&[usize]>` accessor. `maybe_update_column_layout()` (called once per event-loop tick) warms the cache before any draw. This limits the row-filter scan to **at most one pass per tick**, regardless of how many places in the render pipeline need the filtered row list. See [Row filtering design](design/row-filtering.md).
 
 ## CLI vs interactive loading
 
@@ -74,24 +79,27 @@ CLI commands re-open files; there is no shared cache with TUI/web sessions.
 ```
 csv-utils-core/src/
   lib.rs
-  schema.rs          # split_row, read_fields_from_slice (csv crate)
-  predicate.rs       # filter expressions
-  preview.rs         # PreviewData, mmap, offset index, background scan
-  column_layout.rs   # ColumnLayoutState (width, inference, lazy stats)
+  schema.rs               # split_row, read_fields_from_slice (csv crate)
+  predicate.rs            # CLI filter expressions
+  preview.rs              # PreviewData, mmap, offset index, background scan
+  column_layout.rs        # ColumnLayoutState (width, inference, lazy stats)
   stats.rs
   unique.rs
   json_view.rs
-  engine.rs          # CLI orchestration
-  column.rs          # ColumnKind, value-based type inference
-  display.rs         # truncate_middle, numeric rescaling, format_cell_for_column
-  model.rs           # AppModel, TableViewState, auto-fit column widths
-  actions.rs         # ViewAction, apply_action
-  client_view.rs     # ClientView JSON
+  engine.rs               # CLI orchestration
+  column.rs               # ColumnKind, value-based type inference
+  display.rs              # truncate_middle, numeric rescaling, format_cell_for_column
+  model.rs                # AppModel, TableViewState, row-filter cache, auto-fit
+  actions.rs              # ViewAction, apply_action
+  client_view.rs          # ClientView JSON
+  fuzzy.rs                # fuzzy_score (subsequence), rank_by_fuzzy
+  column_value_filter.rs  # numeric expression parser + fuzzy text row filter eval
 
 csv-utils/src/
   main.rs
   cli.rs
   tui/app.rs
+  tui/column_finder.rs    # ColumnFinderState: / fuzzy column search bar
 
 csv-utils-web/src/
   main.rs
@@ -104,4 +112,5 @@ csv-utils-web/src/
 
 - [Data loading](reference/data-loading.md) — preview APIs and threading
 - [CSV parsing](reference/csv-parsing.md) — `csv` crate parsing and display rules
+- [Row filtering design](design/row-filtering.md) — filter evaluation, caching, and performance
 - [Build & packaging](development/build.md) — pixi tasks and conda recipe

@@ -67,7 +67,7 @@ pub const VIEW_COMMANDS: &[CommandSpec] = &[
     CommandSpec {
         primary: ":filter",
         aliases: &[":f"],
-        description: "Filter column list by name",
+        description: "Filter rows (selected column) or sidebar when focused",
         takes_args: true,
     },
 ];

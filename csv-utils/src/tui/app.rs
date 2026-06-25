@@ -36,7 +36,7 @@ csv — keyboard shortcuts
   :close     close file and open file picker
   :toggle-borders  show or hide table column border lines
   /          fuzzy-find columns (filters sidebar)
-  :filter    filter column sidebar by name (:f)
+  :filter    filter rows on selected column, or sidebar when focused (:f)
 
 Mouse: click table cells, column info options, or column header borders to resize; wheel on table scrolls rows; wheel on column list scrolls columns.
 
@@ -245,7 +245,7 @@ fn column_list_visible_height(columns_area: Rect) -> usize {
         .max(1) as usize
 }
 
-fn apply_column_filter_from_command(model: &mut AppModel, cmd: &str) -> Result<(), String> {
+fn apply_column_name_filter_from_command(model: &mut AppModel, cmd: &str) -> Result<(), String> {
     if cmd == ":filter" || cmd == ":f" {
         model.clear_column_name_filter();
         return Ok(());
@@ -261,6 +261,42 @@ fn apply_column_filter_from_command(model: &mut AppModel, cmd: &str) -> Result<(
     Err(format!("Unknown command: {cmd}"))
 }
 
+fn apply_row_value_filter_from_command(
+    model: &mut AppModel,
+    cmd: &str,
+) -> Result<(), String> {
+    let col = model.view.selected_col;
+    if cmd == ":filter" || cmd == ":f" {
+        model.clear_column_value_filter(col);
+        return Ok(());
+    }
+    if let Some(query) = cmd.strip_prefix(":filter ") {
+        model
+            .set_column_value_filter(col, query.trim().to_string())
+            .map_err(|e| e.to_string())?;
+        return Ok(());
+    }
+    if let Some(query) = cmd.strip_prefix(":f ") {
+        model
+            .set_column_value_filter(col, query.trim().to_string())
+            .map_err(|e| e.to_string())?;
+        return Ok(());
+    }
+    Err(format!("Unknown command: {cmd}"))
+}
+
+fn apply_filter_from_command(
+    model: &mut AppModel,
+    cmd: &str,
+    sidebar_focused: bool,
+) -> Result<(), String> {
+    if sidebar_focused {
+        apply_column_name_filter_from_command(model, cmd)
+    } else {
+        apply_row_value_filter_from_command(model, cmd)
+    }
+}
+
 fn handle_key(
     key: KeyEvent,
     model: &mut AppModel,
@@ -274,9 +310,11 @@ fn handle_key(
             ColumnFinderAction::Continue => {}
             ColumnFinderAction::Cancel => {
                 model.clear_column_name_filter();
+                model.view.column_sidebar_focused = false;
                 *column_finder = None;
             }
             ColumnFinderAction::Select(_) => {
+                model.view.column_sidebar_focused = false;
                 *column_finder = None;
             }
         }
@@ -294,7 +332,11 @@ fn handle_key(
             }
             CommandKeyAction::Rejected => {
                 if command.buf == ":filter " || command.buf == ":f " {
-                    model.clear_column_name_filter();
+                    if model.view.column_sidebar_focused {
+                        model.clear_column_name_filter();
+                    } else {
+                        model.clear_column_value_filter(model.view.selected_col);
+                    }
                     *command_line = None;
                     *command_error = None;
                     model.ensure_column_list_shows_selection(column_list_height);
@@ -329,7 +371,11 @@ fn handle_key(
                         }
                     }
                 } else if cmd.starts_with(":filter ") || cmd.starts_with(":f ") || cmd == ":filter" || cmd == ":f" {
-                    match apply_column_filter_from_command(model, &cmd) {
+                    match apply_filter_from_command(
+                        model,
+                        &cmd,
+                        model.view.column_sidebar_focused,
+                    ) {
                         Ok(()) => {
                             *command_line = None;
                             *command_error = None;
@@ -358,6 +404,18 @@ fn handle_key(
     }
 
     if model.view.show_column_info {
+        if model.view.column_info_filter_editing {
+            match key.code {
+                KeyCode::Char('q') => model.close_column_info_pane(),
+                KeyCode::Enter => {
+                    let _ = model.column_info_apply_filter_draft();
+                }
+                KeyCode::Backspace => model.column_info_filter_backspace(),
+                KeyCode::Char(c) => model.column_info_filter_push_char(c),
+                _ => {}
+            }
+            return MainKeyAction::Continue;
+        }
         if model.view.column_info_decimal_editing {
             match key.code {
                 KeyCode::Char('q') => model.close_column_info_pane(),
@@ -375,7 +433,12 @@ fn handle_key(
             KeyCode::Enter => model.column_info_apply_focus(),
             KeyCode::Char(c) if c.is_ascii() && !c.is_ascii_control() => {
                 let col = model.view.selected_col;
-                if model.view.column_info_focus == model.column_info_decimal_focus_index(col) {
+                if model.view.column_info_focus == model.column_info_filter_focus_index(col) {
+                    model.column_info_start_filter_edit();
+                    model.column_info_filter_push_char(c);
+                } else if model.view.column_info_focus
+                    == model.column_info_decimal_focus_index(col)
+                {
                     model.column_info_start_decimal_edit();
                     model.column_info_decimal_push_char(c);
                 }
@@ -403,33 +466,50 @@ fn handle_key(
             *column_finder = Some(ColumnFinderState::start());
             *command_line = None;
             *command_error = None;
+            model.view.column_sidebar_focused = true;
             column_finder.as_mut().unwrap().sync_filter(model);
         }
         KeyCode::Char('?') => model.view.show_help = true,
         KeyCode::Char('c') => model.open_column_info_pane(),
         KeyCode::Up | KeyCode::Char('k') => {
-            model.view.selected_row = model.view.selected_row.saturating_sub(1);
+            model.view.column_sidebar_focused = false;
+            model.move_selected_row(-1);
         }
         KeyCode::Down | KeyCode::Char('j') => {
-            model.view.selected_row = model.view.selected_row.saturating_add(1);
+            model.view.column_sidebar_focused = false;
+            model.move_selected_row(1);
         }
         KeyCode::Left | KeyCode::Char('h') => {
+            model.view.column_sidebar_focused = false;
             model.view.selected_col = model.view.selected_col.saturating_sub(1);
             model.ensure_column_list_shows_selection(column_list_height);
         }
         KeyCode::Right | KeyCode::Char('l') => {
+            model.view.column_sidebar_focused = false;
             model.view.selected_col = model.view.selected_col.saturating_add(1);
             model.ensure_column_list_shows_selection(column_list_height);
         }
         KeyCode::PageUp => {
-            model.view.selected_row = model.view.selected_row.saturating_sub(10);
+            model.view.column_sidebar_focused = false;
+            model.move_selected_row(-10);
         }
         KeyCode::PageDown => {
-            model.view.selected_row = model.view.selected_row.saturating_add(10);
+            model.view.column_sidebar_focused = false;
+            model.move_selected_row(10);
         }
-        KeyCode::Home => model.view.selected_row = 0,
+        KeyCode::Home => {
+            model.view.column_sidebar_focused = false;
+            let first = model.matching_row_indices().first().copied();
+            if let Some(r) = first {
+                model.view.selected_row = r;
+            }
+        }
         KeyCode::End => {
-            model.view.selected_row = model.preview.row_count().saturating_sub(1);
+            model.view.column_sidebar_focused = false;
+            let last = model.matching_row_indices().last().copied();
+            if let Some(r) = last {
+                model.view.selected_row = r;
+            }
         }
         _ => {}
     }
@@ -496,6 +576,7 @@ fn handle_mouse(
 
     match mouse.kind {
         MouseEventKind::ScrollUp if areas.columns.contains(pos) => {
+            model.view.column_sidebar_focused = true;
             model.view.column_list_offset = model
                 .view
                 .column_list_offset
@@ -503,18 +584,22 @@ fn handle_mouse(
             model.clamp_column_list_offset(column_list_height);
         }
         MouseEventKind::ScrollDown if areas.columns.contains(pos) => {
+            model.view.column_sidebar_focused = true;
             model.view.column_list_offset += 3;
             model.clamp_column_list_offset(column_list_height);
         }
         MouseEventKind::ScrollUp if areas.table.contains(pos) => {
-            model.view.selected_row = model.view.selected_row.saturating_sub(3);
+            model.view.column_sidebar_focused = false;
+            model.move_selected_row(-3);
         }
         MouseEventKind::ScrollDown if areas.table.contains(pos) => {
-            model.view.selected_row = model.view.selected_row.saturating_add(3);
+            model.view.column_sidebar_focused = false;
+            model.move_selected_row(3);
         }
         MouseEventKind::Down(crossterm::event::MouseButton::Left)
             if areas.table.contains(pos) =>
         {
+            model.view.column_sidebar_focused = false;
             if let Some(resize_col) = hit_test_column_resize(col, row, areas.table, model) {
                 *column_resize = Some(ColumnResize {
                     col: resize_col,
@@ -534,6 +619,7 @@ fn handle_mouse(
         MouseEventKind::Down(crossterm::event::MouseButton::Left)
             if areas.columns.contains(pos) =>
         {
+            model.view.column_sidebar_focused = true;
             let inner = Block::default().borders(Borders::ALL).inner(areas.columns);
             if !inner.contains(pos) {
                 return;
@@ -693,10 +779,11 @@ fn hit_test_table(mouse_x: u16, mouse_y: u16, table_area: Rect, model: &AppModel
     }
 
     let data_row = (rel_y - 2) as usize;
-    let row_idx = model.view.row_offset + data_row;
-    if row_idx >= model.preview.row_count() {
+    let empty: &[usize] = &[];
+    let matching = model.cached_matching_rows().unwrap_or(empty);
+    let Some(&row_idx) = matching.get(model.view.row_offset + data_row) else {
         return None;
-    }
+    };
 
     Some(TableHit {
         row: Some(row_idx),
@@ -746,11 +833,20 @@ fn draw(
         ])
         .split(area);
 
-    let title = format!(
-        " csv  │  {}  │  {} rows",
-        model.file_label(),
-        model.preview.row_count()
-    );
+    let title = if model.row_value_filters_active() {
+        let visible = model.cached_matching_rows().map_or(0, |m| m.len());
+        format!(
+            " csv  │  {}  │  {visible}/{} rows",
+            model.file_label(),
+            model.preview.row_count()
+        )
+    } else {
+        format!(
+            " csv  │  {}  │  {} rows",
+            model.file_label(),
+            model.preview.row_count()
+        )
+    };
     let scan_note = if model.preview.scan_error() {
         Span::styled("  ERROR loading file", Style::default().fg(Color::Red))
     } else if !model.preview.scan_done() {
@@ -788,7 +884,7 @@ fn draw(
     } else if let Some(command) = command_line {
         command.draw(frame, outer[2], VIEW_COMMANDS, command_error);
     } else {
-        let hints = " q quit  ↑↓ rows  ←→ cols  / columns  drag resize  c info  ? help  : command ";
+        let hints = " q quit  ↑↓ rows  ←→ cols  / columns  :filter rows  c info  ? help ";
         frame.render_widget(
             Paragraph::new(hints).style(Style::default().fg(Color::DarkGray)),
             outer[2],
@@ -854,9 +950,13 @@ fn draw_table(frame: &mut ratatui::Frame, area: Rect, model: &AppModel) {
     .bottom_margin(1);
 
     let body_height = area.height.saturating_sub(3) as usize;
+    let empty: &[usize] = &[];
+    let matching = model.cached_matching_rows().unwrap_or(empty);
     let mut rows = Vec::new();
     for r in 0..body_height {
-        let row_idx = model.view.row_offset + r;
+        let Some(&row_idx) = matching.get(model.view.row_offset + r) else {
+            break;
+        };
         let Some(fields) = model.preview.row_fields(row_idx) else {
             break;
         };
@@ -960,6 +1060,14 @@ fn draw_column_list(frame: &mut ratatui::Frame, area: Rect, model: &AppModel) {
     );
 }
 
+fn column_info_filter_line(type_count: usize, repr_section_visible: bool) -> usize {
+    if repr_section_visible {
+        3 + type_count + 9
+    } else {
+        3 + type_count + 2
+    }
+}
+
 fn column_info_option_at_line(
     line: usize,
     type_count: usize,
@@ -977,6 +1085,13 @@ fn column_info_option_at_line(
         if line == decimal_line {
             return Some(type_count + 2);
         }
+    }
+    if line == column_info_filter_line(type_count, repr_section_visible) {
+        return Some(if repr_section_visible {
+            type_count + 3
+        } else {
+            type_count
+        });
     }
     None
 }
@@ -1090,6 +1205,46 @@ fn draw_column_info(frame: &mut ratatui::Frame, popup_area: Rect, model: &AppMod
             decimal_style,
         )));
     }
+
+    lines.push(Line::from(""));
+    lines.push(Line::from(Span::styled(
+        " Row filter ",
+        Style::default().add_modifier(Modifier::BOLD),
+    )));
+    let filter_idx = model.column_info_filter_focus_index(col);
+    let filter_value = if model.view.column_info_filter_editing {
+        model.view.column_info_filter_draft.clone()
+    } else {
+        model
+            .column_value_filter_display(col)
+            .unwrap_or("")
+            .to_string()
+    };
+    let filter_marker = if focus == filter_idx { "▸ " } else { "  " };
+    let filter_style = if focus == filter_idx || model.view.column_info_filter_editing {
+        Style::default()
+            .fg(Color::Black)
+            .bg(Color::Cyan)
+            .add_modifier(Modifier::BOLD)
+    } else {
+        Style::default()
+    };
+    let filter_hint = if model.view.column_info_filter_editing {
+        " (Enter apply)"
+    } else if model.column_value_filter_is_numeric(col) {
+        " e.g. >10, (>=10) & (<20)"
+    } else {
+        " fuzzy text match"
+    };
+    let filter_display = if filter_value.is_empty() {
+        "(none)".to_string()
+    } else {
+        filter_value
+    };
+    lines.push(Line::from(Span::styled(
+        format!("{filter_marker}[{filter_display}]{filter_hint}"),
+        filter_style,
+    )));
 
     lines.push(Line::from(""));
     lines.push(Line::from(Span::styled(

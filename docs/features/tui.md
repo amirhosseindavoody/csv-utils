@@ -43,7 +43,9 @@ Data table uses ratatui `Table`. Column sidebar uses manual `Paragraph` lines (n
 | `column_info_decimal_editing` | TUI: editing decimal format text |
 | `show_help` | Help overlay visible |
 | `show_column_borders` | Draw column `│` lines and a header `─` rule in the table gaps (initialized from config; toggled with `:toggle-borders`). Gaps stay as whitespace when off |
-| `column_name_filter` | Fuzzy name filter for the column sidebar (`/` finder or `:filter`) |
+| `column_name_filter` | Fuzzy name filter for the column sidebar (`/` finder) |
+| `column_value_filters` | Per-column row value filters (`:filter` on selected column) |
+| `column_sidebar_focused` | When true, `:filter` applies to the sidebar instead of row values |
 
 Settings load from `csv-utils.json` in the working directory on open; see [settings config](../design/settings-config.md).
 
@@ -65,12 +67,15 @@ Each frame: `maybe_refit_column_widths()` (when loaded row count changes), `clam
 | `:` then `:open <path>` | Open another file, or browse a directory in the file picker |
 | `:` then `:close` | Close file and return to file picker (in last file's directory) |
 | `:` then `:toggle-borders` | Show or hide `│` border lines between table columns for this session |
-| `:` then `:filter <text>` / `:f <text>` | Filter column sidebar to fuzzy-matched names |
-| `:` then `:filter` / `:f` | Clear column sidebar filter (Enter on empty `:filter ` also clears) |
+| `:` then `:filter <text>` / `:f <text>` | Filter **rows** on the selected column (text: fuzzy; numeric: `>10`, `(>=10) & (<20)`, etc.) |
+| `:` then `:filter` / `:f` | Clear row filter on the selected column |
+| Sidebar focused + `:filter <text>` | Filter the column **sidebar** by name (click or scroll sidebar to focus) |
 
 Command line keys: **↑/↓** select suggestion, **Tab** complete, **Enter** run (for `:open` and `:filter`, Enter selects the command first, then type the argument and press **Enter** again), **Esc** cancel.
 
 Column finder keys (**`/`**): type to fuzzy-filter the sidebar, **↑/↓** pick a match, **Enter** jump to that column (filter stays active), **Esc** cancel and clear the filter.
+
+Filtered columns show `*` in the table header and column sidebar. The title bar shows `visible/total rows` when any row filter is active. Edit or clear filters in the column info panel (**c** → **Row filter**).
 
 ### File picker (no file on launch)
 
@@ -100,12 +105,12 @@ While the panel is open, table navigation is disabled:
 | Key | Action |
 |-----|--------|
 | `↑`/`↓` or `j`/`k` | Move highlight between type, representation, and decimal places |
-| `Enter` | Apply highlighted option; on **Decimal places**, start edit or apply typed value |
+| `Enter` | Apply highlighted option; on **Decimal places** or **Row filter**, start edit or apply typed value |
 | Type directly | When decimal row is focused, type a format (e.g. `.5`) |
 | `Backspace` | While editing decimal format, delete a character |
 | `q` | Close panel |
 
-The panel shows editable **type** options filtered by inferred data (e.g. text-only columns hide date/int/float), **representation** when numeric types apply, **decimal places** (text field, default `.3` from `csv-utils.json`), plus type-specific **statistics** from loaded rows (note shown while scanning).
+The panel shows editable **type** options filtered by inferred data (e.g. text-only columns hide date/int/float), **representation** when numeric types apply, **decimal places** (text field, default `.3` from `csv-utils.json`), **row filter** (fuzzy text or numeric expression), plus type-specific **statistics** from loaded rows (note shown while scanning).
 
 ## Mouse
 

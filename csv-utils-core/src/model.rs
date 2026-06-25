@@ -5,6 +5,7 @@ use crate::column::{
 use crate::column_stats::{build_column_info, ColumnInfo};
 use crate::display::{format_cell_for_column, sanitize_ascii, truncate_middle};
 use crate::settings::{self, normalize_decimal_format, SettingsFile};
+use crate::column_value_filter::{numeric_cell_matches, text_cell_matches, ColumnFilterError};
 use crate::fuzzy::rank_by_fuzzy;
 use std::path::PathBuf;
 
@@ -40,6 +41,16 @@ pub struct TableViewState {
     pub show_column_borders: bool,
     /// Non-empty when the column sidebar lists only fuzzy-matched headers.
     pub column_name_filter: String,
+    /// Per-column row value filter expression (`None` = no filter on that column).
+    pub column_value_filters: Vec<Option<String>>,
+    /// When true, `:filter` applies to the column sidebar instead of row values.
+    pub column_sidebar_focused: bool,
+    pub column_info_filter_editing: bool,
+    pub column_info_filter_draft: String,
+    /// Cached result of the row-filter scan. `None` means stale — recompute on next access.
+    pub(crate) cached_matching_rows: Option<Vec<usize>>,
+    /// Row count at the time the cache was built, used to detect new rows arriving.
+    pub(crate) cached_row_count: usize,
 }
 
 #[derive(Debug)]
@@ -71,6 +82,12 @@ impl Default for TableViewState {
             show_help: false,
             show_column_borders: true,
             column_name_filter: String::new(),
+            column_value_filters: Vec::new(),
+            column_sidebar_focused: false,
+            column_info_filter_editing: false,
+            column_info_filter_draft: String::new(),
+            cached_matching_rows: None,
+            cached_row_count: 0,
         }
     }
 }
@@ -187,6 +204,9 @@ impl AppModel {
         if self.view.column_decimal_formats.len() != n {
             self.view.column_decimal_formats = vec![None; n];
         }
+        if self.view.column_value_filters.len() != n {
+            self.view.column_value_filters = vec![None; n];
+        }
     }
 
     pub fn decimal_format_for_column(&self, col: usize) -> &str {
@@ -295,6 +315,8 @@ impl AppModel {
         }
 
         self.apply_fitted_column_widths();
+        // Warm the row-filter cache so draw code can read it without recomputing every frame.
+        self.matching_row_indices();
     }
 
     pub fn effective_column_kind(&self, col: usize) -> ColumnKind {
@@ -329,11 +351,16 @@ impl AppModel {
 
     pub fn format_column_header(&self, col: usize, name: &str) -> String {
         let width = self.column_width_chars(col);
-        let visible = sanitize_ascii(name);
+        let label = if self.column_has_value_filter(col) {
+            format!("{name}*")
+        } else {
+            name.to_string()
+        };
+        let visible = sanitize_ascii(&label);
         if visible.len() <= width {
             format!("{visible:<width$}", width = width)
         } else {
-            format!("{:<width$}", truncate_middle(name, width), width = width)
+            format!("{:<width$}", truncate_middle(&label, width), width = width)
         }
     }
 
@@ -396,6 +423,8 @@ impl AppModel {
         self.view.show_column_info = true;
         self.view.column_info_decimal_editing = false;
         self.view.column_info_decimal_draft.clear();
+        self.view.column_info_filter_editing = false;
+        self.view.column_info_filter_draft.clear();
         self.layout()
             .lock()
             .expect("layout mutex poisoned")
@@ -412,6 +441,8 @@ impl AppModel {
         self.view.show_column_info = false;
         self.view.column_info_decimal_editing = false;
         self.view.column_info_decimal_draft.clear();
+        self.view.column_info_filter_editing = false;
+        self.view.column_info_filter_draft.clear();
         self.layout()
             .lock()
             .expect("layout mutex poisoned")
@@ -448,17 +479,11 @@ impl AppModel {
     }
 
     pub fn column_info_focus_max(&self) -> usize {
-        let col = self.view.selected_col;
-        let type_count = self.column_info_type_kinds(col).len();
-        if self.column_info_repr_section_visible(col) {
-            type_count + 2
-        } else {
-            type_count.saturating_sub(1)
-        }
+        self.column_info_filter_focus_index(self.view.selected_col)
     }
 
     pub fn column_info_focus_delta(&mut self, delta: i32) {
-        if self.view.column_info_decimal_editing {
+        if self.view.column_info_decimal_editing || self.view.column_info_filter_editing {
             return;
         }
         let max = self.column_info_focus_max() as i32;
@@ -506,6 +531,16 @@ impl AppModel {
         let kinds = self.column_info_type_kinds(col);
         let focus = self.view.column_info_focus;
         let decimal_idx = self.column_info_decimal_focus_index(col);
+        let filter_idx = self.column_info_filter_focus_index(col);
+
+        if focus == filter_idx {
+            if self.view.column_info_filter_editing {
+                let _ = self.column_info_apply_filter_draft();
+            } else {
+                self.column_info_start_filter_edit();
+            }
+            return;
+        }
 
         if focus == decimal_idx {
             if self.view.column_info_decimal_editing {
@@ -519,6 +554,10 @@ impl AppModel {
         if self.view.column_info_decimal_editing {
             self.view.column_info_decimal_editing = false;
             self.view.column_info_decimal_draft.clear();
+        }
+        if self.view.column_info_filter_editing {
+            self.view.column_info_filter_editing = false;
+            self.view.column_info_filter_draft.clear();
         }
 
         if focus < kinds.len() {
@@ -541,6 +580,10 @@ impl AppModel {
         let col = self.view.selected_col;
         if option == self.column_info_decimal_focus_index(col) {
             self.column_info_start_decimal_edit();
+            return;
+        }
+        if option == self.column_info_filter_focus_index(col) {
+            self.column_info_start_filter_edit();
             return;
         }
         self.column_info_apply_focus();
@@ -591,7 +634,194 @@ impl AppModel {
     }
 
     pub fn format_sidebar_column_label(&self, col_idx: usize, name: &str) -> String {
-        format!("{col_idx}: {name}")
+        let star = if self.column_has_value_filter(col_idx) {
+            "*"
+        } else {
+            ""
+        };
+        format!("{col_idx}: {name}{star}")
+    }
+
+    pub fn column_has_value_filter(&self, col: usize) -> bool {
+        self.view
+            .column_value_filters
+            .get(col)
+            .and_then(|f| f.as_ref())
+            .is_some_and(|s| !s.trim().is_empty())
+    }
+
+    pub fn column_value_filter_display(&self, col: usize) -> Option<&str> {
+        self.view
+            .column_value_filters
+            .get(col)
+            .and_then(|f| f.as_deref())
+            .filter(|s| !s.trim().is_empty())
+    }
+
+    pub fn column_value_filter_is_numeric(&self, col: usize) -> bool {
+        is_numeric(self.effective_column_kind(col))
+    }
+
+    pub fn row_value_filters_active(&self) -> bool {
+        self.view
+            .column_value_filters
+            .iter()
+            .any(|f| f.as_ref().is_some_and(|s| !s.trim().is_empty()))
+    }
+
+    pub fn set_column_value_filter(
+        &mut self,
+        col: usize,
+        expr: String,
+    ) -> Result<(), ColumnFilterError> {
+        self.ensure_column_state();
+        if col >= self.view.column_value_filters.len() {
+            return Ok(());
+        }
+        let trimmed = expr.trim().to_string();
+        if trimmed.is_empty() {
+            self.view.column_value_filters[col] = None;
+        } else if self.column_value_filter_is_numeric(col) {
+            crate::column_value_filter::validate_numeric_filter(&trimmed)?;
+            self.view.column_value_filters[col] = Some(trimmed);
+        } else {
+            self.view.column_value_filters[col] = Some(trimmed);
+        }
+        self.invalidate_row_cache();
+        self.snap_selection_to_visible_rows();
+        Ok(())
+    }
+
+    pub fn clear_column_value_filter(&mut self, col: usize) {
+        self.ensure_column_state();
+        if col < self.view.column_value_filters.len() {
+            self.view.column_value_filters[col] = None;
+            self.invalidate_row_cache();
+            self.snap_selection_to_visible_rows();
+        }
+    }
+
+    fn cell_matches_value_filter(
+        &self,
+        col: usize,
+        cell: &str,
+        expr: &str,
+    ) -> Result<bool, ColumnFilterError> {
+        if self.column_value_filter_is_numeric(col) {
+            numeric_cell_matches(cell, expr)
+        } else {
+            Ok(text_cell_matches(cell, expr))
+        }
+    }
+
+    fn row_passes_value_filters(&self, row: usize) -> bool {
+        let Some(fields) = self.preview.row_fields(row) else {
+            return false;
+        };
+        for (col, filter) in self.view.column_value_filters.iter().enumerate() {
+            let Some(expr) = filter.as_ref().filter(|s| !s.trim().is_empty()) else {
+                continue;
+            };
+            let cell = fields.get(col).map(String::as_str).unwrap_or("");
+            match self.cell_matches_value_filter(col, cell, expr) {
+                Ok(true) => {}
+                Ok(false) | Err(_) => return false,
+            }
+        }
+        true
+    }
+
+    fn invalidate_row_cache(&mut self) {
+        self.view.cached_matching_rows = None;
+    }
+
+    /// Return the cached matching rows without recomputing (may be stale if not yet ticked).
+    /// Call `matching_row_indices` (mut) to ensure freshness; use this in draw code only.
+    pub fn cached_matching_rows(&self) -> Option<&[usize]> {
+        self.view.cached_matching_rows.as_deref()
+    }
+
+    /// Rebuild the cache if stale (filters changed or new rows arrived), then return a slice.
+    pub fn matching_row_indices(&mut self) -> &[usize] {
+        let current_count = self.preview.row_count();
+        let cache_valid = self.view.cached_matching_rows.is_some()
+            && self.view.cached_row_count == current_count;
+        if !cache_valid {
+            let rows: Vec<usize> = if !self.row_value_filters_active() {
+                (0..current_count).collect()
+            } else {
+                (0..current_count)
+                    .filter(|&row| self.row_passes_value_filters(row))
+                    .collect()
+            };
+            self.view.cached_matching_rows = Some(rows);
+            self.view.cached_row_count = current_count;
+        }
+        self.view.cached_matching_rows.as_deref().unwrap()
+    }
+
+    fn snap_selection_to_visible_rows(&mut self) {
+        self.matching_row_indices(); // warm cache
+        let sel = self.view.selected_row;
+        let m = self.view.cached_matching_rows.as_deref().unwrap();
+        let (first, contains) = (m.first().copied(), m.contains(&sel));
+        if let Some(first) = first {
+            if !contains {
+                self.view.selected_row = first;
+            }
+        }
+    }
+
+    pub fn move_selected_row(&mut self, delta: i32) {
+        self.matching_row_indices(); // ensure cache is warm
+        let sel = self.view.selected_row;
+        let m = self.view.cached_matching_rows.as_deref().unwrap();
+        if m.is_empty() {
+            return;
+        }
+        let pos = m.iter().position(|&r| r == sel).unwrap_or(0);
+        let next = ((pos as i32) + delta).clamp(0, m.len() as i32 - 1) as usize;
+        let target = m[next];
+        self.view.selected_row = target;
+    }
+
+    pub fn column_info_filter_focus_index(&self, col: usize) -> usize {
+        let type_count = self.column_info_type_kinds(col).len();
+        if self.column_info_repr_section_visible(col) {
+            type_count + 3
+        } else {
+            type_count
+        }
+    }
+
+    pub fn column_info_start_filter_edit(&mut self) {
+        let col = self.view.selected_col;
+        self.view.column_info_filter_editing = true;
+        self.view.column_info_filter_draft = self
+            .column_value_filter_display(col)
+            .unwrap_or("")
+            .to_string();
+        self.view.column_info_focus = self.column_info_filter_focus_index(col);
+    }
+
+    pub fn column_info_apply_filter_draft(&mut self) -> Result<(), ColumnFilterError> {
+        let col = self.view.selected_col;
+        let draft = self.view.column_info_filter_draft.clone();
+        self.set_column_value_filter(col, draft)?;
+        self.view.column_info_filter_editing = false;
+        Ok(())
+    }
+
+    pub fn column_info_filter_push_char(&mut self, ch: char) {
+        if self.view.column_info_filter_editing && !ch.is_ascii_control() {
+            self.view.column_info_filter_draft.push(ch);
+        }
+    }
+
+    pub fn column_info_filter_backspace(&mut self) {
+        if self.view.column_info_filter_editing {
+            self.view.column_info_filter_draft.pop();
+        }
     }
 
     pub fn set_column_name_filter(&mut self, filter: String) {
@@ -677,20 +907,32 @@ impl AppModel {
     }
 
     pub fn clamp_selection(&mut self, viewport_rows: usize, table_width: u16) {
-        let max_rows = self.preview.row_count().saturating_sub(1);
-        let headers = self.preview.headers();
-        let max_cols = headers.len().saturating_sub(1);
+        // Build the cache first, then extract what we need as plain values.
+        self.matching_row_indices();
+        let sel = self.view.selected_row;
+        let m = self.view.cached_matching_rows.as_deref().unwrap();
+        let first_row = m.first().copied();
+        let contains_sel = m.contains(&sel);
+        let selected_pos = m.iter().position(|&r| r == sel).unwrap_or(0);
+        let match_len = m.len();
+        let max_cols = self.preview.headers().len().saturating_sub(1);
         let max_visible = self.max_visible_columns(table_width);
 
-        self.view.selected_row = self.view.selected_row.min(max_rows);
         self.view.selected_col = self.view.selected_col.min(max_cols);
 
-        if self.view.selected_row < self.view.row_offset {
-            self.view.row_offset = self.view.selected_row;
+        if let Some(first) = first_row {
+            if !contains_sel {
+                self.view.selected_row = first;
+            }
         }
-        if viewport_rows > 0 && self.view.selected_row >= self.view.row_offset + viewport_rows {
-            self.view.row_offset = self.view.selected_row - viewport_rows + 1;
+
+        let max_offset = match_len.saturating_sub(viewport_rows.max(1));
+        if selected_pos < self.view.row_offset {
+            self.view.row_offset = selected_pos;
+        } else if viewport_rows > 0 && selected_pos >= self.view.row_offset + viewport_rows {
+            self.view.row_offset = selected_pos.saturating_sub(viewport_rows - 1);
         }
+        self.view.row_offset = self.view.row_offset.min(max_offset);
 
         if self.view.selected_col < self.view.col_offset {
             self.view.col_offset = self.view.selected_col;
@@ -858,6 +1100,22 @@ mod tests {
         let w = model.column_width_chars(0);
         model.refit_column_widths();
         assert_eq!(model.column_width_chars(0), w);
+    }
+
+    #[test]
+    fn row_value_filter_narrows_visible_rows() {
+        let path = PathBuf::from("test-data/generated/test_1000x100.csv");
+        if !path.exists() {
+            return;
+        }
+        let mut model = AppModel::open(Some(path)).expect("open csv");
+        let total = model.preview.row_count();
+        model
+            .set_column_value_filter(0, ">0".to_string())
+            .expect("numeric filter");
+        let matching = model.matching_row_indices();
+        assert!(matching.len() < total);
+        assert!(model.column_has_value_filter(0));
     }
 
     #[test]
