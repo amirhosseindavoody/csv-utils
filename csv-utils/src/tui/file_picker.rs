@@ -27,7 +27,21 @@ pub struct FilePicker {
 
 impl FilePicker {
     pub fn new(file_extensions: Vec<String>) -> io::Result<Self> {
-        let current_dir = std::env::current_dir()?;
+        Self::in_dir(std::env::current_dir()?, file_extensions, None)
+    }
+
+    pub fn in_dir(
+        dir: PathBuf,
+        file_extensions: Vec<String>,
+        highlight_file: Option<PathBuf>,
+    ) -> io::Result<Self> {
+        let current_dir = if dir.is_dir() {
+            dir
+        } else if let Some(parent) = dir.parent() {
+            parent.to_path_buf()
+        } else {
+            std::env::current_dir()?
+        };
         let mut picker = Self {
             current_dir,
             entries: Vec::new(),
@@ -40,6 +54,18 @@ impl FilePicker {
             command_buf: String::new(),
         };
         picker.refresh()?;
+        if let Some(path) = highlight_file {
+            if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
+                if let Some(idx) = picker
+                    .entries
+                    .iter()
+                    .position(|e| !e.is_dir && e.name == name)
+                {
+                    picker.selected = idx;
+                    picker.clamp_list_offset(1);
+                }
+            }
+        }
         Ok(picker)
     }
 

@@ -58,6 +58,7 @@ Each frame: `maybe_refit_column_widths()` (when loaded row count changes), `clam
 | `Home`/`End` | First / last loaded row |
 | `c` | Open column info panel |
 | `?` | Help overlay |
+| `:` then `:close` | Close file and return to file picker (in last file's directory) |
 
 ### File picker (no file on launch)
 

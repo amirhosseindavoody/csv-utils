@@ -146,6 +146,12 @@ impl AppModel {
         Ok(())
     }
 
+    pub fn close_file(&mut self) -> std::io::Result<()> {
+        self.join_scan_thread();
+        *self = Self::open(None)?;
+        Ok(())
+    }
+
     pub fn file_label(&self) -> &str {
         self.file_path
             .as_ref()

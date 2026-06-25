@@ -30,10 +30,17 @@ csv — keyboard shortcuts
   PgUp/PgDn  scroll 10 rows
   c          column info (type, stats, format)
   ?          this help
+  :close     close file and open file picker
 
 Mouse: click table cells, column info options, or column header borders to resize; wheel on table scrolls rows; wheel on column list scrolls columns.
 
 Press q or ? to close.";
+
+enum MainKeyAction {
+    Continue,
+    Quit,
+    CloseFile,
+}
 
 struct LayoutAreas {
     table: Rect,
@@ -76,6 +83,7 @@ pub fn run(file: Option<&str>) -> Result<()> {
     };
     let mut last_redraw = Instant::now();
     let mut column_resize: Option<ColumnResize> = None;
+    let mut command_buf: Option<String> = None;
 
     while running {
         model.maybe_update_column_layout();
@@ -83,7 +91,7 @@ pub fn run(file: Option<&str>) -> Result<()> {
             areas = if file_picker.is_some() {
                 draw_file_picker(frame, file_picker.as_ref().unwrap())
             } else {
-                draw(frame, &model)
+                draw(frame, &model, command_buf.as_deref())
             };
         })?;
 
@@ -144,7 +152,25 @@ pub fn run(file: Option<&str>) -> Result<()> {
         if event::poll(timeout)? {
             match event::read()? {
                 Event::Key(key) if key.kind == KeyEventKind::Press => {
-                    running = handle_key(key, &mut model, column_list_height);
+                    match handle_key(key, &mut model, column_list_height, &mut command_buf) {
+                        MainKeyAction::Continue => {}
+                        MainKeyAction::Quit => running = false,
+                        MainKeyAction::CloseFile => {
+                            let extensions = model.settings.file_picker.normalized_extensions();
+                            let reopen_at = model.file_path.clone();
+                            model.close_file()?;
+                            file_picker = Some(if let Some(path) = reopen_at {
+                                let dir = path
+                                    .parent()
+                                    .map(PathBuf::from)
+                                    .unwrap_or_else(|| PathBuf::from("."));
+                                FilePicker::in_dir(dir, extensions, Some(path))?
+                            } else {
+                                FilePicker::new(extensions)?
+                            });
+                            command_buf = None;
+                        }
+                    }
                 }
                 Event::Mouse(mouse) => {
                     handle_mouse(
@@ -185,7 +211,36 @@ fn column_list_visible_height(columns_area: Rect) -> usize {
         .max(1) as usize
 }
 
-fn handle_key(key: KeyEvent, model: &mut AppModel, column_list_height: usize) -> bool {
+fn handle_key(
+    key: KeyEvent,
+    model: &mut AppModel,
+    column_list_height: usize,
+    command_buf: &mut Option<String>,
+) -> MainKeyAction {
+    if let Some(buf) = command_buf.as_mut() {
+        match key.code {
+            KeyCode::Esc => {
+                *command_buf = None;
+            }
+            KeyCode::Enter => {
+                let cmd = buf.trim().to_ascii_lowercase();
+                *command_buf = None;
+                if cmd == ":close" {
+                    return MainKeyAction::CloseFile;
+                }
+            }
+            KeyCode::Backspace => {
+                buf.pop();
+                if buf.is_empty() {
+                    *command_buf = None;
+                }
+            }
+            KeyCode::Char(c) if !c.is_ascii_control() => buf.push(c),
+            _ => {}
+        }
+        return MainKeyAction::Continue;
+    }
+
     if model.view.show_column_info {
         if model.view.column_info_decimal_editing {
             match key.code {
@@ -195,7 +250,7 @@ fn handle_key(key: KeyEvent, model: &mut AppModel, column_list_height: usize) ->
                 KeyCode::Char(c) => model.column_info_decimal_push_char(c),
                 _ => {}
             }
-            return true;
+            return MainKeyAction::Continue;
         }
         match key.code {
             KeyCode::Char('q') => model.close_column_info_pane(),
@@ -211,18 +266,21 @@ fn handle_key(key: KeyEvent, model: &mut AppModel, column_list_height: usize) ->
             }
             _ => {}
         }
-        return true;
+        return MainKeyAction::Continue;
     }
 
     if model.view.show_help {
         if matches!(key.code, KeyCode::Char('?') | KeyCode::Char('q')) {
             model.view.show_help = false;
         }
-        return true;
+        return MainKeyAction::Continue;
     }
 
     match key.code {
-        KeyCode::Char('q') => return false,
+        KeyCode::Char('q') => return MainKeyAction::Quit,
+        KeyCode::Char(':') => {
+            *command_buf = Some(":".to_string());
+        }
         KeyCode::Char('?') => model.view.show_help = true,
         KeyCode::Char('c') => model.open_column_info_pane(),
         KeyCode::Up | KeyCode::Char('k') => {
@@ -251,7 +309,7 @@ fn handle_key(key: KeyEvent, model: &mut AppModel, column_list_height: usize) ->
         }
         _ => {}
     }
-    true
+    MainKeyAction::Continue
 }
 
 fn handle_mouse(
@@ -479,15 +537,16 @@ fn draw_file_picker(frame: &mut ratatui::Frame, picker: &FilePicker) -> LayoutAr
     }
 }
 
-fn draw(frame: &mut ratatui::Frame, model: &AppModel) -> LayoutAreas {
+fn draw(frame: &mut ratatui::Frame, model: &AppModel, command_buf: Option<&str>) -> LayoutAreas {
     let area = frame.area();
+    let bottom_height = if command_buf.is_some() { 3 } else { 1 };
 
     let outer = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
             Constraint::Length(3),
             Constraint::Min(5),
-            Constraint::Length(1),
+            Constraint::Length(bottom_height),
         ])
         .split(area);
 
@@ -528,11 +587,23 @@ fn draw(frame: &mut ratatui::Frame, model: &AppModel) -> LayoutAreas {
     draw_table(frame, table_area, model);
     draw_column_list(frame, columns_area, model);
 
-    let hints = " q quit  ↑↓ rows  ←→ cols  drag resize  c info  ? help ";
-    frame.render_widget(
-        Paragraph::new(hints).style(Style::default().fg(Color::DarkGray)),
-        outer[2],
-    );
+    if let Some(buf) = command_buf {
+        frame.render_widget(
+            Paragraph::new(buf).block(
+                Block::default()
+                    .title(" Command ")
+                    .borders(Borders::ALL)
+                    .border_style(Style::default().fg(Color::Yellow)),
+            ),
+            outer[2],
+        );
+    } else {
+        let hints = " q quit  ↑↓ rows  ←→ cols  drag resize  c info  ? help  : command ";
+        frame.render_widget(
+            Paragraph::new(hints).style(Style::default().fg(Color::DarkGray)),
+            outer[2],
+        );
+    }
 
     if model.view.show_help {
         draw_help(frame, area);
