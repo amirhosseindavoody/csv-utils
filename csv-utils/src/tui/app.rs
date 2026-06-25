@@ -6,7 +6,7 @@ use crossterm::terminal::{
 use crossterm::ExecutableCommand;
 use csv_utils_core::column::{ColumnKind, NumericRepr};
 use csv_utils_core::display::truncate_middle;
-use csv_utils_core::model::{AppModel, MAX_COLUMN_WIDTH, MIN_COLUMN_WIDTH};
+use csv_utils_core::model::{AppModel, MultiSelectAxis, MAX_COLUMN_WIDTH, MIN_COLUMN_WIDTH};
 use ratatui::backend::CrosstermBackend;
 use ratatui::layout::{Constraint, Direction, Layout, Position, Rect};
 use ratatui::style::{Color, Modifier, Style};
@@ -27,8 +27,9 @@ const HELP_TEXT: &str = "\
 csv — keyboard shortcuts
 
   q          quit (closes a panel when one is open)
-  ↑/↓        previous / next row
-  ←/→        previous / next column
+  ↑/↓        previous / next row (then Space toggles row multi-select)
+  ←/→        previous / next column (then Space toggles column multi-select)
+  Space      toggle multi-select on row or column (follows last arrow axis)
   PgUp/PgDn  scroll 10 rows
   c          column info (type, stats, format)
   ?          this help
@@ -483,32 +484,39 @@ fn handle_key(
         KeyCode::Char('c') => model.open_column_info_pane(),
         KeyCode::Up | KeyCode::Char('k') => {
             model.view.column_sidebar_focused = false;
+            model.set_multi_select_axis(MultiSelectAxis::Row);
             model.move_selected_row(-1);
         }
         KeyCode::Down | KeyCode::Char('j') => {
             model.view.column_sidebar_focused = false;
+            model.set_multi_select_axis(MultiSelectAxis::Row);
             model.move_selected_row(1);
         }
         KeyCode::Left | KeyCode::Char('h') => {
             model.view.column_sidebar_focused = false;
+            model.set_multi_select_axis(MultiSelectAxis::Column);
             model.view.selected_col = model.view.selected_col.saturating_sub(1);
             model.ensure_column_list_shows_selection(column_list_height);
         }
         KeyCode::Right | KeyCode::Char('l') => {
             model.view.column_sidebar_focused = false;
+            model.set_multi_select_axis(MultiSelectAxis::Column);
             model.view.selected_col = model.view.selected_col.saturating_add(1);
             model.ensure_column_list_shows_selection(column_list_height);
         }
         KeyCode::PageUp => {
             model.view.column_sidebar_focused = false;
+            model.set_multi_select_axis(MultiSelectAxis::Row);
             model.move_selected_row(-10);
         }
         KeyCode::PageDown => {
             model.view.column_sidebar_focused = false;
+            model.set_multi_select_axis(MultiSelectAxis::Row);
             model.move_selected_row(10);
         }
         KeyCode::Home => {
             model.view.column_sidebar_focused = false;
+            model.set_multi_select_axis(MultiSelectAxis::Row);
             let first = model.matching_row_indices().first().copied();
             if let Some(r) = first {
                 model.view.selected_row = r;
@@ -516,10 +524,15 @@ fn handle_key(
         }
         KeyCode::End => {
             model.view.column_sidebar_focused = false;
+            model.set_multi_select_axis(MultiSelectAxis::Row);
             let last = model.matching_row_indices().last().copied();
             if let Some(r) = last {
                 model.view.selected_row = r;
             }
+        }
+        KeyCode::Char(' ') => {
+            model.view.column_sidebar_focused = false;
+            model.toggle_multi_select_at_focus();
         }
         _ => {}
     }
@@ -948,7 +961,7 @@ fn draw(
     } else if let Some(command) = command_line {
         command.draw(frame, outer[2], VIEW_COMMANDS, command_error);
     } else {
-        let hints = " q quit  Ctrl+click multi-select  :hide rows/cols  / columns  :filter  c info  ? help ";
+        let hints = " q quit  Space multi-select  Ctrl+click  :hide  / columns  :filter  c info  ? help ";
         frame.render_widget(
             Paragraph::new(hints).style(Style::default().fg(Color::DarkGray)),
             outer[2],

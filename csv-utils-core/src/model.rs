@@ -13,6 +13,14 @@ pub const MIN_COLUMN_WIDTH: usize = 4;
 pub const MAX_COLUMN_WIDTH: usize = 64;
 const STATS_BACKFILL_BUDGET: usize = 512;
 
+/// Which axis **Space** toggles for multi-select (follows the last arrow-key navigation).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum MultiSelectAxis {
+    #[default]
+    Row,
+    Column,
+}
+
 #[derive(Debug, Clone)]
 pub struct TableViewState {
     pub selected_row: usize,
@@ -59,6 +67,8 @@ pub struct TableViewState {
     pub row_hidden: Vec<bool>,
     /// Multi-selection for bulk row actions (Ctrl+click on table body). Empty means use `selected_row` only.
     pub multi_selected_rows: Vec<usize>,
+    /// Last arrow navigation axis; **Space** toggles multi-select on this axis.
+    pub last_multi_select_axis: MultiSelectAxis,
 }
 
 #[derive(Debug)]
@@ -100,6 +110,7 @@ impl Default for TableViewState {
             multi_selected_cols: Vec::new(),
             row_hidden: Vec::new(),
             multi_selected_rows: Vec::new(),
+            last_multi_select_axis: MultiSelectAxis::default(),
         }
     }
 }
@@ -249,14 +260,9 @@ impl AppModel {
     }
 
     pub fn select_column_click(&mut self, col: usize, extend: bool, column_list_height: usize) {
+        self.view.last_multi_select_axis = MultiSelectAxis::Column;
         if extend {
-            if let Some(pos) = self.view.multi_selected_cols.iter().position(|&c| c == col) {
-                self.view.multi_selected_cols.remove(pos);
-            } else {
-                self.view.multi_selected_cols.push(col);
-                self.view.multi_selected_cols.sort_unstable();
-                self.view.multi_selected_cols.dedup();
-            }
+            self.toggle_column_multi_select(col);
             self.view.selected_col = col;
         } else {
             self.view.multi_selected_cols.clear();
@@ -326,6 +332,41 @@ impl AppModel {
         }
     }
 
+    fn toggle_sorted(vec: &mut Vec<usize>, item: usize) {
+        if let Some(pos) = vec.iter().position(|&x| x == item) {
+            vec.remove(pos);
+        } else {
+            vec.push(item);
+            vec.sort_unstable();
+            vec.dedup();
+        }
+    }
+
+    pub fn toggle_row_multi_select(&mut self, row: usize) {
+        Self::toggle_sorted(&mut self.view.multi_selected_rows, row);
+    }
+
+    pub fn toggle_column_multi_select(&mut self, col: usize) {
+        Self::toggle_sorted(&mut self.view.multi_selected_cols, col);
+    }
+
+    pub fn toggle_multi_select_at_focus(&mut self) {
+        match self.view.last_multi_select_axis {
+            MultiSelectAxis::Row => {
+                let row = self.view.selected_row;
+                self.toggle_row_multi_select(row);
+            }
+            MultiSelectAxis::Column => {
+                let col = self.view.selected_col;
+                self.toggle_column_multi_select(col);
+            }
+        }
+    }
+
+    pub fn set_multi_select_axis(&mut self, axis: MultiSelectAxis) {
+        self.view.last_multi_select_axis = axis;
+    }
+
     pub fn select_table_cell_click(
         &mut self,
         row: usize,
@@ -333,16 +374,11 @@ impl AppModel {
         extend: bool,
         column_list_height: usize,
     ) {
+        self.view.last_multi_select_axis = MultiSelectAxis::Row;
         self.view.selected_row = row;
         self.view.selected_col = col;
         if extend {
-            if let Some(pos) = self.view.multi_selected_rows.iter().position(|&r| r == row) {
-                self.view.multi_selected_rows.remove(pos);
-            } else {
-                self.view.multi_selected_rows.push(row);
-                self.view.multi_selected_rows.sort_unstable();
-                self.view.multi_selected_rows.dedup();
-            }
+            self.toggle_row_multi_select(row);
         } else {
             self.view.multi_selected_rows.clear();
             self.view.multi_selected_cols.clear();
@@ -351,14 +387,9 @@ impl AppModel {
     }
 
     pub fn select_table_header_click(&mut self, col: usize, extend: bool, column_list_height: usize) {
+        self.view.last_multi_select_axis = MultiSelectAxis::Column;
         if extend {
-            if let Some(pos) = self.view.multi_selected_cols.iter().position(|&c| c == col) {
-                self.view.multi_selected_cols.remove(pos);
-            } else {
-                self.view.multi_selected_cols.push(col);
-                self.view.multi_selected_cols.sort_unstable();
-                self.view.multi_selected_cols.dedup();
-            }
+            self.toggle_column_multi_select(col);
             self.view.selected_col = col;
         } else {
             self.view.multi_selected_rows.clear();
@@ -1433,6 +1464,24 @@ mod tests {
         assert_eq!(model.view.multi_selected_rows, vec![1, 3]);
         model.select_table_cell_click(1, 0, true, 10);
         assert_eq!(model.view.multi_selected_rows, vec![3]);
+    }
+
+    #[test]
+    fn space_toggle_follows_last_axis() {
+        let path = PathBuf::from("test-data/generated/test_1000x100.csv");
+        if !path.exists() {
+            return;
+        }
+        let mut model = AppModel::open(Some(path)).expect("open csv");
+        model.set_multi_select_axis(MultiSelectAxis::Column);
+        model.view.selected_col = 2;
+        model.toggle_multi_select_at_focus();
+        assert_eq!(model.view.multi_selected_cols, vec![2]);
+
+        model.set_multi_select_axis(MultiSelectAxis::Row);
+        model.view.selected_row = 5;
+        model.toggle_multi_select_at_focus();
+        assert_eq!(model.view.multi_selected_rows, vec![5]);
     }
 
     #[test]

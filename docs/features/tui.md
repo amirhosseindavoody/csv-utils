@@ -62,6 +62,7 @@ Each frame: `maybe_refit_column_widths()` (when loaded row count changes), `clam
 | `q` | Quit; closes an open panel when one is visible |
 | `↑`/`↓` or `j`/`k` | Previous / next row |
 | `←`/`→` or `h`/`l` | Previous / next column |
+| `Space` | Toggle multi-select on the current row or column (follows the last arrow axis) |
 | `PgUp`/`PgDn` | Move selection ±10 rows |
 | `Home`/`End` | First / last loaded row |
 | `c` | Open column info panel |
