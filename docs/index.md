@@ -24,6 +24,7 @@ Last verified against: `main` (column info panel, June 2025).
 
 - **[Guiding principles](principles.md)** — goals and design values
 - **[Architecture](architecture.md)** — crates, shared model, module map
+- **[Large-file preview (design)](design/large-file-preview.md)** — mmap, offset index, `csv` crate loader
 - **[Build & packaging](development/build.md)** — pixi tasks, conda package, dependencies
 - **[Test data generation](test-data-generation.md)** — synthetic CSV generator
 
