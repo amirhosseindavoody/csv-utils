@@ -43,6 +43,23 @@ Publish to an indexed local channel:
 pixi publish --target-channel file:///path/to/my-channel
 ```
 
+### conda-forge
+
+Initial submission: [conda-forge/staged-recipes#33899](https://github.com/conda-forge/staged-recipes/pull/33899). After merge, CI creates `conda-forge/csv-utils-feedstock` and publishes to the `conda-forge` channel.
+
+Install (once the feedstock is live):
+
+```bash
+conda install -c conda-forge csv-utils
+```
+
+Future releases:
+
+1. Tag the commit on GitHub (e.g. `v2026.6.24+3` after `pixi run update-version`).
+2. Open a PR on `conda-forge/csv-utils-feedstock` bumping `context.version`, the source URL, and `sha256` in `recipe/recipe.yaml`.
+
+The feedstock recipe lives in staged-recipes / the feedstock repo (GitHub tarball source). The in-repo `recipe/recipe.yaml` uses `source.path` for local Pixi builds only.
+
 ## Dependencies
 
 Workspace (`Cargo.toml`): ratatui, crossterm, clap, anyhow, thiserror, axum, tokio, serde.

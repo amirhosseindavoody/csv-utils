@@ -260,7 +260,7 @@ impl AppModel {
     }
 
     pub fn select_column_click(&mut self, col: usize, extend: bool, column_list_height: usize) {
-        self.view.last_multi_select_axis = MultiSelectAxis::Column;
+        self.set_multi_select_axis(MultiSelectAxis::Column);
         if extend {
             self.toggle_column_multi_select(col);
             self.view.selected_col = col;
@@ -343,10 +343,12 @@ impl AppModel {
     }
 
     pub fn toggle_row_multi_select(&mut self, row: usize) {
+        self.view.multi_selected_cols.clear();
         Self::toggle_sorted(&mut self.view.multi_selected_rows, row);
     }
 
     pub fn toggle_column_multi_select(&mut self, col: usize) {
+        self.view.multi_selected_rows.clear();
         Self::toggle_sorted(&mut self.view.multi_selected_cols, col);
     }
 
@@ -374,25 +376,23 @@ impl AppModel {
         extend: bool,
         column_list_height: usize,
     ) {
-        self.view.last_multi_select_axis = MultiSelectAxis::Row;
+        self.set_multi_select_axis(MultiSelectAxis::Row);
         self.view.selected_row = row;
         self.view.selected_col = col;
         if extend {
             self.toggle_row_multi_select(row);
         } else {
             self.view.multi_selected_rows.clear();
-            self.view.multi_selected_cols.clear();
         }
         self.ensure_column_list_shows_selection(column_list_height);
     }
 
     pub fn select_table_header_click(&mut self, col: usize, extend: bool, column_list_height: usize) {
-        self.view.last_multi_select_axis = MultiSelectAxis::Column;
+        self.set_multi_select_axis(MultiSelectAxis::Column);
         if extend {
             self.toggle_column_multi_select(col);
             self.view.selected_col = col;
         } else {
-            self.view.multi_selected_rows.clear();
             self.view.multi_selected_cols.clear();
             self.view.selected_col = col;
         }
@@ -1482,6 +1482,43 @@ mod tests {
         model.view.selected_row = 5;
         model.toggle_multi_select_at_focus();
         assert_eq!(model.view.multi_selected_rows, vec![5]);
+        assert!(model.view.multi_selected_cols.is_empty());
+    }
+
+    #[test]
+    fn row_and_column_multi_select_are_mutually_exclusive() {
+        let path = PathBuf::from("test-data/generated/test_1000x100.csv");
+        if !path.exists() {
+            return;
+        }
+        let mut model = AppModel::open(Some(path)).expect("open csv");
+        model.view.multi_selected_cols = vec![0, 1];
+        model.set_multi_select_axis(MultiSelectAxis::Row);
+        assert_eq!(model.view.multi_selected_cols, vec![0, 1]);
+
+        model.view.selected_row = 5;
+        model.toggle_multi_select_at_focus();
+        assert_eq!(model.view.multi_selected_rows, vec![5]);
+        assert!(model.view.multi_selected_cols.is_empty());
+
+        model.view.multi_selected_rows = vec![2, 3];
+        model.set_multi_select_axis(MultiSelectAxis::Column);
+        assert_eq!(model.view.multi_selected_rows, vec![2, 3]);
+
+        model.view.selected_col = 4;
+        model.toggle_multi_select_at_focus();
+        assert_eq!(model.view.multi_selected_cols, vec![4]);
+        assert!(model.view.multi_selected_rows.is_empty());
+
+        model.view.multi_selected_cols = vec![6];
+        model.select_table_cell_click(10, 5, true, 10);
+        assert_eq!(model.view.multi_selected_rows, vec![10]);
+        assert!(model.view.multi_selected_cols.is_empty());
+
+        model.view.multi_selected_rows = vec![11, 12];
+        model.select_column_click(7, true, 10);
+        assert_eq!(model.view.multi_selected_cols, vec![7]);
+        assert!(model.view.multi_selected_rows.is_empty());
     }
 
     #[test]

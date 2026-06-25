@@ -47,9 +47,9 @@ Data table uses ratatui `Table`. Column sidebar uses manual `Paragraph` lines (n
 | `column_value_filters` | Per-column row value filters (`:filter` on selected column) |
 | `column_sidebar_focused` | When true, `:filter` applies to the sidebar instead of row values |
 | `column_hidden` | Per-column flag: hidden from the table but still listed in the sidebar |
-| `multi_selected_cols` | Ctrl+click multi-selection for bulk `:hide` (empty = use `selected_col` only) |
+| `multi_selected_cols` | Ctrl+click multi-selection for bulk `:hide` (empty = use `selected_col` only); cleared when row multi-select is toggled (**Space** or Ctrl+click on rows) |
 | `row_hidden` | Per-row flag: hidden from the table (session-only) |
-| `multi_selected_rows` | Ctrl+click on table body for bulk row `:hide` (empty = use `selected_row` only) |
+| `multi_selected_rows` | Ctrl+click on table body for bulk row `:hide` (empty = use `selected_row` only); cleared when column multi-select is toggled (**Space** or Ctrl+click on columns) |
 
 Settings load from `csv-utils.json` in the working directory on open; see [settings config](../design/settings-config.md).
 
@@ -130,7 +130,7 @@ The panel shows editable **type** options filtered by inferred data (e.g. text-o
 | Column list click | Select column; **Ctrl+click** toggles column multi-select |
 | Column list wheel | Scroll sidebar ±3 via `column_list_offset` |
 
-Multi-selected columns show a blue highlight down the full column (`◆` prefix in the sidebar). Multi-selected rows use a blue row background; the active cell keeps the yellow highlight at the row/column intersection. Hidden columns remain in the sidebar with a dim `·` prefix but are omitted from the table. Hidden rows are omitted from the table entirely. At least one column and one row must stay visible; `:hide` reports an error if the selection would hide every column or every row.
+Multi-selected columns show a blue highlight down the full column (`◆` prefix in the sidebar). Multi-selected rows use a blue row background; the active cell keeps the yellow highlight at the row/column intersection. Row and column multi-select are mutually exclusive — toggling row multi-select (**Space** or Ctrl+click on the table body) clears column multi-select, and vice versa for columns. Arrow keys and plain clicks move focus without clearing the other axis. Hidden columns remain in the sidebar with a dim `·` prefix but are omitted from the table. Hidden rows are omitted from the table entirely. At least one column and one row must stay visible; `:hide` reports an error if the selection would hide every column or every row.
 
 Hit-testing: `hit_test_table` / `hit_test_column_resize` in `app.rs` (variable-width columns plus a one-character gap between columns; gap shows `│` when column borders are enabled).
 
