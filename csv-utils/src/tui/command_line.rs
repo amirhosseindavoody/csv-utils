@@ -117,7 +117,8 @@ impl CommandLineState {
 
     pub fn panel_height(&self, commands: &[CommandSpec]) -> u16 {
         if self.in_args_entry_mode(commands) {
-            return 5;
+            // Input line + hint/error line, plus top/bottom borders.
+            return 4;
         }
         let matches = self.filtered(commands);
         let lines = 1 + matches.len().clamp(1, 5);
@@ -398,6 +399,16 @@ mod tests {
         };
         let action = state.handle_key(press(KeyCode::Enter), VIEW_COMMANDS);
         assert_eq!(action, CommandKeyAction::Submit(":close".to_string()));
+    }
+
+    #[test]
+    fn panel_height_fits_args_entry_without_extra_line() {
+        let state = CommandLineState {
+            buf: ":open sadfas".to_string(),
+            suggestion_index: 0,
+        };
+        assert!(state.in_args_entry_mode(VIEW_COMMANDS));
+        assert_eq!(state.panel_height(VIEW_COMMANDS), 4);
     }
 
     #[test]
