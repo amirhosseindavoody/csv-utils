@@ -683,38 +683,61 @@ fn visible_column_separator_offsets(
     offsets
 }
 
+/// Muted column stripe (lower contrast than header/sidebar accents).
+fn selected_column_body_style() -> Style {
+    Style::default().bg(Color::DarkGray).fg(Color::Gray)
+}
+
+fn selected_column_header_style() -> Style {
+    Style::default()
+        .bg(Color::DarkGray)
+        .fg(Color::Cyan)
+        .add_modifier(Modifier::BOLD)
+}
+
+fn multi_selected_column_body_style() -> Style {
+    Style::default().bg(Color::DarkGray).fg(Color::Blue)
+}
+
+fn multi_selected_column_header_style() -> Style {
+    Style::default()
+        .bg(Color::DarkGray)
+        .fg(Color::Blue)
+        .add_modifier(Modifier::BOLD)
+}
+
 fn column_header_style(model: &AppModel, col_idx: usize) -> Style {
     if col_idx == model.view.selected_col {
-        Style::default()
-            .fg(Color::Black)
-            .bg(Color::Cyan)
-            .add_modifier(Modifier::BOLD)
+        selected_column_header_style()
     } else if model.is_column_multi_selected(col_idx) {
-        Style::default()
-            .fg(Color::Black)
-            .bg(Color::Blue)
-            .add_modifier(Modifier::BOLD)
+        multi_selected_column_header_style()
     } else {
         Style::default().add_modifier(Modifier::BOLD)
     }
 }
 
 fn table_cell_style(model: &AppModel, row_idx: usize, col_idx: usize) -> Style {
-    let row_selected = row_idx == model.view.selected_row;
-    if row_selected && col_idx == model.view.selected_col {
-        Style::default()
+    let active_cell =
+        row_idx == model.view.selected_row && col_idx == model.view.selected_col;
+    if active_cell {
+        return Style::default()
             .fg(Color::Black)
             .bg(Color::Yellow)
-            .add_modifier(Modifier::BOLD)
-    } else if row_selected {
-        Style::default().bg(Color::DarkGray)
-    } else if model.is_row_multi_selected(row_idx) {
-        Style::default()
-            .fg(Color::Black)
-            .bg(Color::Blue)
-    } else {
-        Style::default()
+            .add_modifier(Modifier::BOLD);
     }
+    if col_idx == model.view.selected_col {
+        return selected_column_body_style();
+    }
+    if model.is_column_multi_selected(col_idx) {
+        return multi_selected_column_body_style();
+    }
+    if row_idx == model.view.selected_row {
+        return Style::default().bg(Color::DarkGray);
+    }
+    if model.is_row_multi_selected(row_idx) {
+        return Style::default().fg(Color::Black).bg(Color::Blue);
+    }
+    Style::default()
 }
 
 fn column_sidebar_style(model: &AppModel, col_idx: usize) -> Style {

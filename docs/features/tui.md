@@ -17,7 +17,7 @@ Full-screen terminal table explorer. Stack: **ratatui** 0.29 + **crossterm**. Fr
 | Region | Description |
 |--------|-------------|
 | **Title** | File basename, live row count, `loading…` or `ERROR` |
-| **Data table** | Horizontal window (`col_offset`) + vertical window (`row_offset`). Selected cell yellow; selected row dimmed |
+| **Data table** | Horizontal window (`col_offset`) + vertical window (`row_offset`). Selected column dim gray stripe (full height); selected row dimmed; active cell yellow |
 | **Columns pane** | 32-char wide; title `Columns (X–Y/Z)`; selected line `▸` + magenta |
 | **Help** | Centered overlay; `?` opens; `q` / `?` closes |
 | **Column info** | Centered overlay; `c` opens; edit type/representation and view statistics; `q` closes |
@@ -130,7 +130,7 @@ The panel shows editable **type** options filtered by inferred data (e.g. text-o
 | Column list click | Select column; **Ctrl+click** toggles column multi-select |
 | Column list wheel | Scroll sidebar ±3 via `column_list_offset` |
 
-Multi-selected columns show a blue highlight (`◆` prefix in the sidebar). Multi-selected rows use a blue row background; the active row keeps the primary highlight (yellow cell, dark gray row). Hidden columns remain in the sidebar with a dim `·` prefix but are omitted from the table. Hidden rows are omitted from the table entirely. At least one column and one row must stay visible; `:hide` reports an error if the selection would hide every column or every row.
+Multi-selected columns show a blue highlight down the full column (`◆` prefix in the sidebar). Multi-selected rows use a blue row background; the active cell keeps the yellow highlight at the row/column intersection. Hidden columns remain in the sidebar with a dim `·` prefix but are omitted from the table. Hidden rows are omitted from the table entirely. At least one column and one row must stay visible; `:hide` reports an error if the selection would hide every column or every row.
 
 Hit-testing: `hit_test_table` / `hit_test_column_resize` in `app.rs` (variable-width columns plus a one-character gap between columns; gap shows `│` when column borders are enabled).
 
