@@ -17,10 +17,10 @@ All interactive UIs share one core model (`AppModel`) so behavior stays aligned 
 ## Design goals
 
 1. **Fast initial paint** — show headers and the first rows immediately; grow row count in the background.
-2. **Simple, predictable CSV parsing** — quoted fields via `split_row`; no full dialect engine.
+2. **Simple, predictable CSV parsing** — RFC 4180 via the `csv` crate; preview uses mmap + on-demand record parse.
 3. **One shared core** — `csv-utils-core` owns parsing, preview, CLI engine, and view state; frontends are thin.
 4. **Progressive disclosure** — CLI for scripts; TUI/web when you need to look around a file.
-5. **Honest limits** — document memory and loading constraints rather than pretending to handle multi-GB files in the TUI.
+5. **Honest limits** — document mmap, indexing, and lazy-stats constraints; see [limitations](reference/limitations.md).
 
 ## User experience values
 
@@ -31,7 +31,7 @@ All interactive UIs share one core model (`AppModel`) so behavior stays aligned 
 
 ## Non-goals (for now)
 
-- Full CSV RFC dialect support (custom delimiters, multiline records beyond quoted fields).
+- Full CSV dialect configuration (custom delimiters, etc.).
 - Persisted UI state across sessions (column widths, selection, scroll).
 - Single in-process cache shared between CLI and TUI invocations.
 

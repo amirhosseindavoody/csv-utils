@@ -1,6 +1,7 @@
 pub mod actions;
 pub mod client_view;
 pub mod column;
+pub mod column_layout;
 pub mod column_stats;
 pub mod display;
 pub mod engine;

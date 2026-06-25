@@ -2,7 +2,6 @@ use crate::column::is_right_aligned;
 use crate::column_stats::ColumnInfo;
 use crate::display::{format_cell_for_column, truncate_middle};
 use crate::model::AppModel;
-use crate::schema;
 use crate::ViewLayout;
 use serde::Serialize;
 
@@ -74,14 +73,13 @@ impl AppModel {
 
         for i in 0..layout.viewport_rows {
             let row_idx = self.view.row_offset + i;
-            let Some(line) = self.preview.row_line(row_idx) else {
+            let Some(fields) = self.preview.row_fields(row_idx) else {
                 break;
             };
             if i == 0 {
                 row_start = row_idx;
             }
             row_end = row_idx + 1;
-            let fields = schema::split_row(&line);
             let row_selected = row_idx == self.view.selected_row;
             let cells = col_range
                 .clone()

@@ -2,7 +2,7 @@
 
 Living documentation for behavior, architecture, and development workflows. Update these docs in the same change as user-visible code changes.
 
-Last verified against: `main` (column info panel, June 2025).
+Last verified against: `main` (mmap preview loader, June 2025).
 
 ---
 
@@ -17,7 +17,7 @@ Last verified against: `main` (column info panel, June 2025).
 ## Reference
 
 - **[Data loading](reference/data-loading.md)** — preview buffer, background scan, APIs
-- **[CSV parsing & display](reference/csv-parsing.md)** — `split_row`, column types, cell formatting
+- **[CSV parsing & display](reference/csv-parsing.md)** — `csv` crate, column types, cell formatting
 - **[Known limitations](reference/limitations.md)** — current constraints and trade-offs
 
 ## Developer documentation

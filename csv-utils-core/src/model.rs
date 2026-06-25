@@ -1,14 +1,14 @@
 use crate::column::{
     available_column_kinds, infer_kind_from_state, is_right_aligned, is_numeric,
-    observe_column_infer, ColumnInferState, ColumnKind, NumericRepr,
+    ColumnInferState, ColumnKind, NumericRepr,
 };
-use crate::column_stats::{build_column_info, ColumnInfo, ColumnStatsAccum};
+use crate::column_stats::{build_column_info, ColumnInfo};
 use crate::display::{format_cell_for_column, sanitize_ascii, truncate_middle};
-use crate::schema;
 use std::path::PathBuf;
 
 pub const MIN_COLUMN_WIDTH: usize = 4;
 pub const MAX_COLUMN_WIDTH: usize = 64;
+const STATS_BACKFILL_BUDGET: usize = 512;
 
 #[derive(Debug, Clone)]
 pub struct TableViewState {
@@ -32,12 +32,12 @@ pub struct TableViewState {
     pub show_help: bool,
 }
 
-#[derive(Debug, Default)]
-struct ColumnLayoutCache {
-    rows_processed: usize,
-    max_content_len: Vec<usize>,
-    infer_state: Vec<ColumnInferState>,
-    stats: Vec<ColumnStatsAccum>,
+#[derive(Debug)]
+pub struct AppModel {
+    pub file_path: Option<PathBuf>,
+    pub preview: crate::preview::PreviewData,
+    pub view: TableViewState,
+    pub scan_thread: Option<std::thread::JoinHandle<()>>,
 }
 
 impl Default for TableViewState {
@@ -92,15 +92,6 @@ pub struct SidebarColumn {
     pub selected: bool,
 }
 
-#[derive(Debug)]
-pub struct AppModel {
-    pub file_path: Option<PathBuf>,
-    pub preview: crate::preview::PreviewData,
-    pub view: TableViewState,
-    pub scan_thread: Option<std::thread::JoinHandle<()>>,
-    column_layout: ColumnLayoutCache,
-}
-
 impl AppModel {
     pub fn open(file_path: Option<PathBuf>) -> std::io::Result<Self> {
         let preview = match &file_path {
@@ -111,9 +102,13 @@ impl AppModel {
             None => crate::preview::PreviewData::empty(),
         };
 
-        let scan_thread = file_path.as_ref().map(|path| {
-            let skip = preview.row_count();
-            preview.start_background_scan(path, skip)
+        let scan_thread = file_path.as_ref().and_then(|path| {
+            if preview.scan_done() {
+                None
+            } else {
+                let skip = preview.row_count();
+                Some(preview.start_background_scan(path, skip))
+            }
         });
 
         let mut model = Self {
@@ -121,7 +116,6 @@ impl AppModel {
             preview,
             view: TableViewState::default(),
             scan_thread,
-            column_layout: ColumnLayoutCache::default(),
         };
         model.ensure_column_state();
         model.maybe_update_column_layout();
@@ -166,19 +160,15 @@ impl AppModel {
             .unwrap_or(MIN_COLUMN_WIDTH as u16) as usize
     }
 
-    fn reset_column_layout_cache(&mut self, headers: &[String]) {
-        let n = headers.len();
-        self.column_layout.rows_processed = 0;
-        self.column_layout.max_content_len = headers
-            .iter()
-            .map(|h| sanitize_ascii(h).len())
-            .collect();
-        self.column_layout.infer_state = vec![ColumnInferState::Unknown; n];
-        self.column_layout.stats = vec![ColumnStatsAccum::default(); n];
+    fn layout(&self) -> std::sync::Arc<std::sync::Mutex<crate::column_layout::ColumnLayoutState>> {
+        self.preview.layout()
     }
 
     fn apply_fitted_column_widths(&mut self) {
-        for col in 0..self.column_layout.max_content_len.len() {
+        let layout_arc = self.layout();
+        let layout = layout_arc.lock().expect("layout mutex poisoned");
+        let n = layout.column_count();
+        for col in 0..n {
             if self
                 .view
                 .column_widths_user_set
@@ -188,7 +178,9 @@ impl AppModel {
             {
                 continue;
             }
-            let w = self.column_layout.max_content_len[col].clamp(MIN_COLUMN_WIDTH, MAX_COLUMN_WIDTH);
+            let w = layout
+                .max_content_len(col)
+                .clamp(MIN_COLUMN_WIDTH, MAX_COLUMN_WIDTH);
             self.view.column_widths[col] = w as u16;
         }
     }
@@ -203,43 +195,43 @@ impl AppModel {
         {
             return;
         }
-        if let Some(&max_len) = self.column_layout.max_content_len.get(col) {
-            let w = max_len.clamp(MIN_COLUMN_WIDTH, MAX_COLUMN_WIDTH);
+        let layout_arc = self.layout();
+        let layout = layout_arc.lock().expect("layout mutex poisoned");
+        let w = layout
+            .max_content_len(col)
+            .clamp(MIN_COLUMN_WIDTH, MAX_COLUMN_WIDTH);
+        if col < self.view.column_widths.len() {
             self.view.column_widths[col] = w as u16;
         }
     }
 
-    /// Incrementally scan newly loaded rows for width auto-fit and type inference.
+    /// Apply auto-fit widths and incrementally backfill column stats when the info panel is open.
     pub fn maybe_update_column_layout(&mut self) {
         self.ensure_column_state();
         let headers = self.preview.headers();
         let n = headers.len();
-        if self.column_layout.max_content_len.len() != n {
-            self.reset_column_layout_cache(&headers);
-        }
 
-        let row_count = self.preview.row_count();
-        let start = self.column_layout.rows_processed;
-        if start >= row_count {
-            return;
-        }
+        {
+            let layout_arc = self.layout();
+            let mut layout = layout_arc.lock().expect("layout mutex poisoned");
+            if layout.column_count() != n {
+                layout.reset_from_headers(&headers);
+            }
 
-        for row_idx in start..row_count {
-            let Some(line) = self.preview.row_line(row_idx) else {
-                break;
-            };
-            let fields = schema::split_row(&line);
-            for col in 0..n {
-                if let Some(cell) = fields.get(col) {
-                    let len = sanitize_ascii(cell).len();
-                    self.column_layout.max_content_len[col] =
-                        self.column_layout.max_content_len[col].max(len);
-                    observe_column_infer(&mut self.column_layout.infer_state[col], cell);
-                    self.column_layout.stats[col].observe(cell);
+            if let Some(col) = layout.stats_column() {
+                let row_count = self.preview.row_count();
+                let mut budget = STATS_BACKFILL_BUDGET;
+                while layout.stats_backfill_row() < row_count && budget > 0 {
+                    let row = layout.stats_backfill_row();
+                    if let Some(fields) = self.preview.row_fields(row) {
+                        layout.backfill_stats_for_row(col, &fields);
+                    }
+                    layout.advance_stats_backfill();
+                    budget -= 1;
                 }
             }
         }
-        self.column_layout.rows_processed = row_count;
+
         self.apply_fitted_column_widths();
     }
 
@@ -253,13 +245,9 @@ impl AppModel {
         if stored != ColumnKind::Auto {
             return stored;
         }
-        infer_kind_from_state(
-            self.column_layout
-                .infer_state
-                .get(col)
-                .copied()
-                .unwrap_or(ColumnInferState::Unknown),
-        )
+        let layout_arc = self.layout();
+        let layout = layout_arc.lock().expect("layout mutex poisoned");
+        infer_kind_from_state(layout.infer_state(col))
     }
 
     pub fn numeric_repr(&self, col: usize) -> NumericRepr {
@@ -323,11 +311,10 @@ impl AppModel {
     }
 
     pub fn column_infer_state(&self, col: usize) -> ColumnInferState {
-        self.column_layout
-            .infer_state
-            .get(col)
-            .copied()
-            .unwrap_or(ColumnInferState::Unknown)
+        self.layout()
+            .lock()
+            .expect("layout mutex poisoned")
+            .infer_state(col)
     }
 
     pub fn column_info_type_kinds(&self, col: usize) -> Vec<ColumnKind> {
@@ -337,6 +324,10 @@ impl AppModel {
     pub fn open_column_info_pane(&mut self) {
         let col = self.view.selected_col;
         self.view.show_column_info = true;
+        self.layout()
+            .lock()
+            .expect("layout mutex poisoned")
+            .set_stats_column(Some(col));
         let stored = self.stored_column_kind(col);
         let kinds = self.column_info_type_kinds(col);
         self.view.column_info_focus = kinds
@@ -347,6 +338,10 @@ impl AppModel {
 
     pub fn close_column_info_pane(&mut self) {
         self.view.show_column_info = false;
+        self.layout()
+            .lock()
+            .expect("layout mutex poisoned")
+            .set_stats_column(None);
     }
 
     fn column_info_kind_shows_repr(&self, col: usize, kind: ColumnKind) -> bool {
@@ -433,11 +428,10 @@ impl AppModel {
         let effective = self.effective_column_kind(col);
         let repr = self.numeric_repr(col);
         let stats = self
-            .column_layout
-            .stats
-            .get(col)
-            .cloned()
-            .unwrap_or_default();
+            .layout()
+            .lock()
+            .expect("layout mutex poisoned")
+            .stats(col);
         build_column_info(
             col,
             name,
@@ -536,8 +530,7 @@ impl AppModel {
         let mut visible_row_indices = Vec::new();
         for i in 0..viewport_rows {
             let row_idx = self.view.row_offset + i;
-            if let Some(line) = self.preview.row_line(row_idx) {
-                let fields = schema::split_row(&line);
+            if let Some(fields) = self.preview.row_fields(row_idx) {
                 visible_row_indices.push(row_idx);
                 visible_rows.push(fields);
             }

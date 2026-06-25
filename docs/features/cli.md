@@ -33,6 +33,8 @@ Parser: `csv-utils-core/predicate.rs`
 
 ## Loading model
 
-CLI reads the file sequentially and calls `split_row` on every data line. This is heavier than TUI/web preview mode, which keeps raw lines and parses only visible rows.
+CLI reads the file sequentially and calls `schema::split_row` on every data line.
+TUI/web preview mmap the file, index records in the background, and parse only
+visible rows on demand.
 
 See [data loading](../reference/data-loading.md) for the interactive path.

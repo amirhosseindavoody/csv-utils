@@ -1,30 +1,20 @@
 # Design: large-file CSV preview
 
-Status: **approved design** (not yet implemented).
+Status: **implemented** in `csv-utils-core` (TUI and web preview path).
 
-The TUI and web UIs load CSV files through a preview pipeline in
-`csv-utils-core/src/preview.rs`. Today that path keeps every body line as an owned
-`String` and does too much per-row work on the render thread. This doc describes
-the target loader: **`csv` crate parsing**, **mmap storage**, and a **record
-byte-offset index**.
+The TUI and web UIs load CSV files through a preview pipeline that maps the file
+read-only, indexes record byte offsets, and parses rows on demand with the Rust
+[`csv`](https://docs.rs/csv) crate.
 
-## Problems today
+## Architecture
 
-1. **Memory** — the background scan pushes each line into `Vec<String>`. Memory
-   grows with file size and does not scale past roughly 1 GB.
-2. **Responsiveness** — `maybe_update_column_layout()` runs on every TUI/web
-   frame, re-splitting new rows across all columns and updating width, type
-   inference, and stats for every column even when the user is not viewing them.
-
-## Target architecture
-
-Three layers that work together:
+Three layers:
 
 | Layer | Role | Mechanism |
 |---|---|---|
 | **Storage** | Raw file bytes without decoding the whole file | Read-only **mmap** (`memmap2`) |
 | **Index** | O(1) lookup: row → byte range | `Vec<u64>` record start offsets |
-| **Parse** | RFC 4180 fields (quotes, embedded newlines) | Rust [`csv`](https://docs.rs/csv) crate |
+| **Parse** | RFC 4180 fields (quotes, embedded newlines) | `csv` on a byte slice per record |
 
 ```text
   file on disk
@@ -41,24 +31,14 @@ Three layers that work together:
                read one record → fields for display / metadata
 ```
 
-- **mmap** — file bytes are mapped, not copied into a giant in-memory buffer.
-- **Offset index** — random access to row N without scanning from the start.
-- **`csv` crate** — correct record boundaries and field splitting; used both
-  while building the index and when parsing a single row for the viewport.
+Location: `csv-utils-core/src/preview.rs`
 
-## Building the offset index
+## Offset index
 
-Do **not** index by scanning for `\n` bytes. Newlines inside quoted fields would
-desynchronize row numbers from CSV records.
+Offsets come from `reader.position().byte()` during sequential `csv` reads — not
+from scanning for `\n` bytes (which breaks when fields contain embedded newlines).
 
-During the background scan:
-
-1. Open `csv::Reader` on `&mmap[..]`.
-2. Before each `read_byte_record` / `read_record`, record `reader.position().byte()`.
-3. Append to `record_offsets`; body row count = index length.
-
-Headers stay separate (current model): parse the header row once at open; index
-body records only.
+The header row is parsed once at open; the index covers **body records only**.
 
 ## Memory footprint
 
@@ -66,74 +46,61 @@ body records only.
 |---|---|
 | mmap mapping | Virtual ≈ file size; physical RAM only for touched pages |
 | `record_offsets` | ~8 bytes × row count |
-| Decoded cells | Visible viewport only (+ optional small LRU cache) |
+| Decoded cells | Visible viewport only (parsed on demand) |
 
-For very large row counts, the index itself may need compaction (`u32` offsets,
-chunked index, or sparse sampling) — revisit if that becomes a bottleneck.
+For very large row counts, the index itself may need compaction — revisit if that
+becomes a bottleneck.
 
 ## Loading behavior
 
-Keep the current progressive UX:
-
 | Phase | Work |
 |---|---|
-| **Sync (startup)** | mmap file, parse header, read first N body records for instant paint |
-| **Background** | Continue sequential `csv` reads; grow `record_offsets`; update summaries |
+| **Sync (startup)** | mmap file, parse header, index first **128** body records (`INITIAL_BODY_LINES`) |
+| **Background** | Continue sequential `csv` reads; grow `record_offsets`; update column layout |
 | **Render** | Parse only rows in the current viewport via index + `csv` |
 
-The UI continues to show row count and `loading…` until the background scan
-finishes (`scan_done`).
+The UI shows row count and `loading…` until the background scan finishes
+(`scan_done`).
 
 ## Column metadata
 
+Width auto-fit and type inference run on a **background thread** while records
+are indexed (`column_layout.rs`, updated from `preview.rs`).
+
+Column **statistics** are **lazy**: computed only while the column info panel is
+open (`c` in TUI/web), backfilled incrementally from indexed rows (512 rows per
+frame budget). Stats over a partial scan are labeled partial in the panel.
+
 | Metadata | When computed |
 |---|---|
-| Record offsets, row count | Background scan (eager) |
-| Headers, column count | At open (eager) |
+| Record offsets, row count | Background scan |
+| Headers, column count | At open |
 | Cell values | On demand for visible rows |
-| Column width auto-fit | Progressive: visible window + sample; widen as scan advances |
-| Type inference | Sample + visible rows; refine in background |
-| Column statistics | **Lazy:** only for the column open in the info panel; refine as scan progresses |
-| Filters (future) | Background job building a list of matching row indices |
+| Column width auto-fit | Background scan (progressive) |
+| Type inference | Background scan (progressive) |
+| Column statistics | Info panel open, incremental backfill |
 
-Move ingestion and metadata accumulation off the render thread. The UI reads
-snapshots (e.g. `Arc` swap or channel) and never blocks on full-file work per
-frame.
+## CLI path
 
-Stats over a partial scan stay labeled partial (e.g. “Statistics from loaded
-rows only”). Exact min/max/distinct finalize when the scan completes; for very
-large columns, bounded sketches (e.g. HyperLogLog for distinct counts) are an
-optional later optimization.
-
-## Implementation phases
-
-1. **Replace `schema::split_row` with `csv`** — same behavior and tests; enables
-   correct embedded newlines.
-2. **Record offset index** — stop storing `Vec<String>` rows; slice from an
-   in-memory buffer first.
-3. **mmap** — map the file read-only once indexing works on a owned buffer.
-4. **Background worker + lazy column stats** — ingestion and summaries off the
-   render thread; stats only when the info panel is open.
-5. **Scale optimizations (optional)** — segment summaries, HLL/reservoir
-   sketches for bounded-memory stats on huge columns.
+CLI commands (`engine.rs`, `unique.rs`) still stream the file line-by-line and
+use `schema::split_row` (backed by the `csv` crate). They do not use mmap or the
+offset index.
 
 ## Future option: Apache Arrow
 
 [Apache Arrow](https://arrow.apache.org/) may be useful later for **vectorized
-batch statistics** over fixed-size row segments (min/max, type checks). It is
-not part of the core loader design; the interactive path stays mmap + index +
-on-demand `csv` parsing.
+batch statistics** over fixed-size row segments. It is not part of the preview
+loader; the interactive path stays mmap + index + on-demand `csv` parsing.
 
 ## Caveats
 
 - **Read-only viewing** — mmap assumes the file is not truncated or modified
   underneath the mapping while open.
-- **Index correctness** — offsets must come from `csv` reader positions, not
-  raw newline search.
-- **Partial stats** — UI must distinguish in-progress vs final scan results.
+- **Partial stats** — the info panel distinguishes in-progress vs final scan
+  results.
 
 ## Related
 
-- [Data loading](../reference/data-loading.md) — current preview pipeline
+- [Data loading](../reference/data-loading.md)
 - [Architecture](../architecture.md)
 - [Known limitations](../reference/limitations.md)

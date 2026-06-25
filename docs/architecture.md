@@ -64,8 +64,8 @@ Flow:
 
 | Path | Reads file | Parses rows |
 |------|------------|-------------|
-| CLI (`engine.rs`) | Sequential stream | Every data line via `split_row` |
-| TUI / web (`preview.rs`) | Header + 128 lines sync, then background append | `split_row` only on visible rows |
+| CLI (`engine.rs`) | Sequential stream | Every data line via `schema::split_row` |
+| TUI / web (`preview.rs`) | mmap + offset index | `csv` on demand for visible rows; background indexes all records |
 
 CLI commands re-open files; there is no shared cache with TUI/web sessions.
 
@@ -74,9 +74,10 @@ CLI commands re-open files; there is no shared cache with TUI/web sessions.
 ```
 csv-utils-core/src/
   lib.rs
-  schema.rs          # split_row
+  schema.rs          # split_row, read_fields_from_slice (csv crate)
   predicate.rs       # filter expressions
-  preview.rs         # PreviewData, background scan
+  preview.rs         # PreviewData, mmap, offset index, background scan
+  column_layout.rs   # ColumnLayoutState (width, inference, lazy stats)
   stats.rs
   unique.rs
   json_view.rs
@@ -102,5 +103,5 @@ csv-utils-web/src/
 ## Related docs
 
 - [Data loading](reference/data-loading.md) — preview APIs and threading
-- [CSV parsing](reference/csv-parsing.md) — `split_row` and display rules
+- [CSV parsing](reference/csv-parsing.md) — `csv` crate parsing and display rules
 - [Build & packaging](development/build.md) — pixi tasks and conda recipe

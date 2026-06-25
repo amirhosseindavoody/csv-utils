@@ -7,7 +7,6 @@ use crossterm::ExecutableCommand;
 use csv_utils_core::column::{ColumnKind, NumericRepr};
 use csv_utils_core::display::truncate_middle;
 use csv_utils_core::model::{AppModel, MAX_COLUMN_WIDTH, MIN_COLUMN_WIDTH};
-use csv_utils_core::schema;
 use ratatui::backend::CrosstermBackend;
 use ratatui::layout::{Constraint, Direction, Layout, Position, Rect};
 use ratatui::style::{Color, Modifier, Style};
@@ -498,10 +497,9 @@ fn draw_table(frame: &mut ratatui::Frame, area: Rect, model: &AppModel) {
     let mut rows = Vec::new();
     for r in 0..body_height {
         let row_idx = model.view.row_offset + r;
-        let Some(line) = model.preview.row_line(row_idx) else {
+        let Some(fields) = model.preview.row_fields(row_idx) else {
             break;
         };
-        let fields = schema::split_row(&line);
         let row_selected = row_idx == model.view.selected_row;
         let cells: Vec<Cell> = col_range
             .clone()
