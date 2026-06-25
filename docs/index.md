@@ -2,7 +2,7 @@
 
 Living documentation for behavior, architecture, and development workflows. Update these docs in the same change as user-visible code changes.
 
-Last verified against: `main` (file picker show-all default, June 2026).
+Last verified against: `main` (csv file arg, q navigation, June 2026).
 
 ---
 

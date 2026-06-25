@@ -61,7 +61,7 @@ Each frame: `maybe_refit_column_widths()` (when loaded row count changes), `clam
 
 | Key | Action |
 |-----|--------|
-| `q` | Quit; closes an open panel when one is visible |
+| `q` | Close open panel; with a file loaded, return to file picker; from file picker, quit |
 | `↑`/`↓` or `j`/`k` | Previous / next row; when the **sidebar is focused** (click or scroll it), previous / next column |
 | `←`/`→` or `h`/`l` | Previous / next **visible** column (hidden columns are skipped) |
 | `Space` | Toggle multi-select on the current row or column (follows the last arrow axis) |
@@ -154,7 +154,8 @@ Sidebar uses `column_list_offset` independent of selection. ratatui `List` was a
 pixi run tui
 pixi run tui test-data/generated/test_1000x100.csv
 ./target/release/csv
-./target/release/csv tui file.csv
+./target/release/csv test-data/generated/test_1000x100.csv
+./target/release/csv tui file.csv   # same as above
 ```
 
 With no file argument, the TUI opens a **file picker** starting in the current working directory. All files and directories are shown by default. Configure `file_picker.file_extensions` in settings to enable extension filtering (`:filter` / `:all`). Navigate with `→` / `←` for directories, select a file with `Enter`, or quit with `q`.

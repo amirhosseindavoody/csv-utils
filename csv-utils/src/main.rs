@@ -6,9 +6,12 @@ use clap::{Parser, Subcommand};
 
 #[derive(Parser)]
 #[command(name = "csv", version, about = "High-performance CSV CLI + TUI explorer")]
+#[command(args_conflicts_with_subcommands = true)]
 struct Cli {
     #[command(subcommand)]
     command: Option<Commands>,
+    /// Open FILE in the interactive table explorer (when no subcommand is given)
+    file: Option<String>,
 }
 
 #[derive(Subcommand)]
@@ -37,10 +40,14 @@ enum Commands {
         #[arg(default_value_t = 50)]
         limit: usize,
     },
-    /// Launch the interactive table explorer
+    /// Launch the interactive table explorer (alias for `csv [file]`)
     Tui {
         file: Option<String>,
     },
+}
+
+fn run_tui(file: Option<&str>) -> Result<()> {
+    tui::run(file)
 }
 
 fn main() -> Result<()> {
@@ -50,7 +57,7 @@ fn main() -> Result<()> {
         Some(Commands::Unique { file, columns, limit }) => cli::run_unique(&file, &columns, limit),
         Some(Commands::Json { file, limit }) => cli::run_json(&file, limit),
         Some(Commands::Filter { file, expr, limit }) => cli::run_filter(&file, &expr, limit),
-        Some(Commands::Tui { file }) => tui::run(file.as_deref()),
-        None => tui::run(None),
+        Some(Commands::Tui { file }) => run_tui(file.as_deref()),
+        None => run_tui(cli.file.as_deref()),
     }
 }

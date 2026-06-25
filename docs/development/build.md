@@ -7,7 +7,7 @@
 | Build (cargo) | `pixi run build` |
 | Conda package | `pixi run conda-package` → `dist/csv-utils-*.conda` |
 | Run CLI | `pixi run run -- stats file.csv` |
-| TUI | `pixi run tui file.csv` |
+| TUI | `pixi run tui [file.csv]` or `pixi run csv [file.csv]` |
 | Web UI | `pixi run web -- file.csv` or `pixi run web-tui` |
 | Unit tests | `pixi run test` |
 | Generate test CSVs | `pixi run gen-test-data` |

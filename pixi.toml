@@ -1,6 +1,6 @@
 [workspace]
 name = "csv-utils"
-version = "2026.6.25+4"
+version = "2026.6.25+5"
 description = "High-performance CSV CLI + TUI explorer"
 channels = ["conda-forge"]
 platforms = ["linux-64"]
@@ -8,7 +8,7 @@ preview = ["pixi-build"]
 
 [package]
 name = "csv-utils"
-version = "2026.6.25+4"
+version = "2026.6.25+5"
 
 [package.build]
 backend = { name = "pixi-build-rattler-build", version = "0.*" }
@@ -25,7 +25,7 @@ csv-utils = { path = "." }
 [tasks]
 build = "cargo build --release"
 csv = "cargo run --release -p csv-utils --"
-tui = "cargo run --release -p csv-utils -- tui"
+tui = "cargo run --release -p csv-utils --"
 test = "cargo test"
 gen-test-data = "python scripts/generate_test_data.py"
 test-tui-small = "pixi run tui test-data/generated/test_1000x100.csv"

@@ -53,14 +53,14 @@ pixi run tui test-data/generated/test_1000x100.csv
 pixi run web-tui   # browser UI at http://127.0.0.1:8080/
 ```
 
-In the TUI, press `?` for help.
+In the TUI, press `?` for help. Press `q` to return to the file picker from a file, then `q` again to quit.
 
 Direct cargo usage (from repo root):
 
 ```bash
 cargo build --release
 ./target/release/csv
-./target/release/csv tui test-data/generated/test_1000x100.csv
+./target/release/csv test-data/generated/test_1000x100.csv
 ./target/release/csv-utils-web test-data/generated/test_1000x100.csv
 ```
 

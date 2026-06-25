@@ -170,6 +170,7 @@ pub fn print_help(mut out: impl Write) -> io::Result<()> {
                age>30\n\
                name contains Ali\n\
                city in Tehran|Paris\n\
-           csv tui [file.csv]\n"
+           csv [file.csv]          open file in TUI (or file picker if omitted)\n\
+           csv tui [file.csv]      same as above\n"
     )
 }
