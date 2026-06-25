@@ -76,6 +76,12 @@ pub const VIEW_COMMANDS: &[CommandSpec] = &[
         description: "Hide selected rows (table) or columns (sidebar)",
         takes_args: false,
     },
+    CommandSpec {
+        primary: ":unhide",
+        aliases: &[":u"],
+        description: "Unhide selected or all hidden rows/columns",
+        takes_args: false,
+    },
 ];
 
 #[derive(Debug, Clone)]
@@ -382,7 +388,7 @@ mod tests {
             suggestion_index: 0,
         };
         assert_eq!(state.filtered(PICKER_COMMANDS).len(), 3);
-        assert_eq!(state.filtered(VIEW_COMMANDS).len(), 5);
+        assert_eq!(state.filtered(VIEW_COMMANDS).len(), 6);
     }
 
     #[test]
@@ -466,6 +472,16 @@ mod tests {
         };
         let action = state.handle_key(press(KeyCode::Enter), VIEW_COMMANDS);
         assert_eq!(action, CommandKeyAction::Submit(":hide".to_string()));
+    }
+
+    #[test]
+    fn submits_unhide_without_args() {
+        let mut state = CommandLineState {
+            buf: ":unhide".to_string(),
+            suggestion_index: 0,
+        };
+        let action = state.handle_key(press(KeyCode::Enter), VIEW_COMMANDS);
+        assert_eq!(action, CommandKeyAction::Submit(":unhide".to_string()));
     }
 
     #[test]

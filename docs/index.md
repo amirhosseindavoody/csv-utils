@@ -2,7 +2,7 @@
 
 Living documentation for behavior, architecture, and development workflows. Update these docs in the same change as user-visible code changes.
 
-Last verified against: `main` (conda-forge staged-recipes submission, June 2026).
+Last verified against: `main` (hidden columns unhide, June 2026).
 
 ---
 
