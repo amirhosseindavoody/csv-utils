@@ -9,6 +9,20 @@ use std::path::PathBuf;
 
 use crate::tui::command_line::{CommandKeyAction, CommandLineState, PICKER_COMMANDS};
 
+fn normalize_dir(path: PathBuf) -> io::Result<PathBuf> {
+    let abs = if path.is_absolute() {
+        path
+    } else if path.as_os_str().is_empty() {
+        std::env::current_dir()?
+    } else {
+        std::env::current_dir()?.join(path)
+    };
+    match abs.canonicalize() {
+        Ok(canonical) => Ok(canonical),
+        Err(_) => Ok(abs),
+    }
+}
+
 #[derive(Debug, Clone)]
 struct Entry {
     name: String,
@@ -38,9 +52,9 @@ impl FilePicker {
         highlight_file: Option<PathBuf>,
     ) -> io::Result<Self> {
         let current_dir = if dir.is_dir() {
-            dir
-        } else if let Some(parent) = dir.parent() {
-            parent.to_path_buf()
+            normalize_dir(dir)?
+        } else if let Some(parent) = dir.parent().filter(|p| !p.as_os_str().is_empty()) {
+            normalize_dir(parent.to_path_buf())?
         } else {
             std::env::current_dir()?
         };
@@ -86,6 +100,7 @@ impl FilePicker {
     pub fn refresh(&mut self) -> io::Result<()> {
         self.error = None;
         self.entries.clear();
+        self.current_dir = normalize_dir(self.current_dir.clone())?;
 
         let read_dir = match fs::read_dir(&self.current_dir) {
             Ok(rd) => rd,
@@ -140,14 +155,19 @@ impl FilePicker {
     }
 
     fn go_parent(&mut self) {
-        if self.current_dir.parent().is_some() {
-            if let Some(parent) = self.current_dir.parent() {
-                self.current_dir = parent.to_path_buf();
-                self.selected = 0;
-                self.list_offset = 0;
-                let _ = self.refresh();
-            }
+        let Ok(abs) = normalize_dir(self.current_dir.clone()) else {
+            return;
+        };
+        let Some(parent) = abs.parent() else {
+            return;
+        };
+        if parent.as_os_str().is_empty() {
+            return;
         }
+        self.current_dir = parent.to_path_buf();
+        self.selected = 0;
+        self.list_offset = 0;
+        let _ = self.refresh();
     }
 
     fn enter_selected_dir(&mut self) -> bool {
@@ -169,7 +189,9 @@ impl FilePicker {
         if path.is_absolute() {
             path
         } else {
-            self.current_dir.join(path)
+            normalize_dir(self.current_dir.clone())
+                .unwrap_or_else(|_| self.current_dir.clone())
+                .join(path)
         }
     }
 
