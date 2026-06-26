@@ -25,6 +25,5 @@ Predefined tasks live in `pixi.toml` (see also `docs/development/build.md`):
 
 ### Gotchas
 
-- **Tests must run single-threaded.** `pixi run test` (plain `cargo test`) is flaky because the `csv-utils-core` settings tests mutate the process-global current directory in parallel (e.g. `settings::tests::invalid_local_file_is_ignored` intermittently fails with `.5` vs `.4`). Run `pixi run -- cargo test -- --test-threads=1` for reliable results — all 76 tests pass that way.
-- The README references a `pixi run run` task; the actual task is named `csv` (there is no `run` task).
+- Tests must run single-threaded: `pixi run -- cargo test -- --test-threads=1` for reliable results.
 - Web JSON API: `GET /api/state`, `POST /api/action` (body like `{"action":"select_cell","value":{"row":0,"col":2}}`); see `docs/features/web.md`.

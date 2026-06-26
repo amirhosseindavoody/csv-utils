@@ -1,7 +1,7 @@
 # Test Data Generation
 
 Python/Pandas generator for synthetic CSV datasets (`scripts/generate_test_data.py`).  
-See **[DESIGN.md](DESIGN.md)** for how column names map to TUI types and alignment.
+See **[CSV parsing & display](reference/csv-parsing.md)** for how column types and alignment are inferred.
 
 ## Generated Datasets
 

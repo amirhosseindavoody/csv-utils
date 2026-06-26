@@ -157,7 +157,7 @@ class AnsiScreen:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Capture a TUI snapshot from PTY output.")
-    parser.add_argument("--file", required=True, help="CSV file path for `pixi run tui`.")
+    parser.add_argument("--file", required=True, help="CSV file path for `pixi run csv`.")
     parser.add_argument("--seconds", type=float, default=2.0, help="How long to capture before sending q.")
     parser.add_argument("--rows", type=int, default=40, help="PTY rows.")
     parser.add_argument("--cols", type=int, default=140, help="PTY cols.")

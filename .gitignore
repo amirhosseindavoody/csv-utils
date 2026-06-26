@@ -10,3 +10,4 @@ target/
 # Development artifacts
 artifacts/
 dist/
+book/

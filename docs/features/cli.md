@@ -19,13 +19,13 @@ Global flags: `-h` / `--help`, `-V` / `--version` (prints package version from `
 ## Examples
 
 ```bash
-pixi run run -- stats sample.csv
-pixi run run -- unique sample.csv city,active 100
-pixi run run -- filter sample.csv city=Tehran,active=true 25
-pixi run run -- filter sample.csv age>30 50
-pixi run run -- filter sample.csv "name contains Ali" 20
-pixi run run -- filter sample.csv "city in Tehran|Paris" 20
-pixi run run -- json sample.csv 10
+pixi run csv -- stats sample.csv
+pixi run csv -- unique sample.csv city,active 100
+pixi run csv -- filter sample.csv city=Tehran,active=true 25
+pixi run csv -- filter sample.csv age>30 50
+pixi run csv -- filter sample.csv "name contains Ali" 20
+pixi run csv -- filter sample.csv "city in Tehran|Paris" 20
+pixi run csv -- json sample.csv 10
 ```
 
 ## Filter expressions

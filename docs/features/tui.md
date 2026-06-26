@@ -154,8 +154,8 @@ Sidebar uses `column_list_offset` independent of selection. ratatui `List` was a
 ## Run
 
 ```bash
-pixi run tui
-pixi run tui test-data/generated/test_1000x100.csv
+pixi run csv
+pixi run csv test-data/generated/test_1000x100.csv
 ./target/release/csv
 ./target/release/csv test-data/generated/test_1000x100.csv
 ./target/release/csv tui file.csv   # same as above
