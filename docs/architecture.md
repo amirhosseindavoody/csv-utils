@@ -8,15 +8,15 @@ Runtime structure of csv-utils: binaries, shared core, and the view model used b
 flowchart TB
   bin[csv binary] --> cli[cli.rs]
   bin --> tui[tui/app.rs]
-  web[csv-utils-web binary] --> web_srv[web/server.rs]
+  tui --> web_mod[web/server.rs]
   cli --> engine[csv-utils-core/engine.rs]
   tui --> model[csv-utils-core/model.rs]
-  web_srv --> model
+  web_mod --> model
   model --> preview[csv-utils-core/preview.rs]
   model --> schema[csv-utils-core/schema.rs]
   engine --> schema
   tui --> ratatui[ratatui + crossterm]
-  web_srv --> axum[axum + tokio]
+  web_mod --> axum[axum + tokio]
 ```
 
 | Layer | Role |
@@ -24,8 +24,7 @@ flowchart TB
 | `csv-utils/src/main.rs` | Clap CLI dispatch; `tui` subcommand |
 | `csv-utils/src/cli.rs` | CLI command runners |
 | `csv-utils/src/tui/app.rs` | ratatui renderer, event loop, input |
-| `csv-utils-web/src/main.rs` | Browser UI server entry |
-| `csv-utils-web/src/server.rs` | axum routes, JSON API, embedded HTML |
+| `csv-utils/src/web/server.rs` | axum routes, JSON API, embedded HTML (started via `:web`) |
 | `csv-utils-core/` | Parsing, preview, CLI engine, `AppModel`, actions, client view |
 
 ## Workspace layout
@@ -33,8 +32,7 @@ flowchart TB
 ```
 Cargo.toml                   # workspace root
 csv-utils-core/              # shared library
-csv-utils/                   # CLI + TUI binary
-csv-utils-web/               # browser server binary
+csv-utils/                   # CLI + TUI binary (includes embedded web server)
 recipe/recipe.yaml           # conda package (rattler-build)
 scripts/                     # test data + TUI capture
 test-data/generated/
@@ -101,12 +99,8 @@ csv-utils/src/
   cli.rs
   tui/app.rs
   tui/column_finder.rs    # ColumnFinderState: / fuzzy column search bar
-
-csv-utils-web/src/
-  main.rs
-  server.rs
-  assets.rs
-  index.html
+  web/server.rs           # axum server for :web command
+  web/index.html          # browser SPA
 ```
 
 ## Related docs

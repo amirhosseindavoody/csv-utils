@@ -1,8 +1,8 @@
 [workspace]
 resolver = "2"
-members = ["csv-utils-core", "csv-utils", "csv-utils-web"]
+members = ["csv-utils-core", "csv-utils"]
 
 [workspace.package]
-version = "2026.6.26+0"
+version = "2026.6.26+1"
 edition = "2021"
 license = "MIT"

@@ -263,18 +263,22 @@ dependencies = [
 
 [[package]]
 name = "csv-utils"
-version = "2026.6.26+0"
+version = "2026.6.26+1"
 dependencies = [
  "anyhow",
+ "axum",
  "clap",
  "crossterm",
  "csv-utils-core",
  "ratatui",
+ "serde",
+ "serde_json",
+ "tokio",
 ]
 
 [[package]]
 name = "csv-utils-core"
-version = "2026.6.26+0"
+version = "2026.6.26+1"
 dependencies = [
  "csv",
  "memmap2",
@@ -282,19 +286,6 @@ dependencies = [
  "serde_json",
  "tempfile",
  "thiserror",
-]
-
-[[package]]
-name = "csv-utils-web"
-version = "2026.6.26+0"
-dependencies = [
- "anyhow",
- "axum",
- "clap",
- "csv-utils-core",
- "serde",
- "serde_json",
- "tokio",
 ]
 
 [[package]]

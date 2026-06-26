@@ -82,6 +82,12 @@ pub const VIEW_COMMANDS: &[CommandSpec] = &[
         description: "Unhide selected or all hidden rows/columns",
         takes_args: false,
     },
+    CommandSpec {
+        primary: ":web",
+        aliases: &[],
+        description: "Open browser UI on a free local port and exit terminal view",
+        takes_args: false,
+    },
 ];
 
 #[derive(Debug, Clone)]
@@ -388,7 +394,7 @@ mod tests {
             suggestion_index: 0,
         };
         assert_eq!(state.filtered(PICKER_COMMANDS).len(), 3);
-        assert_eq!(state.filtered(VIEW_COMMANDS).len(), 6);
+        assert_eq!(state.filtered(VIEW_COMMANDS).len(), 7);
     }
 
     #[test]

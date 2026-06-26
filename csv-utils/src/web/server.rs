@@ -1,5 +1,5 @@
-use crate::assets::INDEX_HTML;
-use anyhow::Result;
+use crate::web::assets::INDEX_HTML;
+use anyhow::{Context, Result};
 use axum::{
     extract::State,
     response::{Html, IntoResponse, Json},
@@ -7,57 +7,140 @@ use axum::{
     Router,
 };
 use csv_utils_core::{
+    client_view::{ClientTable, ClientView, ScrollMeta},
     column::{column_kind_from_label, numeric_repr_from_label},
-    AppModel, ClientView, ViewAction, ViewLayout,
+    AppModel, ViewAction, ViewLayout,
 };
 use serde::Deserialize;
-use std::{net::SocketAddr, path::PathBuf, sync::Arc};
-use tokio::sync::Mutex;
-
-const LAYOUT: ViewLayout = ViewLayout {
-    viewport_rows: 24,
-    table_width: 110,
-    column_list_height: 20,
+use std::{
+    sync::{Arc, Mutex, RwLock},
+    thread::{self, JoinHandle},
 };
 
-type SharedModel = Arc<Mutex<AppModel>>;
+#[derive(Clone)]
+pub struct WebServerState {
+    pub model: Arc<Mutex<AppModel>>,
+    pub layout: Arc<Mutex<ViewLayout>>,
+    pub snapshot: Arc<RwLock<ClientView>>,
+}
 
-pub async fn run(file: Option<PathBuf>, host: &str, port: u16) -> Result<()> {
-    let model = AppModel::open(file)?;
-    let state: SharedModel = Arc::new(Mutex::new(model));
+pub struct WebServer {
+    url: String,
+    handle: JoinHandle<()>,
+}
 
+impl WebServer {
+    pub fn start(state: WebServerState) -> Result<Self> {
+        sync_snapshot(&state);
+
+        let listener = std::net::TcpListener::bind("127.0.0.1:0")
+            .context("failed to bind web UI listener")?;
+        let port = listener.local_addr()?.port();
+        let url = format!("http://127.0.0.1:{port}/");
+        listener.set_nonblocking(true)?;
+
+        let handle = thread::spawn(move || {
+            let rt = tokio::runtime::Builder::new_multi_thread()
+                .enable_all()
+                .worker_threads(2)
+                .build()
+                .expect("tokio runtime");
+            if let Err(err) = rt.block_on(run_server(state, listener)) {
+                eprintln!("web UI server error: {err:#}");
+            }
+        });
+
+        Ok(Self { url, handle })
+    }
+
+    pub fn url(&self) -> &str {
+        &self.url
+    }
+
+    pub fn wait(self) {
+        let _ = self.handle.join();
+    }
+}
+
+pub fn empty_client_view() -> ClientView {
+    ClientView {
+        file: String::new(),
+        row_count: 0,
+        scan_done: false,
+        scan_error: false,
+        selected_row: 0,
+        selected_col: 0,
+        show_column_info: false,
+        column_info: None,
+        show_help: false,
+        status_line: String::new(),
+        column_list_offset: 0,
+        column_count: 0,
+        table: ClientTable {
+            row_start: 0,
+            row_end: 0,
+            columns: Vec::new(),
+            rows: Vec::new(),
+        },
+        sidebar: Vec::new(),
+        table_rows_scroll: ScrollMeta {
+            offset: 0,
+            total: 0,
+            viewport: 0,
+        },
+        table_cols_scroll: ScrollMeta {
+            offset: 0,
+            total: 0,
+            viewport: 0,
+        },
+        sidebar_scroll: ScrollMeta {
+            offset: 0,
+            total: 0,
+            viewport: 0,
+        },
+    }
+}
+
+pub fn sync_snapshot(state: &WebServerState) {
+    let layout = current_layout(state);
+    let view = state.model.lock().unwrap().client_view(layout);
+    if let Ok(mut snapshot) = state.snapshot.write() {
+        *snapshot = view;
+    }
+}
+
+async fn run_server(state: WebServerState, listener: std::net::TcpListener) -> Result<()> {
+    let listener = tokio::net::TcpListener::from_std(listener)?;
     let app = Router::new()
         .route("/", get(index))
         .route("/api/state", get(api_state))
         .route("/api/action", post(api_action))
         .with_state(state.clone());
 
-    let addr: SocketAddr = format!("{host}:{port}").parse()?;
-    eprintln!("csv-utils web UI at http://{host}:{port}/");
-    if host == "127.0.0.1" || host == "localhost" {
-        eprintln!("(use --host 0.0.0.0 to listen on all interfaces)");
-    }
+    let refresh_state = state.clone();
+    tokio::spawn(async move {
+        while !refresh_state.model.lock().unwrap().preview.scan_done() {
+            sync_snapshot(&refresh_state);
+            tokio::time::sleep(std::time::Duration::from_millis(150)).await;
+        }
+        sync_snapshot(&refresh_state);
+    });
 
-    let listener = tokio::net::TcpListener::bind(addr).await?;
     axum::serve(listener, app)
-        .with_graceful_shutdown(shutdown_signal())
+        .with_graceful_shutdown(async {
+            let _ = tokio::signal::ctrl_c().await;
+        })
         .await?;
 
-    state.lock().await.join_scan_thread();
     Ok(())
-}
-
-async fn shutdown_signal() {
-    let _ = tokio::signal::ctrl_c().await;
 }
 
 async fn index() -> Html<&'static str> {
     Html(INDEX_HTML)
 }
 
-async fn api_state(State(state): State<SharedModel>) -> Json<ClientView> {
-    let model = state.lock().await;
-    Json(model.client_view(LAYOUT))
+async fn api_state(State(state): State<WebServerState>) -> Json<ClientView> {
+    Json(state.snapshot.read().unwrap().clone())
 }
 
 #[derive(Debug, Deserialize)]
@@ -68,15 +151,26 @@ struct ActionRequest {
 }
 
 async fn api_action(
-    State(state): State<SharedModel>,
+    State(state): State<WebServerState>,
     Json(body): Json<ActionRequest>,
 ) -> impl IntoResponse {
     let action = parse_action(&body.action, &body.value);
-    let mut model = state.lock().await;
-    if let Some(action) = action {
-        model.apply_action(action, LAYOUT);
+    let layout = current_layout(&state);
+    let view = {
+        let mut model = state.model.lock().unwrap();
+        if let Some(action) = action {
+            model.apply_action(action, layout);
+        }
+        model.client_view(layout)
+    };
+    if let Ok(mut snapshot) = state.snapshot.write() {
+        *snapshot = view.clone();
     }
-    Json(model.client_view(LAYOUT))
+    Json(view)
+}
+
+fn current_layout(state: &WebServerState) -> ViewLayout {
+    state.layout.lock().map(|l| *l).unwrap_or_default()
 }
 
 fn parse_action(name: &str, value: &serde_json::Value) -> Option<ViewAction> {

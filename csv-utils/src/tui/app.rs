@@ -7,6 +7,7 @@ use crossterm::ExecutableCommand;
 use csv_utils_core::column::{ColumnKind, NumericRepr};
 use csv_utils_core::display::truncate_middle;
 use csv_utils_core::model::{AppModel, MultiSelectAxis, MAX_COLUMN_WIDTH, MIN_COLUMN_WIDTH};
+use csv_utils_core::ViewLayout;
 use ratatui::backend::CrosstermBackend;
 use ratatui::layout::{Constraint, Direction, Layout, Margin, Position, Rect};
 use ratatui::style::{Color, Modifier, Style};
@@ -16,9 +17,12 @@ use ratatui::widgets::{
     Table, Wrap,
 };
 use ratatui::Terminal;
-use std::io::{self, stdout};
+use std::io::{self, stdout, Write};
 use std::path::PathBuf;
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
+
+use crate::web::{empty_client_view, sync_snapshot, WebServer, WebServerState};
 
 use crate::tui::column_finder::{ColumnFinderAction, ColumnFinderState};
 use crate::tui::command_line::{CommandKeyAction, CommandLineState, VIEW_COMMANDS};
@@ -45,6 +49,7 @@ csv — keyboard shortcuts
   :toggle-borders  show or hide table column border lines
   :hide / :h  hide selected columns (←/→ or sidebar) or rows (↑/↓); Ctrl+click/drag cell range
   :unhide / :u  unhide selected or all hidden columns/rows (same axis as :hide)
+  :web       open browser UI on a free local port and exit terminal view
   /          fuzzy-find columns (filters sidebar)
   :filter    filter rows on selected column, or sidebar when focused (:f)
 
@@ -57,6 +62,7 @@ enum MainKeyAction {
     Quit,
     CloseFile,
     OpenPath(PathBuf),
+    LaunchWeb,
 }
 
 struct LayoutAreas {
@@ -109,10 +115,22 @@ struct ScrollbarDrag {
 
 pub fn run(file: Option<&str>) -> Result<()> {
     let file_path = file.map(PathBuf::from);
-    let mut model = AppModel::open(file_path.clone())?;
+    let shared_model = Arc::new(Mutex::new(AppModel::open(file_path.clone())?));
+    let web_layout = Arc::new(Mutex::new(ViewLayout::default()));
+    let web_state = WebServerState {
+        model: Arc::clone(&shared_model),
+        layout: Arc::clone(&web_layout),
+        snapshot: Arc::new(std::sync::RwLock::new(empty_client_view())),
+    };
+    let mut web_server: Option<WebServer> = None;
     let mut file_picker = if FilePicker::needs_picker(&file_path) {
         Some(FilePicker::new(
-            model.settings.file_picker.normalized_extensions(),
+            shared_model
+                .lock()
+                .unwrap()
+                .settings
+                .file_picker
+                .normalized_extensions(),
         )?)
     } else {
         None
@@ -141,14 +159,22 @@ pub fn run(file: Option<&str>) -> Result<()> {
     let mut command_line: Option<CommandLineState> = None;
     let mut command_error: Option<String> = None;
     let mut column_finder: Option<ColumnFinderState> = None;
+    let mut pending_web_layout: Option<ViewLayout> = None;
 
     while running {
+        let mut model = shared_model.lock().unwrap();
         model.maybe_update_column_layout();
         terminal.draw(|frame| {
             areas = if file_picker.is_some() {
                 draw_file_picker(frame, file_picker.as_ref().unwrap())
             } else {
-                draw(frame, &mut model, command_line.as_ref(), command_error.as_deref(), column_finder.as_ref())
+                draw(
+                    frame,
+                    &mut model,
+                    command_line.as_ref(),
+                    command_error.as_deref(),
+                    column_finder.as_ref(),
+                )
             };
         })?;
 
@@ -160,8 +186,11 @@ pub fn run(file: Option<&str>) -> Result<()> {
                 .height
                 .max(1) as usize;
 
+            drop(model);
+
             let timeout = Duration::from_millis(50);
             if event::poll(timeout)? {
+                let mut model = shared_model.lock().unwrap();
                 match event::read()? {
                     Event::Key(key) if key.kind == KeyEventKind::Press => {
                         if let Some(picker) = file_picker.as_mut() {
@@ -205,8 +234,11 @@ pub fn run(file: Option<&str>) -> Result<()> {
         model.clamp_selection(viewport_rows.max(1), table_width);
         model.clamp_column_list_offset(column_list_height);
 
+        drop(model);
+
         let timeout = Duration::from_millis(50);
         if event::poll(timeout)? {
+            let mut model = shared_model.lock().unwrap();
             match event::read()? {
                 Event::Key(key) if key.kind == KeyEventKind::Press => {
                     match handle_key(
@@ -220,6 +252,14 @@ pub fn run(file: Option<&str>) -> Result<()> {
                     ) {
                         MainKeyAction::Continue => {}
                         MainKeyAction::Quit => running = false,
+                        MainKeyAction::LaunchWeb => {
+                            pending_web_layout = Some(ViewLayout {
+                                viewport_rows: viewport_rows.max(1),
+                                table_width,
+                                column_list_height,
+                            });
+                            running = false;
+                        }
                         MainKeyAction::CloseFile => {
                             let extensions = model.settings.file_picker.normalized_extensions();
                             let reopen_at = model.file_path.clone();
@@ -270,20 +310,45 @@ pub fn run(file: Option<&str>) -> Result<()> {
                 Event::Resize(_, _) => {}
                 _ => {}
             }
-        } else if !model.preview.scan_done() && last_redraw.elapsed() >= Duration::from_millis(100)
-        {
-            last_redraw = Instant::now();
+        } else {
+            let scan_active = !shared_model.lock().unwrap().preview.scan_done();
+            if scan_active && last_redraw.elapsed() >= Duration::from_millis(100) {
+                last_redraw = Instant::now();
+            }
         }
         let _ = size;
+
+        if let Some(layout) = pending_web_layout.take() {
+            if let Ok(mut web_l) = web_layout.lock() {
+                *web_l = layout;
+            }
+            sync_snapshot(&web_state);
+            web_server = Some(WebServer::start(web_state.clone())?);
+            break;
+        }
     }
 
+    restore_terminal(&mut terminal)?;
+
+    if let Some(server) = web_server.take() {
+        eprintln!("Web UI at {}", server.url());
+        eprintln!("Press Ctrl+C to stop.");
+        let _ = io::stderr().flush();
+        server.wait();
+        shared_model.lock().unwrap().join_scan_thread();
+    } else {
+        shared_model.lock().unwrap().abandon_scan_thread();
+    }
+
+    Ok(())
+}
+
+fn restore_terminal(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Result<()> {
     disable_raw_mode()?;
-    let mut stdout = io::stdout();
-    stdout.execute(crossterm::event::DisableMouseCapture)?;
-    stdout.execute(LeaveAlternateScreen)?;
-
-    model.abandon_scan_thread();
-
+    terminal
+        .backend_mut()
+        .execute(crossterm::event::DisableMouseCapture)?;
+    terminal.backend_mut().execute(LeaveAlternateScreen)?;
     Ok(())
 }
 
@@ -669,6 +734,11 @@ fn handle_key(
                                 }
                                 Err(msg) => *command_error = Some(msg.to_string()),
                             }
+                        }
+                        ":web" => {
+                            *command_line = None;
+                            *command_error = None;
+                            return MainKeyAction::LaunchWeb;
                         }
                         _ => *command_error = Some(format!("Unknown command: {cmd}")),
                     }

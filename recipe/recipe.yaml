@@ -1,7 +1,7 @@
 # yaml-language-server: $schema=https://raw.githubusercontent.com/prefix-dev/recipe-format/main/schema.json
 
 context:
-  version: 2026.6.26+0
+  version: 2026.6.26+1
 
 package:
   name: csv-utils
@@ -18,9 +18,8 @@ build:
       set -euo pipefail
       cd "$SRC_DIR"
       host="$(rustc -vV | sed -n 's/^host: //p')"
-      cargo build --locked --release -p csv-utils -p csv-utils-web
+      cargo build --locked --release -p csv-utils
       install -Dm755 "target/${host}/release/csv" "$PREFIX/bin/csv"
-      install -Dm755 "target/${host}/release/csv-utils-web" "$PREFIX/bin/csv-utils-web"
       rm -f "$PREFIX/.crates.toml" "$PREFIX/.crates2.json"
 
 requirements:
@@ -31,7 +30,6 @@ requirements:
 tests:
   - script:
       - csv --help
-      - csv-utils-web --help
 
 about:
   summary: High-performance CSV CLI, TUI, and browser UI explorer

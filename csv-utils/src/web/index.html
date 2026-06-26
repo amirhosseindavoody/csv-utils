@@ -339,6 +339,7 @@ Theme button (header): System · Light · Dark.`;
     const THEME_LABELS = { system: 'System', light: 'Light', dark: 'Dark' };
 
     let pollTimer = null;
+    let pollInFlight = false;
     let columnResize = null;
     let pendingColumnWidths = {};
     let skipPoll = false;
@@ -426,12 +427,24 @@ Theme button (header): System · Light · Dark.`;
     document.getElementById('theme-toggle').addEventListener('click', cycleTheme);
 
     async function postAction(action, value) {
-      await fetch('/api/action', {
+      const res = await fetch('/api/action', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ action, value }),
       });
-      await refresh();
+      render(await res.json());
+    }
+
+    let wheelTimer = null;
+    let wheelDelta = 0;
+    function queueWheelAction(action, delta) {
+      wheelDelta += delta;
+      clearTimeout(wheelTimer);
+      wheelTimer = setTimeout(() => {
+        const step = wheelDelta;
+        wheelDelta = 0;
+        postAction(action, step);
+      }, 32);
     }
 
     function updateVScroll(trackEl, meta) {
@@ -716,9 +729,14 @@ Theme button (header): System · Light · Dark.`;
     }
 
     async function refresh() {
-      const res = await fetch('/api/state');
-      const state = await res.json();
-      render(state);
+      if (pollInFlight) return;
+      pollInFlight = true;
+      try {
+        const res = await fetch('/api/state');
+        render(await res.json());
+      } finally {
+        pollInFlight = false;
+      }
     }
 
     document.addEventListener('keydown', (e) => {
@@ -745,12 +763,12 @@ Theme button (header): System · Light · Dark.`;
 
     document.getElementById('table-wrap').addEventListener('wheel', (e) => {
       e.preventDefault();
-      postAction('row_delta', e.deltaY < 0 ? -3 : 3);
+      queueWheelAction('row_delta', e.deltaY < 0 ? -3 : 3);
     }, { passive: false });
 
     document.getElementById('sidebar').addEventListener('wheel', (e) => {
       e.preventDefault();
-      postAction('column_list_delta', e.deltaY < 0 ? -3 : 3);
+      queueWheelAction('column_list_delta', e.deltaY < 0 ? -3 : 3);
     }, { passive: false });
 
     document.getElementById('info-box').addEventListener('click', (e) => {

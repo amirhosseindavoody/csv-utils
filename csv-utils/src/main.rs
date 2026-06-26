@@ -1,5 +1,6 @@
 mod cli;
 mod tui;
+mod web;
 
 use anyhow::Result;
 use clap::{Parser, Subcommand};

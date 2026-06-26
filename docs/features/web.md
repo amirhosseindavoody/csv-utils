@@ -1,29 +1,20 @@
 # Web UI
 
-Browser table explorer backed by the same `AppModel` as the TUI. Binary: **`csv-utils-web`** (`target/release/csv-utils-web`).
+Browser table explorer backed by the same `AppModel` as the TUI. Start it from the TUI with **`:web`** while a file is open.
 
 ## Usage
 
-```
-csv-utils-web [file.csv] [--host HOST] [--port PORT]
-```
+1. Open a CSV in the TUI: `pixi run csv test-data/generated/test_1000x100.csv`
+2. Type **`:web`** and press Enter
+3. The terminal view closes; the URL is printed (e.g. `http://127.0.0.1:54321/`)
+4. Open that URL in your browser
+5. Press **Ctrl+C** in the terminal to stop the server
 
-| Flag | Default | Meaning |
-|------|---------|---------|
-| `--host` | `127.0.0.1` | Bind address (use `0.0.0.0` for LAN) |
-| `--port` | `8080` | TCP port |
-
-```bash
-pixi run web -- test-data/generated/test_1000x100.csv
-pixi run web -- --host 0.0.0.0 --port 8080 file.csv
-pixi run web-tui   # shortcut with test CSV
-```
-
-Open `http://127.0.0.1:8080/` (or your `--host`/`--port`). Ctrl+C stops the server and joins the background scan thread.
+The server binds to `127.0.0.1` on a free port chosen by the OS. Layout dimensions are taken from the terminal viewport at handoff time.
 
 ## Page layout
 
-Same logical regions as the TUI: title/meta bar, data table, column sidebar, hint footer. Layout constants in the server: 24 visible rows, 110-char table width, 20 sidebar lines.
+Same logical regions as the TUI: title/meta bar, data table, column sidebar, hint footer.
 
 ## Theme
 
@@ -69,13 +60,11 @@ Example action:
 {"action": "set_column_list_offset", "value": 12}
 ```
 
-On startup, settings are loaded from `~/.config/csv-utils/csv-utils.json` with optional `./csv-utils.json` overrides in the working directory (see [settings config](../design/settings-config.md)).
-
 The page polls `/api/state` while the background scan runs (`scan_done: false`).
 
-Implementation: `csv-utils-web/src/server.rs`, embedded UI in `index.html`.
+Implementation: `csv-utils/src/web/server.rs`, embedded UI in `csv-utils/src/web/index.html`.
 
 ## Related
 
 - [Architecture](../architecture.md#shared-view-model)
-- [TUI](tui.md) — terminal counterpart
+- [TUI](tui.md) — terminal counterpart (`:web` command)

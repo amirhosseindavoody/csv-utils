@@ -16,15 +16,13 @@ pixi run build
 
 | Binary | Path | Purpose |
 |--------|------|---------|
-| `csv` | `target/release/csv` | CLI + TUI |
-| `csv-utils-web` | `target/release/csv-utils-web` | Browser UI server |
+| `csv` | `target/release/csv` | CLI + TUI (+ browser UI via `:web`) |
 
 With pixi:
 
 ```bash
-pixi run run -- stats sample.csv
-pixi run tui test-data/generated/test_1000x100.csv
-pixi run web-tui
+pixi run csv -- stats sample.csv
+pixi run csv test-data/generated/test_1000x100.csv
 ```
 
 ## Entry points
@@ -37,15 +35,13 @@ csv unique <file.csv> <col1[,col2,...]> [limit]
 csv json <file.csv> [limit]
 csv filter <file.csv> <expr> [limit]
 csv tui [file.csv]          # alias for csv [file.csv]
-
-csv-utils-web [file.csv] [--host HOST] [--port PORT]
 ```
 
 - **`csv`** or **`csv <file>`** — launches the TUI (file picker when no path is given).
 - **`tui`** — alias for `csv [file]` (optional CSV path).
-- **`csv-utils-web`** — serves browser UI at `http://127.0.0.1:8080/` by default.
+- **`:web`** (inside the TUI) — opens browser UI on a free local port and exits the terminal view (Ctrl+C stops the server).
 
-Pixi tasks run from the **repo root**; extra args are forwarded (`pixi run tui file.csv`, `pixi run run -- stats file.csv`).
+Pixi tasks run from the **repo root**; extra args are forwarded (`pixi run csv file.csv`, `pixi run csv -- stats file.csv`).
 
 ## Settings
 

@@ -32,7 +32,7 @@ When you change **user-visible behavior**, **CLI/TUI contracts**, **data loading
 
 Update docs if you touch any of:
 
-- `csv-utils/src/**`, `csv-utils-core/src/**`, `csv-utils-web/src/**`
+- `csv-utils/src/**`, `csv-utils-core/src/**`
 - `Cargo.toml`, `pixi.toml`, `recipe/recipe.yaml`
 - `scripts/generate_test_data.py`, `scripts/capture_tui_snapshot.py`
 

@@ -76,6 +76,7 @@ Each frame: `maybe_refit_column_widths()` (when loaded row count changes), `clam
 | `:` then `:toggle-borders` | Show or hide `│` border lines between table columns for this session |
 | `:` then `:hide` / `:h` | Hide selected column(s) after **←/→** or sidebar focus, or selected row(s) after **↑/↓**; Ctrl+click column header/sidebar for column multi-select |
 | `:` then `:unhide` / `:u` | Unhide using the same row/column axis as `:hide`; with no hidden targets in the selection, unhide **all** hidden rows or columns for that axis |
+| `:` then `:web` | Open browser UI on a free local port and exit the terminal view (Ctrl+C stops the server) |
 | `:` then `:filter <text>` / `:f <text>` | Filter **rows** on the selected column (text: fuzzy; numeric: `>10`, `(>=10) & (<20)`, etc.) |
 | `:` then `:filter` / `:f` | Clear row filter on the selected column |
 | Sidebar focused + `:filter <text>` | Filter the column **sidebar** by name (click or scroll sidebar to focus) |

@@ -41,8 +41,8 @@ Differences:
 |--------|-----|-----|
 | Rendering | ratatui + crossterm | HTML table + fetch API |
 | Theme | Terminal colors | System light/dark + manual toggle |
-| Quit | `q` | Close tab / stop server |
-| Layout size | Terminal resize | Fixed layout constants in server |
+| Quit | `q` | Close tab; Ctrl+C in terminal stops the server |
+| Layout size | Terminal resize | Fixed at `:web` handoff (terminal viewport) |
 
 ## CLI behavior
 
@@ -56,8 +56,8 @@ CLI commands stream the full file and parse every row. They do not use the previ
 | Distinct combinations | `unique` |
 | Filter rows to JSON | `filter` |
 | Sample rows as JSON | `json` |
-| Scan a wide file visually | `tui` or `web` |
-| Share view on LAN | `csv-utils-web --host 0.0.0.0` |
+| Scan a wide file visually | TUI (`csv [file]`) |
+| View same session in browser | `:web` in the TUI (exits terminal view) |
 
 ## Detailed specs
 
