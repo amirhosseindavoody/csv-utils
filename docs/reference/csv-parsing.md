@@ -42,7 +42,7 @@ Inferred from **indexed cell values** when kind is `Auto`:
 
 Location: `csv-utils-core/src/column.rs` (`infer_column_kind_from_values`).
 
-Press **`c`** to open the column info panel: change type (options depend on inferred data), representation, **decimal places** (e.g. `.3`), and view type-specific statistics (lazy; computed from indexed rows while the panel is open).
+Press **`c`** to open the column info panel: change type (options depend on inferred data), representation, **decimal places** (e.g. `.3`), and view type-specific statistics (computed from indexed rows during load).
 
 Default decimal format: [settings config](../design/settings-config.md).
 

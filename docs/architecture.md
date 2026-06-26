@@ -82,7 +82,7 @@ csv-utils-core/src/
   schema.rs               # split_row, read_fields_from_slice (csv crate)
   predicate.rs            # CLI filter expressions
   preview.rs              # PreviewData, mmap, offset index, background scan
-  column_layout.rs        # ColumnLayoutState (width, inference, lazy stats)
+  column_layout.rs        # ColumnLayoutState (width, inference, stats)
   stats.rs
   unique.rs
   json_view.rs

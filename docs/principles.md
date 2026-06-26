@@ -20,7 +20,7 @@ All interactive UIs share one core model (`AppModel`) so behavior stays aligned 
 2. **Simple, predictable CSV parsing** — RFC 4180 via the `csv` crate; preview uses mmap + on-demand record parse.
 3. **One shared core** — `csv-utils-core` owns parsing, preview, CLI engine, and view state; frontends are thin.
 4. **Progressive disclosure** — CLI for scripts; TUI/web when you need to look around a file.
-5. **Honest limits** — document mmap, indexing, and lazy-stats constraints; see [limitations](reference/limitations.md).
+5. **Honest limits** — document mmap, indexing, and progressive-stats constraints; see [limitations](reference/limitations.md).
 
 ## User experience values
 

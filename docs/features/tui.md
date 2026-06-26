@@ -121,7 +121,7 @@ While the panel is open, table navigation is disabled:
 | `Backspace` | While editing decimal format, delete a character |
 | `q` | Close panel |
 
-The panel shows editable **type** options filtered by inferred data (e.g. text-only columns hide date/int/float), **representation** when numeric types apply, **decimal places** (text field, default from merged settings, e.g. `.3`), **row filter** (fuzzy text or numeric expression), plus type-specific **statistics** from loaded rows (note shown while scanning).
+The panel shows editable **type** options filtered by inferred data (e.g. text-only columns hide date/int/float), **representation** when numeric types apply, **decimal places** (text field, default from merged settings, e.g. `.3`), **row filter** (fuzzy text or numeric expression), plus type-specific **statistics** from loaded rows (note shown while scanning; stats accumulate during background load).
 
 ## Mouse
 

@@ -30,7 +30,7 @@ See [large-file preview design](../design/large-file-preview.md) for the full pi
 | `PreviewData::load_header_and_initial_rows` | TUI/web startup |
 | `PreviewData::start_background_scan` | Continue indexing after sync batch |
 | `PreviewData::row_fields(index)` | Parse one body row on demand |
-| `PreviewData::layout()` | Shared `ColumnLayoutState` (width, inference, lazy stats) |
+| `PreviewData::layout()` | Shared `ColumnLayoutState` (width, inference, stats) |
 | `PreviewData::load_limited` | Tests (`scan_done = true`) |
 
 Location: `csv-utils-core/src/preview.rs`, `csv-utils-core/src/column_layout.rs`
@@ -42,8 +42,8 @@ updates `record_offsets` and `ColumnLayoutState`. On TUI quit the scan is cancel
 abandoned without blocking the shell (`abandon_scan_thread`). When switching files (`reopen`,
 `:close`) the previous scan is cancelled and joined (`join_scan_thread`).
 
-Column statistics backfill runs on the UI thread when the info panel is open
-(budget: 512 rows per `maybe_update_column_layout` call).
+Column statistics are updated on the background scan thread (and during the
+initial row load) as rows are indexed.
 
 ### Interaction with row-filter cache
 

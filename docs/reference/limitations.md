@@ -20,7 +20,7 @@ Current constraints and intentional trade-offs.
 
 ## Column info and statistics
 
-- Column statistics are computed **only while the info panel is open**; opening the panel mid-scan backfills incrementally (512 rows/frame budget).
+- Column statistics are computed progressively during file load (initial rows + background scan); opening the info panel mid-scan may show partial stats until the scan finishes.
 - Manual column resize locks width for that column until a new file is opened; widths are not persisted across sessions.
 
 ## Other

@@ -13,8 +13,6 @@ use std::sync::Arc;
 
 pub const MIN_COLUMN_WIDTH: usize = 4;
 pub const MAX_COLUMN_WIDTH: usize = 64;
-const STATS_BACKFILL_BUDGET: usize = 512;
-
 /// Which axis **Space** toggles for multi-select (follows the last arrow-key navigation).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum MultiSelectAxis {
@@ -722,7 +720,7 @@ impl AppModel {
         }
     }
 
-    /// Apply auto-fit widths and incrementally backfill column stats when the info panel is open.
+    /// Apply auto-fit widths from the shared column layout state.
     pub fn maybe_update_column_layout(&mut self) {
         self.ensure_column_state();
         let headers = self.preview.headers();
@@ -733,19 +731,6 @@ impl AppModel {
             let mut layout = layout_arc.lock().expect("layout mutex poisoned");
             if layout.column_count() != n {
                 layout.reset_from_headers(&headers);
-            }
-
-            if let Some(col) = layout.stats_column() {
-                let row_count = self.preview.row_count();
-                let mut budget = STATS_BACKFILL_BUDGET;
-                while layout.stats_backfill_row() < row_count && budget > 0 {
-                    let row = layout.stats_backfill_row();
-                    if let Some(fields) = self.preview.row_fields(row) {
-                        layout.backfill_stats_for_row(col, &fields);
-                    }
-                    layout.advance_stats_backfill();
-                    budget -= 1;
-                }
             }
         }
 
@@ -860,10 +845,6 @@ impl AppModel {
         self.view.column_info_decimal_draft.clear();
         self.view.column_info_filter_editing = false;
         self.view.column_info_filter_draft.clear();
-        self.layout()
-            .lock()
-            .expect("layout mutex poisoned")
-            .set_stats_column(Some(col));
         let stored = self.stored_column_kind(col);
         let kinds = self.column_info_type_kinds(col);
         self.view.column_info_focus = kinds
@@ -878,10 +859,6 @@ impl AppModel {
         self.view.column_info_decimal_draft.clear();
         self.view.column_info_filter_editing = false;
         self.view.column_info_filter_draft.clear();
-        self.layout()
-            .lock()
-            .expect("layout mutex poisoned")
-            .set_stats_column(None);
     }
 
     fn column_info_kind_shows_repr(&self, col: usize, kind: ColumnKind) -> bool {

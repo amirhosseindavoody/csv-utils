@@ -67,9 +67,10 @@ The UI shows row count and `loading…` until the background scan finishes
 Width auto-fit and type inference run on a **background thread** while records
 are indexed (`column_layout.rs`, updated from `preview.rs`).
 
-Column **statistics** are **lazy**: computed only while the column info panel is
-open (`c` in TUI/web), backfilled incrementally from indexed rows (512 rows per
-frame budget). Stats over a partial scan are labeled partial in the panel.
+Column **statistics** are computed on the **background scan thread** (and during
+the initial row load) as rows are indexed, so they are ready when the column
+info panel opens (`c` in TUI/web). Stats over a partial scan are labeled partial
+in the panel.
 
 | Metadata | When computed |
 |---|---|
@@ -78,7 +79,7 @@ frame budget). Stats over a partial scan are labeled partial in the panel.
 | Cell values | On demand for visible rows |
 | Column width auto-fit | Background scan (progressive) |
 | Type inference | Background scan (progressive) |
-| Column statistics | Info panel open, incremental backfill |
+| Column statistics | Background scan (progressive) |
 | Filtered row index list | Once per tick in `maybe_update_column_layout`; cache invalidated on filter change or new rows |
 
 ## CLI path
