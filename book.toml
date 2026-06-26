@@ -12,7 +12,7 @@ create-missing = false
 
 [output.html]
 git-repository-url = "https://github.com/amirhosseindavoody/csv-utils"
-edit-url-template = "https://github.com/amirhosseindavoody/csv-utils/edit/main/docs/{path}"
+edit-url-template = "https://github.com/amirhosseindavoody/csv-utils/edit/main/{path}"
 default-theme = "rust"
 preferred-dark-theme = "ayu"
 
