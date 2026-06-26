@@ -25,11 +25,10 @@ csv-utils = { path = "." }
 [tasks]
 build = "cargo build --release"
 csv = "cargo run --release -p csv-utils --"
-tui = "cargo run --release -p csv-utils --"
 test = "cargo test"
 gen-test-data = "python scripts/generate_test_data.py"
-test-tui-small = "pixi run tui test-data/generated/test_1000x100.csv"
-test-tui-large = "pixi run tui test-data/generated/test_10000x1000.csv"
+test-tui-small = "pixi run csv test-data/generated/test_1000x100.csv"
+test-tui-large = "pixi run csv test-data/generated/test_10000x1000.csv"
 test-tui-large-capture = "pixi run build && python scripts/capture_tui_snapshot.py --file test-data/generated/test_10000x1000.csv --seconds 2.0 --rows 40 --cols 140 --output artifacts/tui_snapshot_large.txt --raw-output artifacts/tui_snapshot_large.raw"
 web = "cargo run --release -p csv-utils-web -- \"$@\"' --"
 web-tui = "pixi run web -- test-data/generated/test_1000x100.csv"

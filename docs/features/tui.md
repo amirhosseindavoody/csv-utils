@@ -55,7 +55,7 @@ Data table uses ratatui `Table`. Column sidebar uses manual `Paragraph` lines (n
 
 Settings load from `~/.config/csv-utils/csv-utils.json` (created on first open), with optional `./csv-utils.json` in the working directory overriding individual fields; see [settings config](../design/settings-config.md).
 
-Each frame: `maybe_refit_column_widths()` (when loaded row count changes), `clamp_selection(viewport_rows, table_width)`, and `clamp_column_list_offset(visible_height)`.
+Each frame: `maybe_refit_column_widths()` (when loaded row count changes), `clamp_selection(viewport_rows, table_width)`, and `clamp_column_list_offset(visible_height)`. Dragging the table row/column scrollbar decouples scroll from the selected cell until you move selection (arrows, click, or wheel on the table).
 
 ## Keyboard
 
@@ -116,22 +116,24 @@ While the panel is open, table navigation is disabled:
 | Key | Action |
 |-----|--------|
 | `↑`/`↓` or `j`/`k` | Move highlight between type, representation, and decimal places |
+| `PgUp`/`PgDn` | Scroll panel when statistics extend past the viewport |
 | `Enter` | Apply highlighted option; on **Decimal places** or **Row filter**, start edit or apply typed value |
 | Type directly | When decimal row is focused, type a format (e.g. `.5`) |
 | `Backspace` | While editing decimal format, delete a character |
 | `q` | Close panel |
 
-The panel shows editable **type** options filtered by inferred data (e.g. text-only columns hide date/int/float), **representation** when numeric types apply, **decimal places** (text field, default from merged settings, e.g. `.3`), **row filter** (fuzzy text or numeric expression), plus type-specific **statistics** from loaded rows (note shown while scanning; stats accumulate during background load).
+The panel shows editable **type** options filtered by inferred data (e.g. text-only columns hide date/int/float), **representation** when numeric types apply, **decimal places** (text field, default from merged settings, e.g. `.3`), **row filter** (fuzzy text or numeric expression), plus type-specific **statistics** from loaded rows (note shown while scanning; stats accumulate during background load). A vertical scrollbar appears when content exceeds the viewport.
 
 ## Mouse
 
 | Target | Action |
 |--------|--------|
-| Column info panel | Click type/representation rows to apply; click decimal field to focus |
+| Column info panel | Click type/representation rows to apply; click decimal field to focus; **PgUp/PgDn** or mouse wheel scroll |
 | Table header border | Drag to resize column width (4–64 chars) |
 | Table header | Select column only (click, not on border); **Ctrl+click** toggles column multi-select |
 | Table body cell | Select row + column; **Ctrl+click** extends a cell range from the anchor; **Ctrl+drag** selects a rectangular cell range |
 | Table wheel | Move `selected_row` ±3 |
+| Table / column sidebar / column info | Scrollbars (▲▼ / ◀▶) when content exceeds the viewport; drag thumb or track |
 | Column list click | Select column; **Ctrl+click** toggles column multi-select |
 | Column list left border | Drag to resize sidebar width (16–80 chars) |
 | Column list wheel | Scroll sidebar ±3 via `column_list_offset` |

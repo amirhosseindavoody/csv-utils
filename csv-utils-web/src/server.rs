@@ -131,6 +131,18 @@ fn parse_action(name: &str, value: &serde_json::Value) -> Option<ViewAction> {
             let width = value.get("width")?.as_u64()? as u16;
             Some(ViewAction::SetColumnWidth { col, width })
         }
+        "set_row_offset" => value
+            .as_u64()
+            .or_else(|| value.as_i64().map(|v| v as u64))
+            .map(|v| ViewAction::SetRowOffset(v as usize)),
+        "set_col_offset" => value
+            .as_u64()
+            .or_else(|| value.as_i64().map(|v| v as u64))
+            .map(|v| ViewAction::SetColOffset(v as usize)),
+        "set_column_list_offset" => value
+            .as_u64()
+            .or_else(|| value.as_i64().map(|v| v as u64))
+            .map(|v| ViewAction::SetColumnListOffset(v as usize)),
         "cycle_numeric_repr" => None,
         _ => None,
     }

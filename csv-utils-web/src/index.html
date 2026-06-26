@@ -121,7 +121,20 @@
       background: var(--surface-muted);
       font-weight: 600;
     }
-    .table-wrap { overflow: auto; flex: 1; }
+    .panel-scroll {
+      display: flex;
+      flex-direction: column;
+      flex: 1;
+      min-height: 0;
+    }
+    .scroll-host {
+      display: flex;
+      flex: 1;
+      min-height: 0;
+      min-width: 0;
+    }
+    .scroll-body { flex: 1; overflow: hidden; min-height: 0; min-width: 0; }
+    .table-wrap { flex: 1; overflow: hidden; min-height: 0; min-width: 0; }
     table { border-collapse: collapse; width: max-content; min-width: 100%; }
     th, td {
       border: 1px solid var(--border);
@@ -151,9 +164,10 @@
     td.selected { background: var(--select-cell); color: var(--select-cell-text); font-weight: 700; }
     td.num, th.num { text-align: right; }
     .sidebar {
-      overflow: auto;
       flex: 1;
+      overflow: hidden;
       padding: 0.25rem 0;
+      min-height: 0;
     }
     .sidebar button {
       display: block;
@@ -181,6 +195,62 @@
     .info-box {
       background: var(--panel); border: 1px solid var(--border);
       padding: 1rem 1.25rem; min-width: 300px; max-width: 440px;
+      max-height: min(85vh, 640px);
+      overflow-y: auto;
+      scrollbar-width: thin;
+      scrollbar-color: var(--muted) var(--surface-muted);
+    }
+    .info-box::-webkit-scrollbar { width: 10px; }
+    .info-box::-webkit-scrollbar-track { background: var(--surface-muted); }
+    .info-box::-webkit-scrollbar-thumb {
+      background: var(--muted);
+      border-radius: 5px;
+      border: 2px solid var(--surface-muted);
+    }
+    .vscroll, .hscroll {
+      background: var(--surface-muted);
+      position: relative;
+      flex-shrink: 0;
+      visibility: hidden;
+    }
+    .vscroll.needs-scroll, .hscroll.needs-scroll { visibility: visible; }
+    .vscroll {
+      width: 10px;
+      border-left: 1px solid var(--border);
+    }
+    .hscroll {
+      height: 10px;
+      border-top: 1px solid var(--border);
+    }
+    .vscroll-thumb, .hscroll-thumb {
+      position: absolute;
+      background: var(--muted);
+      border-radius: 4px;
+      opacity: 0.85;
+      cursor: grab;
+    }
+    body.scroll-dragging {
+      user-select: none;
+      cursor: grabbing;
+    }
+    body.scroll-dragging .vscroll-thumb,
+    body.scroll-dragging .hscroll-thumb {
+      cursor: grabbing;
+    }
+    .vscroll.needs-scroll, .hscroll.needs-scroll {
+      cursor: pointer;
+    }
+    .vscroll-thumb {
+      left: 2px;
+      right: 2px;
+      top: 0;
+      min-height: 24px;
+    }
+    .hscroll-thumb {
+      top: 2px;
+      bottom: 2px;
+      left: 0;
+      min-width: 24px;
     }
     .info-box h2 { margin: 0 0 0.75rem; font-size: 1rem; }
     .info-box .format-section { margin: 0.75rem 0 0.25rem; font-weight: 600; color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: 0.04em; }
@@ -224,11 +294,20 @@
     <main>
       <section class="panel">
         <div id="table-title" class="panel-head">Data</div>
-        <div id="table-wrap" class="table-wrap"></div>
+        <div class="panel-scroll">
+          <div class="scroll-host">
+            <div id="table-wrap" class="table-wrap scroll-body"></div>
+            <div class="vscroll" id="table-vscroll" aria-hidden="true"><div class="vscroll-thumb"></div></div>
+          </div>
+          <div class="hscroll" id="table-hscroll" aria-hidden="true"><div class="hscroll-thumb"></div></div>
+        </div>
       </section>
       <section class="panel">
         <div id="sidebar-title" class="panel-head">Columns</div>
-        <div id="sidebar" class="sidebar"></div>
+        <div class="scroll-host">
+          <div id="sidebar" class="sidebar scroll-body"></div>
+          <div class="vscroll" id="sidebar-vscroll" aria-hidden="true"><div class="vscroll-thumb"></div></div>
+        </div>
       </section>
     </main>
     <footer id="hints">arrows navigate · drag resize · c info · ? help · theme</footer>
@@ -355,17 +434,134 @@ Theme button (header): System · Light · Dark.`;
       await refresh();
     }
 
+    function updateVScroll(trackEl, meta) {
+      const thumb = trackEl.querySelector('.vscroll-thumb');
+      const { offset, total, viewport } = meta;
+      if (total <= viewport) {
+        trackEl.classList.remove('needs-scroll');
+        return;
+      }
+      trackEl.classList.add('needs-scroll');
+      const trackH = trackEl.clientHeight || 1;
+      const thumbH = Math.max(24, Math.round(trackH * (viewport / total)));
+      const maxTop = Math.max(0, trackH - thumbH);
+      const top = maxTop > 0
+        ? Math.round((offset / Math.max(1, total - viewport)) * maxTop)
+        : 0;
+      thumb.style.height = `${thumbH}px`;
+      thumb.style.top = `${top}px`;
+    }
+
+    function updateHScroll(trackEl, meta) {
+      const thumb = trackEl.querySelector('.hscroll-thumb');
+      const { offset, total, viewport } = meta;
+      if (total <= viewport) {
+        trackEl.classList.remove('needs-scroll');
+        return;
+      }
+      trackEl.classList.add('needs-scroll');
+      const trackW = trackEl.clientWidth || 1;
+      const thumbW = Math.max(24, Math.round(trackW * (viewport / total)));
+      const maxLeft = Math.max(0, trackW - thumbW);
+      const left = maxLeft > 0
+        ? Math.round((offset / Math.max(1, total - viewport)) * maxLeft)
+        : 0;
+      thumb.style.width = `${thumbW}px`;
+      thumb.style.left = `${left}px`;
+    }
+
+    function scrollMax(meta) {
+      return Math.max(0, meta.total - meta.viewport);
+    }
+
+    function offsetFromPointer(trackEl, thumbEl, clientPos, meta, axis, grabOffset) {
+      const maxScroll = scrollMax(meta);
+      if (axis === 'v') {
+        const trackRect = trackEl.getBoundingClientRect();
+        const thumbH = thumbEl.offsetHeight;
+        const maxTop = Math.max(0, trackEl.clientHeight - thumbH);
+        const top = clientPos - trackRect.top - grabOffset;
+        const ratio = maxTop > 0 ? Math.min(1, Math.max(0, top / maxTop)) : 0;
+        return Math.round(ratio * maxScroll);
+      }
+      const trackRect = trackEl.getBoundingClientRect();
+      const thumbW = thumbEl.offsetWidth;
+      const maxLeft = Math.max(0, trackEl.clientWidth - thumbW);
+      const left = clientPos - trackRect.left - grabOffset;
+      const ratio = maxLeft > 0 ? Math.min(1, Math.max(0, left / maxLeft)) : 0;
+      return Math.round(ratio * maxScroll);
+    }
+
+    let scrollDrag = null;
+
+    function bindScrollDrag(trackEl, action, metaKey, axis) {
+      trackEl.addEventListener('mousedown', (e) => {
+        if (!trackEl.classList.contains('needs-scroll')) return;
+        const thumbEl = trackEl.querySelector(axis === 'v' ? '.vscroll-thumb' : '.hscroll-thumb');
+        const meta = lastState?.[metaKey];
+        if (!meta || !thumbEl) return;
+        e.preventDefault();
+        const onThumb = thumbEl.contains(e.target);
+        const grabOffset = axis === 'v'
+          ? (onThumb ? e.clientY - thumbEl.getBoundingClientRect().top : thumbEl.offsetHeight / 2)
+          : (onThumb ? e.clientX - thumbEl.getBoundingClientRect().left : thumbEl.offsetWidth / 2);
+        const clientPos = axis === 'v' ? e.clientY : e.clientX;
+        const offset = offsetFromPointer(trackEl, thumbEl, clientPos, meta, axis, grabOffset);
+        if (axis === 'v') {
+          updateVScroll(trackEl, { ...meta, offset });
+        } else {
+          updateHScroll(trackEl, { ...meta, offset });
+        }
+        scrollDrag = { trackEl, thumbEl, action, metaKey, axis, grabOffset, pendingOffset: offset };
+        skipPoll = true;
+        document.body.classList.add('scroll-dragging');
+      });
+    }
+
+    bindScrollDrag(document.getElementById('table-vscroll'), 'set_row_offset', 'table_rows_scroll', 'v');
+    bindScrollDrag(document.getElementById('table-hscroll'), 'set_col_offset', 'table_cols_scroll', 'h');
+    bindScrollDrag(document.getElementById('sidebar-vscroll'), 'set_column_list_offset', 'sidebar_scroll', 'v');
+
+    document.addEventListener('mousemove', (e) => {
+      if (!scrollDrag) return;
+      const meta = lastState?.[scrollDrag.metaKey];
+      if (!meta) return;
+      const clientPos = scrollDrag.axis === 'v' ? e.clientY : e.clientX;
+      const offset = offsetFromPointer(
+        scrollDrag.trackEl,
+        scrollDrag.thumbEl,
+        clientPos,
+        meta,
+        scrollDrag.axis,
+        scrollDrag.grabOffset,
+      );
+      if (scrollDrag.axis === 'v') {
+        updateVScroll(scrollDrag.trackEl, { ...meta, offset });
+      } else {
+        updateHScroll(scrollDrag.trackEl, { ...meta, offset });
+      }
+      scrollDrag.pendingOffset = offset;
+    });
+
+    document.addEventListener('mouseup', async () => {
+      if (!scrollDrag) return;
+      const { action, pendingOffset } = scrollDrag;
+      scrollDrag = null;
+      skipPoll = false;
+      document.body.classList.remove('scroll-dragging');
+      if (pendingOffset != null) {
+        await postAction(action, pendingOffset);
+      }
+    });
+
     function render(state) {
       lastState = state;
       document.getElementById('meta').textContent =
         `${state.file} · ${state.row_count} rows · ${state.status_line}`;
       document.getElementById('table-title').textContent =
         `Data (rows ${state.table.row_start + 1}–${state.table.row_end})`;
-      const colEnd = state.sidebar.length
-        ? state.sidebar[state.sidebar.length - 1].index + 1
-        : state.column_list_offset;
       document.getElementById('sidebar-title').textContent =
-        `Columns (${state.column_list_offset + 1}–${colEnd}/${state.column_count})`;
+        `Columns (${state.sidebar_scroll.offset + 1}–${Math.min(state.sidebar_scroll.offset + state.sidebar.length, state.sidebar_scroll.total)}/${state.sidebar_scroll.total})`;
 
       const wrap = document.getElementById('table-wrap');
       if (!state.table.rows.length) {
@@ -433,6 +629,12 @@ Theme button (header): System · Light · Dark.`;
 
       renderInfoPane(state);
 
+      requestAnimationFrame(() => {
+        updateVScroll(document.getElementById('table-vscroll'), state.table_rows_scroll);
+        updateHScroll(document.getElementById('table-hscroll'), state.table_cols_scroll);
+        updateVScroll(document.getElementById('sidebar-vscroll'), state.sidebar_scroll);
+      });
+
       schedulePoll(state);
     }
 
@@ -471,6 +673,7 @@ Theme button (header): System · Light · Dark.`;
         decimalHtml = `<div class="format-section">Decimal places</div>
           <input type="text" class="info-decimal${focused}" id="decimal-input" value="${escapeHtml(value)}" aria-label="Decimal format (e.g. .3)" />`;
       }
+      const prevScroll = box.scrollTop;
       const statsRows = info.stats.map(s =>
         `<tr><td>${escapeHtml(s.label)}</td><td>${escapeHtml(s.value)}</td></tr>`
       ).join('');
@@ -481,7 +684,13 @@ Theme button (header): System · Light · Dark.`;
         ${decimalHtml}
         <div class="format-section">Statistics</div>
         <table class="info-stats"><tbody>${statsRows}</tbody></table>
-        <div class="info-hint">Click type/repr, edit decimal format, or use ↑/↓ and Enter. q closes.</div>`;
+        <div class="info-hint">Click type/repr, edit decimal format, ↑/↓ and Enter, or scroll. q closes.</div>`;
+      const focused = box.querySelector('.focused, .info-decimal.focused');
+      if (focused) {
+        focused.scrollIntoView({ block: 'nearest' });
+      } else {
+        box.scrollTop = prevScroll;
+      }
       const decimalInput = document.getElementById('decimal-input');
       if (decimalInput) {
         decimalInput.addEventListener('change', () => {

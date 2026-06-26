@@ -55,6 +55,8 @@ pub struct TableViewState {
     pub column_sidebar_focused: bool,
     pub column_info_filter_editing: bool,
     pub column_info_filter_draft: String,
+    /// Scroll offset (lines) for the column info panel content.
+    pub column_info_scroll: u16,
     /// Cached result of the row-filter scan. `None` means stale — recompute on next access.
     pub(crate) cached_matching_rows: Option<Vec<usize>>,
     /// Row count at the time the cache was built, used to detect new rows arriving.
@@ -75,6 +77,8 @@ pub struct TableViewState {
     pub last_multi_select_axis: MultiSelectAxis,
     /// Width of the column sidebar pane in terminal columns.
     pub column_sidebar_width: u16,
+    /// When true, table scroll offsets are not pulled to follow the selected cell.
+    pub table_scroll_decoupled: bool,
 }
 
 #[derive(Debug)]
@@ -111,6 +115,7 @@ impl Default for TableViewState {
             column_sidebar_focused: false,
             column_info_filter_editing: false,
             column_info_filter_draft: String::new(),
+            column_info_scroll: 0,
             cached_matching_rows: None,
             cached_row_count: 0,
             column_hidden: Vec::new(),
@@ -121,6 +126,7 @@ impl Default for TableViewState {
             cell_range_focus: None,
             last_multi_select_axis: MultiSelectAxis::default(),
             column_sidebar_width: 32,
+            table_scroll_decoupled: false,
         }
     }
 }
@@ -292,6 +298,7 @@ impl AppModel {
     }
 
     pub fn select_column_click(&mut self, col: usize, extend: bool, column_list_height: usize) {
+        self.couple_table_scroll_to_selection();
         self.set_multi_select_axis(MultiSelectAxis::Column);
         if extend {
             self.toggle_column_multi_select(col);
@@ -495,6 +502,7 @@ impl AppModel {
         extend: bool,
         column_list_height: usize,
     ) {
+        self.couple_table_scroll_to_selection();
         self.set_multi_select_axis(MultiSelectAxis::Row);
         self.view.selected_row = row;
         self.view.selected_col = col;
@@ -509,6 +517,7 @@ impl AppModel {
     }
 
     pub fn select_table_header_click(&mut self, col: usize, extend: bool, column_list_height: usize) {
+        self.couple_table_scroll_to_selection();
         self.set_multi_select_axis(MultiSelectAxis::Column);
         if extend {
             self.toggle_column_multi_select(col);
@@ -604,6 +613,7 @@ impl AppModel {
 
     /// Move column selection by `delta`, skipping hidden columns.
     pub fn move_selected_column(&mut self, delta: i32, column_list_height: usize) {
+        self.couple_table_scroll_to_selection();
         let n = self.preview.headers().len();
         if n == 0 {
             return;
@@ -845,6 +855,7 @@ impl AppModel {
         self.view.column_info_decimal_draft.clear();
         self.view.column_info_filter_editing = false;
         self.view.column_info_filter_draft.clear();
+        self.view.column_info_scroll = 0;
         let stored = self.stored_column_kind(col);
         let kinds = self.column_info_type_kinds(col);
         self.view.column_info_focus = kinds
@@ -859,6 +870,7 @@ impl AppModel {
         self.view.column_info_decimal_draft.clear();
         self.view.column_info_filter_editing = false;
         self.view.column_info_filter_draft.clear();
+        self.view.column_info_scroll = 0;
     }
 
     fn column_info_kind_shows_repr(&self, col: usize, kind: ColumnKind) -> bool {
@@ -901,6 +913,118 @@ impl AppModel {
         let max = self.column_info_focus_max() as i32;
         let next = self.view.column_info_focus as i32 + delta;
         self.view.column_info_focus = next.clamp(0, max) as usize;
+    }
+
+    /// Line index in the column info panel content for the current focus item.
+    pub fn column_info_focus_content_line(&self, col: usize) -> usize {
+        let focus = self.view.column_info_focus;
+        let type_count = self.column_info_type_kinds(col).len();
+        if focus < type_count {
+            return 3 + focus;
+        }
+        if self.column_info_repr_section_visible(col) {
+            if focus < type_count + 2 {
+                return 3 + type_count + 2 + (focus - type_count);
+            }
+            if focus == type_count + 2 {
+                return 3 + type_count + 6;
+            }
+            return 3 + type_count + 9;
+        }
+        3 + type_count + 2
+    }
+
+    pub fn column_info_scroll_by(&mut self, delta: i32) {
+        let next = self.view.column_info_scroll as i32 + delta;
+        self.view.column_info_scroll = next.max(0) as u16;
+    }
+
+    pub fn column_info_clamp_scroll(&mut self, viewport: u16, total_lines: usize) {
+        if viewport == 0 {
+            return;
+        }
+        let max_scroll = total_lines.saturating_sub(viewport as usize) as u16;
+        if self.view.column_info_scroll > max_scroll {
+            self.view.column_info_scroll = max_scroll;
+        }
+    }
+
+    pub fn column_info_ensure_focus_visible(&mut self, col: usize, viewport: u16) {
+        if viewport == 0 {
+            return;
+        }
+        let line = self.column_info_focus_content_line(col);
+        let scroll = self.view.column_info_scroll as usize;
+        let view = viewport as usize;
+        if line < scroll {
+            self.view.column_info_scroll = line as u16;
+        } else if line >= scroll + view {
+            self.view.column_info_scroll = (line + 1).saturating_sub(view) as u16;
+        }
+    }
+
+    pub fn max_row_offset(&mut self, viewport_rows: usize) -> usize {
+        self.matching_row_indices();
+        let count = self
+            .view
+            .cached_matching_rows
+            .as_ref()
+            .map(|m| m.len())
+            .unwrap_or_else(|| self.preview.row_count());
+        count.saturating_sub(viewport_rows.max(1))
+    }
+
+    pub fn max_col_offset(&self, table_width: u16) -> usize {
+        let table_cols = self.table_visible_columns();
+        let max_visible = self.max_visible_columns(table_width);
+        if table_cols.is_empty() || max_visible == 0 {
+            0
+        } else {
+            table_cols.len().saturating_sub(max_visible)
+        }
+    }
+
+    pub fn set_row_offset(&mut self, offset: usize, viewport_rows: usize) {
+        self.view.table_scroll_decoupled = true;
+        let max = self.max_row_offset(viewport_rows);
+        self.view.row_offset = offset.min(max);
+    }
+
+    pub fn set_col_offset(&mut self, offset: usize, table_width: u16) {
+        self.view.table_scroll_decoupled = true;
+        let max = self.max_col_offset(table_width);
+        self.view.col_offset = offset.min(max);
+    }
+
+    pub fn couple_table_scroll_to_selection(&mut self) {
+        self.view.table_scroll_decoupled = false;
+    }
+
+    pub fn set_column_list_scroll(&mut self, offset: usize, visible_height: usize) {
+        self.view.column_list_offset = offset;
+        self.clamp_column_list_offset(visible_height);
+    }
+
+    pub fn set_column_info_scroll_position(
+        &mut self,
+        scroll: usize,
+        viewport: u16,
+        total_lines: usize,
+    ) {
+        self.view.column_info_scroll = scroll as u16;
+        self.column_info_clamp_scroll(viewport, total_lines);
+    }
+
+    pub fn column_info_content_line_count(&self, col: usize) -> usize {
+        let type_count = self.column_info_type_kinds(col).len();
+        let repr = self.column_info_repr_section_visible(col);
+        let stat_count = self.column_info(col).stats.len();
+        let filter_line = if repr {
+            3 + type_count + 9
+        } else {
+            3 + type_count + 2
+        };
+        filter_line + stat_count + 5
     }
 
     pub fn column_info_start_decimal_edit(&mut self) {
@@ -1185,6 +1309,7 @@ impl AppModel {
     }
 
     pub fn move_selected_row(&mut self, delta: i32) {
+        self.couple_table_scroll_to_selection();
         self.matching_row_indices(); // ensure cache is warm
         let sel = self.view.selected_row;
         let m = self.view.cached_matching_rows.as_deref().unwrap();
@@ -1345,21 +1470,29 @@ impl AppModel {
         }
 
         let max_offset = match_len.saturating_sub(viewport_rows.max(1));
-        if selected_pos < self.view.row_offset {
-            self.view.row_offset = selected_pos;
-        } else if viewport_rows > 0 && selected_pos >= self.view.row_offset + viewport_rows {
-            self.view.row_offset = selected_pos.saturating_sub(viewport_rows - 1);
+        if !self.view.table_scroll_decoupled {
+            if selected_pos < self.view.row_offset {
+                self.view.row_offset = selected_pos;
+            } else if viewport_rows > 0 && selected_pos >= self.view.row_offset + viewport_rows {
+                self.view.row_offset = selected_pos.saturating_sub(viewport_rows - 1);
+            }
         }
         self.view.row_offset = self.view.row_offset.min(max_offset);
 
         if !table_cols.is_empty() {
-            let max_col_offset = table_cols.len().saturating_sub(1);
+            let max_col_offset = if self.view.table_scroll_decoupled {
+                self.max_col_offset(table_width)
+            } else {
+                table_cols.len().saturating_sub(1)
+            };
             self.view.col_offset = self.view.col_offset.min(max_col_offset);
-            if let Some(sel_pos) = table_cols.iter().position(|&c| c == self.view.selected_col) {
-                if sel_pos < self.view.col_offset {
-                    self.view.col_offset = sel_pos;
-                } else if max_visible > 0 && sel_pos >= self.view.col_offset + max_visible {
-                    self.view.col_offset = sel_pos.saturating_sub(max_visible - 1);
+            if !self.view.table_scroll_decoupled {
+                if let Some(sel_pos) = table_cols.iter().position(|&c| c == self.view.selected_col) {
+                    if sel_pos < self.view.col_offset {
+                        self.view.col_offset = sel_pos;
+                    } else if max_visible > 0 && sel_pos >= self.view.col_offset + max_visible {
+                        self.view.col_offset = sel_pos.saturating_sub(max_visible - 1);
+                    }
                 }
             }
         }

@@ -6,6 +6,13 @@ use crate::ViewLayout;
 use serde::Serialize;
 
 #[derive(Debug, Clone, Serialize)]
+pub struct ScrollMeta {
+    pub offset: usize,
+    pub total: usize,
+    pub viewport: usize,
+}
+
+#[derive(Debug, Clone, Serialize)]
 pub struct ClientView {
     pub file: String,
     pub row_count: usize,
@@ -21,6 +28,9 @@ pub struct ClientView {
     pub column_count: usize,
     pub table: ClientTable,
     pub sidebar: Vec<ClientSidebarItem>,
+    pub table_rows_scroll: ScrollMeta,
+    pub table_cols_scroll: ScrollMeta,
+    pub sidebar_scroll: ScrollMeta,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -63,9 +73,11 @@ pub struct ClientSidebarItem {
 impl AppModel {
     pub fn client_view(&self, layout: ViewLayout) -> ClientView {
         let headers = self.preview.headers();
+        let table_cols = self.table_visible_columns();
         let col_indices = self.visible_table_columns(layout.table_width);
+        let filtered_sidebar = self.filtered_sidebar_columns();
         let sidebar_start = self.view.column_list_offset;
-        let sidebar_end = (sidebar_start + layout.column_list_height).min(headers.len());
+        let sidebar_end = (sidebar_start + layout.column_list_height).min(filtered_sidebar.len());
 
         let mut table_rows = Vec::new();
         let mut row_start = 0usize;
@@ -118,7 +130,8 @@ impl AppModel {
             .collect();
 
         let sidebar = (sidebar_start..sidebar_end)
-            .filter_map(|col_idx| {
+            .filter_map(|pos| {
+                let col_idx = *filtered_sidebar.get(pos)?;
                 let name = headers.get(col_idx)?;
                 let label = self.format_sidebar_column_label(col_idx, name);
                 let display = truncate_middle(&label, 32);
@@ -129,6 +142,11 @@ impl AppModel {
                 })
             })
             .collect();
+
+        let row_total = self
+            .cached_matching_rows()
+            .map(|m| m.len())
+            .unwrap_or_else(|| self.preview.row_count());
 
         let status_line = format!(
             "row {}/{}  col {}/{}  {}",
@@ -171,6 +189,21 @@ impl AppModel {
                 rows: table_rows,
             },
             sidebar,
+            table_rows_scroll: ScrollMeta {
+                offset: self.view.row_offset,
+                total: row_total,
+                viewport: layout.viewport_rows,
+            },
+            table_cols_scroll: ScrollMeta {
+                offset: self.view.col_offset,
+                total: table_cols.len(),
+                viewport: col_indices.len(),
+            },
+            sidebar_scroll: ScrollMeta {
+                offset: self.view.column_list_offset,
+                total: filtered_sidebar.len(),
+                viewport: layout.column_list_height,
+            },
         }
     }
 }

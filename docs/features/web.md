@@ -39,6 +39,8 @@ Mirrors the TUI: `↑↓←→`, `PgUp`/`PgDn`, `Home`/`End`, `c` (column info),
 
 - Click table cells or column list items to select
 - Wheel on table / column list scrolls rows / sidebar
+- Column info panel scrolls when content exceeds the viewport (wheel or scrollbar)
+- Table and column sidebar show scroll indicators when row/column lists extend past the viewport; drag the thumb or track to scroll (wheel still drives navigation via the API)
 - Drag column header **right edge** to resize (4–64 chars); synced on mouse release via API
 
 ## JSON API
@@ -62,6 +64,9 @@ Example action:
 {"action": "set_column_kind", "value": {"col": 0, "kind": "float"}}
 {"action": "set_numeric_repr", "value": {"col": 0, "repr": "scientific"}}
 {"action": "set_column_decimal_format", "value": {"col": 0, "format": ".3"}}
+{"action": "set_row_offset", "value": 128}
+{"action": "set_col_offset", "value": 4}
+{"action": "set_column_list_offset", "value": 12}
 ```
 
 On startup, settings are loaded from `~/.config/csv-utils/csv-utils.json` with optional `./csv-utils.json` overrides in the working directory (see [settings config](../design/settings-config.md)).

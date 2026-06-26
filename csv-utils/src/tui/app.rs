@@ -8,11 +8,12 @@ use csv_utils_core::column::{ColumnKind, NumericRepr};
 use csv_utils_core::display::truncate_middle;
 use csv_utils_core::model::{AppModel, MultiSelectAxis, MAX_COLUMN_WIDTH, MIN_COLUMN_WIDTH};
 use ratatui::backend::CrosstermBackend;
-use ratatui::layout::{Constraint, Direction, Layout, Position, Rect};
+use ratatui::layout::{Constraint, Direction, Layout, Margin, Position, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{
-    Block, Borders, Cell, Clear, Paragraph, Row, Table, Wrap,
+    Block, Borders, Cell, Clear, Paragraph, Row, Scrollbar, ScrollbarOrientation, ScrollbarState,
+    Table, Wrap,
 };
 use ratatui::Terminal;
 use std::io::{self, stdout};
@@ -22,6 +23,11 @@ use std::time::{Duration, Instant};
 use crate::tui::column_finder::{ColumnFinderAction, ColumnFinderState};
 use crate::tui::command_line::{CommandKeyAction, CommandLineState, VIEW_COMMANDS};
 use crate::tui::file_picker::{FilePicker, FilePickerAction, resolve_path};
+use crate::tui::scroll::{
+    horizontal_scrollbar_hit, horizontal_scrollbar_track, position_from_horizontal_track_x,
+    position_from_vertical_track_y, vertical_scrollbar_hit, vertical_scrollbar_track,
+    HorizontalScrollHit, ScrollMetrics, VerticalScrollHit,
+};
 
 const HELP_TEXT: &str = "\
 csv — keyboard shortcuts
@@ -32,6 +38,7 @@ csv — keyboard shortcuts
   Space      toggle multi-select on row or column (follows last arrow axis)
   PgUp/PgDn  scroll 10 rows
   c          column info (type, stats, format)
+  PgUp/PgDn  scroll column info panel (while open)
   ?          this help
   :open      open file or browse directory by path
   :close     close file and open file picker
@@ -78,6 +85,28 @@ struct CellRangeDrag {
     anchor: (usize, usize),
 }
 
+#[derive(Debug, Clone, Copy)]
+enum ScrollbarDragTarget {
+    TableRows {
+        viewport_rows: usize,
+    },
+    TableCols {
+        table_width: u16,
+    },
+    ColumnList {
+        visible_height: usize,
+    },
+    ColumnInfo {
+        viewport: u16,
+        total_lines: usize,
+    },
+}
+
+struct ScrollbarDrag {
+    target: ScrollbarDragTarget,
+    grab_offset: u16,
+}
+
 pub fn run(file: Option<&str>) -> Result<()> {
     let file_path = file.map(PathBuf::from);
     let mut model = AppModel::open(file_path.clone())?;
@@ -108,6 +137,7 @@ pub fn run(file: Option<&str>) -> Result<()> {
     let mut column_resize: Option<ColumnResize> = None;
     let mut sidebar_resize: Option<SidebarResize> = None;
     let mut cell_range_drag: Option<CellRangeDrag> = None;
+    let mut scrollbar_drag: Option<ScrollbarDrag> = None;
     let mut command_line: Option<CommandLineState> = None;
     let mut command_error: Option<String> = None;
     let mut column_finder: Option<ColumnFinderState> = None;
@@ -118,7 +148,7 @@ pub fn run(file: Option<&str>) -> Result<()> {
             areas = if file_picker.is_some() {
                 draw_file_picker(frame, file_picker.as_ref().unwrap())
             } else {
-                draw(frame, &model, command_line.as_ref(), command_error.as_deref(), column_finder.as_ref())
+                draw(frame, &mut model, command_line.as_ref(), command_error.as_deref(), column_finder.as_ref())
             };
         })?;
 
@@ -183,6 +213,7 @@ pub fn run(file: Option<&str>) -> Result<()> {
                         key,
                         &mut model,
                         column_list_height,
+                        areas.column_info_popup,
                         &mut command_line,
                         &mut command_error,
                         &mut column_finder,
@@ -233,6 +264,7 @@ pub fn run(file: Option<&str>) -> Result<()> {
                         &mut column_resize,
                         &mut sidebar_resize,
                         &mut cell_range_drag,
+                        &mut scrollbar_drag,
                     );
                 }
                 Event::Resize(_, _) => {}
@@ -261,6 +293,212 @@ fn column_list_visible_height(columns_area: Rect) -> usize {
         .inner(columns_area)
         .height
         .max(1) as usize
+}
+
+fn table_row_scroll_metrics(model: &AppModel, area: Rect) -> ScrollMetrics {
+    ScrollMetrics {
+        content_length: model
+            .cached_matching_rows()
+            .map(|m| m.len())
+            .unwrap_or_else(|| model.preview.row_count()),
+        viewport_length: area.height.saturating_sub(3) as usize,
+        position: model.view.row_offset,
+    }
+}
+
+fn table_col_scroll_metrics(model: &AppModel, area: Rect) -> ScrollMetrics {
+    let table_width = table_data_width(model, area);
+    ScrollMetrics {
+        content_length: model.table_visible_columns().len(),
+        viewport_length: model.visible_table_columns(table_width).len(),
+        position: model.view.col_offset,
+    }
+}
+
+fn column_list_scroll_metrics(model: &AppModel, area: Rect) -> ScrollMetrics {
+    ScrollMetrics {
+        content_length: model.filtered_sidebar_columns().len(),
+        viewport_length: column_list_visible_height(area),
+        position: model.view.column_list_offset,
+    }
+}
+
+fn apply_scroll_position(model: &mut AppModel, target: ScrollbarDragTarget, position: usize) {
+    match target {
+        ScrollbarDragTarget::TableRows { viewport_rows } => {
+            model.set_row_offset(position, viewport_rows)
+        }
+        ScrollbarDragTarget::TableCols { table_width } => {
+            model.set_col_offset(position, table_width)
+        }
+        ScrollbarDragTarget::ColumnList { visible_height } => {
+            model.set_column_list_scroll(position, visible_height)
+        }
+        ScrollbarDragTarget::ColumnInfo {
+            viewport,
+            total_lines,
+        } => model.set_column_info_scroll_position(position, viewport, total_lines),
+    }
+}
+
+fn handle_vertical_scroll_hit(
+    kind: MouseEventKind,
+    hit: VerticalScrollHit,
+    target: ScrollbarDragTarget,
+    area: Rect,
+    metrics: ScrollMetrics,
+    model: &mut AppModel,
+    scrollbar_drag: &mut Option<ScrollbarDrag>,
+) {
+    match kind {
+        MouseEventKind::ScrollUp => {
+            apply_scroll_position(model, target, metrics.position.saturating_sub(3));
+        }
+        MouseEventKind::ScrollDown => {
+            apply_scroll_position(
+                model,
+                target,
+                (metrics.position + 3).min(metrics.max_position()),
+            );
+        }
+        MouseEventKind::Down(crossterm::event::MouseButton::Left) => match hit {
+            VerticalScrollHit::PageUp => {
+                apply_scroll_position(
+                    model,
+                    target,
+                    metrics.position.saturating_sub(metrics.viewport_length.max(1)),
+                );
+            }
+            VerticalScrollHit::PageDown => {
+                apply_scroll_position(
+                    model,
+                    target,
+                    (metrics.position + metrics.viewport_length.max(1))
+                        .min(metrics.max_position()),
+                );
+            }
+            VerticalScrollHit::Thumb { grab_offset } => {
+                *scrollbar_drag = Some(ScrollbarDrag {
+                    target,
+                    grab_offset,
+                });
+            }
+            VerticalScrollHit::Track { rel_y } => {
+                let track = vertical_scrollbar_track(area);
+                let position =
+                    position_from_vertical_track_y(rel_y, track.height, metrics);
+                apply_scroll_position(model, target, position);
+                let (_, thumb_len) =
+                    super::scroll::vertical_thumb_bounds(track.height as usize, ScrollMetrics {
+                        position,
+                        ..metrics
+                    });
+                *scrollbar_drag = Some(ScrollbarDrag {
+                    target,
+                    grab_offset: (thumb_len / 2) as u16,
+                });
+            }
+        },
+        _ => {}
+    }
+}
+
+fn handle_horizontal_scroll_hit(
+    kind: MouseEventKind,
+    hit: HorizontalScrollHit,
+    target: ScrollbarDragTarget,
+    area: Rect,
+    metrics: ScrollMetrics,
+    model: &mut AppModel,
+    scrollbar_drag: &mut Option<ScrollbarDrag>,
+) {
+    if !matches!(kind, MouseEventKind::Down(crossterm::event::MouseButton::Left)) {
+        return;
+    }
+    match hit {
+        HorizontalScrollHit::PageLeft => {
+            apply_scroll_position(
+                model,
+                target,
+                metrics.position.saturating_sub(metrics.viewport_length.max(1)),
+            );
+        }
+        HorizontalScrollHit::PageRight => {
+            apply_scroll_position(
+                model,
+                target,
+                (metrics.position + metrics.viewport_length.max(1))
+                    .min(metrics.max_position()),
+            );
+        }
+        HorizontalScrollHit::Thumb { grab_offset } => {
+            *scrollbar_drag = Some(ScrollbarDrag {
+                target,
+                grab_offset,
+            });
+        }
+        HorizontalScrollHit::Track { rel_x } => {
+            let track = horizontal_scrollbar_track(area);
+            let position =
+                position_from_horizontal_track_x(rel_x, track.width, metrics);
+            apply_scroll_position(model, target, position);
+            let (_, thumb_len) =
+                super::scroll::horizontal_thumb_bounds(track.width as usize, ScrollMetrics {
+                    position,
+                    ..metrics
+                });
+            *scrollbar_drag = Some(ScrollbarDrag {
+                target,
+                grab_offset: (thumb_len / 2) as u16,
+            });
+        }
+    }
+}
+
+fn apply_scrollbar_drag(
+    model: &mut AppModel,
+    drag: &ScrollbarDrag,
+    areas: &LayoutAreas,
+    pos: Position,
+) {
+    match drag.target {
+        ScrollbarDragTarget::TableRows { viewport_rows, .. } => {
+            let metrics = table_row_scroll_metrics(model, areas.table);
+            let track = vertical_scrollbar_track(areas.table);
+            let rel_y = pos.y.saturating_sub(track.y).saturating_sub(drag.grab_offset);
+            let position = position_from_vertical_track_y(rel_y, track.height, metrics);
+            model.set_row_offset(position, viewport_rows);
+        }
+        ScrollbarDragTarget::TableCols { table_width } => {
+            let metrics = table_col_scroll_metrics(model, areas.table);
+            let track = horizontal_scrollbar_track(areas.table);
+            let rel_x = pos.x.saturating_sub(track.x).saturating_sub(drag.grab_offset);
+            let position = position_from_horizontal_track_x(rel_x, track.width, metrics);
+            model.set_col_offset(position, table_width);
+        }
+        ScrollbarDragTarget::ColumnList { visible_height } => {
+            let metrics = column_list_scroll_metrics(model, areas.columns);
+            let track = vertical_scrollbar_track(areas.columns);
+            let rel_y = pos.y.saturating_sub(track.y).saturating_sub(drag.grab_offset);
+            let position = position_from_vertical_track_y(rel_y, track.height, metrics);
+            model.set_column_list_scroll(position, visible_height);
+        }
+        ScrollbarDragTarget::ColumnInfo {
+            viewport,
+            total_lines,
+        } => {
+            let metrics = ScrollMetrics {
+                content_length: total_lines,
+                viewport_length: viewport as usize,
+                position: model.view.column_info_scroll as usize,
+            };
+            let popup = areas.column_info_popup.unwrap_or(areas.table);
+            let track = vertical_scrollbar_track(popup);
+            let rel_y = pos.y.saturating_sub(track.y).saturating_sub(drag.grab_offset);
+            let position = position_from_vertical_track_y(rel_y, track.height, metrics);
+            model.set_column_info_scroll_position(position, viewport, total_lines);
+        }
+    }
 }
 
 fn apply_column_name_filter_from_command(model: &mut AppModel, cmd: &str) -> Result<(), String> {
@@ -319,6 +557,7 @@ fn handle_key(
     key: KeyEvent,
     model: &mut AppModel,
     column_list_height: usize,
+    column_info_popup: Option<Rect>,
     command_line: &mut Option<CommandLineState>,
     command_error: &mut Option<String>,
     column_finder: &mut Option<ColumnFinderState>,
@@ -464,8 +703,34 @@ fn handle_key(
         }
         match key.code {
             KeyCode::Char('q') => model.close_column_info_pane(),
-            KeyCode::Up | KeyCode::Char('k') => model.column_info_focus_delta(-1),
-            KeyCode::Down | KeyCode::Char('j') => model.column_info_focus_delta(1),
+            KeyCode::Up | KeyCode::Char('k') => {
+                model.column_info_focus_delta(-1);
+                if let Some(popup) = column_info_popup {
+                    let col = model.view.selected_col;
+                    let viewport = column_info_viewport_lines(popup);
+                    model.column_info_ensure_focus_visible(col, viewport);
+                }
+            }
+            KeyCode::Down | KeyCode::Char('j') => {
+                model.column_info_focus_delta(1);
+                if let Some(popup) = column_info_popup {
+                    let col = model.view.selected_col;
+                    let viewport = column_info_viewport_lines(popup);
+                    model.column_info_ensure_focus_visible(col, viewport);
+                }
+            }
+            KeyCode::PageUp => {
+                if let Some(popup) = column_info_popup {
+                    let viewport = column_info_viewport_lines(popup) as i32;
+                    model.column_info_scroll_by(-viewport);
+                }
+            }
+            KeyCode::PageDown => {
+                if let Some(popup) = column_info_popup {
+                    let viewport = column_info_viewport_lines(popup) as i32;
+                    model.column_info_scroll_by(viewport);
+                }
+            }
             KeyCode::Enter => model.column_info_apply_focus(),
             KeyCode::Char(c) if c.is_ascii() && !c.is_ascii_control() => {
                 let col = model.view.selected_col;
@@ -583,30 +848,88 @@ fn handle_mouse(
     column_resize: &mut Option<ColumnResize>,
     sidebar_resize: &mut Option<SidebarResize>,
     cell_range_drag: &mut Option<CellRangeDrag>,
+    scrollbar_drag: &mut Option<ScrollbarDrag>,
 ) {
     if model.view.show_help {
         return;
     }
 
+    let row = mouse.row;
+    let col = mouse.column;
+    let pos = Position { x: col, y: row };
+    let table_width = table_data_width(model, areas.table);
+    let viewport_rows = areas.table.height.saturating_sub(3) as usize;
+
+    if let Some(drag) = scrollbar_drag.as_ref() {
+        match mouse.kind {
+            MouseEventKind::Drag(crossterm::event::MouseButton::Left)
+            | MouseEventKind::Moved => {
+                apply_scrollbar_drag(model, drag, areas, pos);
+            }
+            MouseEventKind::Up(crossterm::event::MouseButton::Left) => {
+                *scrollbar_drag = None;
+            }
+            _ => {}
+        }
+        return;
+    }
+
     if model.view.show_column_info {
-        if matches!(
-            mouse.kind,
-            MouseEventKind::Down(crossterm::event::MouseButton::Left)
-        ) {
-            let pos = Position {
-                x: mouse.column,
-                y: mouse.row,
+        if let Some(popup) = areas.column_info_popup {
+            let col_idx = model.view.selected_col;
+            let viewport = column_info_viewport_lines(popup);
+            let total_lines = model.column_info_content_line_count(col_idx);
+            let metrics = ScrollMetrics {
+                content_length: total_lines,
+                viewport_length: viewport as usize,
+                position: model.view.column_info_scroll as usize,
             };
-            if let Some(popup) = areas.column_info_popup {
+            let target = ScrollbarDragTarget::ColumnInfo {
+                viewport,
+                total_lines,
+            };
+            if let Some(hit) = vertical_scrollbar_hit(popup, pos, metrics) {
+                if matches!(
+                    mouse.kind,
+                    MouseEventKind::Down(crossterm::event::MouseButton::Left)
+                        | MouseEventKind::ScrollUp
+                        | MouseEventKind::ScrollDown
+                ) {
+                    handle_vertical_scroll_hit(
+                        mouse.kind,
+                        hit,
+                        target,
+                        popup,
+                        metrics,
+                        model,
+                        scrollbar_drag,
+                    );
+                    return;
+                }
+            }
+            if matches!(
+                mouse.kind,
+                MouseEventKind::Down(crossterm::event::MouseButton::Left)
+                    | MouseEventKind::ScrollUp
+                    | MouseEventKind::ScrollDown
+            ) {
                 let inner = Block::default().borders(Borders::ALL).inner(popup);
                 if inner.contains(pos) {
-                    let line = mouse.row.saturating_sub(inner.y) as usize;
-                    if let Some(option) = column_info_option_at_line(
-                        line,
-                        model.column_info_type_kinds(model.view.selected_col).len(),
-                        model.column_info_repr_section_visible(model.view.selected_col),
-                    ) {
-                        model.column_info_apply_option(option);
+                    match mouse.kind {
+                        MouseEventKind::ScrollUp => model.column_info_scroll_by(-3),
+                        MouseEventKind::ScrollDown => model.column_info_scroll_by(3),
+                        MouseEventKind::Down(crossterm::event::MouseButton::Left) => {
+                            let scroll = model.view.column_info_scroll as usize;
+                            let line = mouse.row.saturating_sub(inner.y) as usize + scroll;
+                            if let Some(option) = column_info_option_at_line(
+                                line,
+                                model.column_info_type_kinds(col_idx).len(),
+                                model.column_info_repr_section_visible(col_idx),
+                            ) {
+                                model.column_info_apply_option(option);
+                            }
+                        }
+                        _ => {}
                     }
                 }
             }
@@ -614,9 +937,60 @@ fn handle_mouse(
         return;
     }
 
-    let row = mouse.row;
-    let col = mouse.column;
-    let pos = Position { x: col, y: row };
+    if matches!(
+        mouse.kind,
+        MouseEventKind::Down(crossterm::event::MouseButton::Left)
+    ) && areas.table.contains(pos)
+    {
+        let row_metrics = table_row_scroll_metrics(model, areas.table);
+        let col_metrics = table_col_scroll_metrics(model, areas.table);
+        if let Some(hit) = vertical_scrollbar_hit(areas.table, pos, row_metrics) {
+            handle_vertical_scroll_hit(
+                mouse.kind,
+                hit,
+                ScrollbarDragTarget::TableRows { viewport_rows },
+                areas.table,
+                row_metrics,
+                model,
+                scrollbar_drag,
+            );
+            return;
+        }
+        if let Some(hit) = horizontal_scrollbar_hit(areas.table, pos, col_metrics) {
+            handle_horizontal_scroll_hit(
+                mouse.kind,
+                hit,
+                ScrollbarDragTarget::TableCols { table_width },
+                areas.table,
+                col_metrics,
+                model,
+                scrollbar_drag,
+            );
+            return;
+        }
+    }
+
+    if matches!(
+        mouse.kind,
+        MouseEventKind::Down(crossterm::event::MouseButton::Left)
+    ) && areas.columns.contains(pos)
+    {
+        let metrics = column_list_scroll_metrics(model, areas.columns);
+        if let Some(hit) = vertical_scrollbar_hit(areas.columns, pos, metrics) {
+            handle_vertical_scroll_hit(
+                mouse.kind,
+                hit,
+                ScrollbarDragTarget::ColumnList {
+                    visible_height: column_list_height,
+                },
+                areas.columns,
+                metrics,
+                model,
+                scrollbar_drag,
+            );
+            return;
+        }
+    }
 
     if let Some(resize) = column_resize.as_ref() {
         match mouse.kind {
@@ -1093,7 +1467,7 @@ fn draw_file_picker(frame: &mut ratatui::Frame, picker: &FilePicker) -> LayoutAr
 
 fn draw(
     frame: &mut ratatui::Frame,
-    model: &AppModel,
+    model: &mut AppModel,
     command_line: Option<&CommandLineState>,
     command_error: Option<&str>,
     column_finder: Option<&ColumnFinderState>,
@@ -1261,6 +1635,27 @@ fn draw_table(frame: &mut ratatui::Frame, area: Rect, model: &AppModel) {
 
     frame.render_widget(table, area);
     draw_column_border_lines(frame, area, model, &col_indices);
+
+    let total_rows = model
+        .cached_matching_rows()
+        .map(|m| m.len())
+        .unwrap_or_else(|| model.preview.row_count());
+    render_vertical_scrollbar(
+        frame,
+        area,
+        total_rows,
+        body_height,
+        model.view.row_offset,
+    );
+
+    let table_cols = model.table_visible_columns();
+    render_horizontal_scrollbar(
+        frame,
+        area,
+        table_cols.len(),
+        col_indices.len(),
+        model.view.col_offset,
+    );
 }
 
 fn draw_column_list(frame: &mut ratatui::Frame, area: Rect, model: &AppModel) {
@@ -1322,6 +1717,17 @@ fn draw_column_list(frame: &mut ratatui::Frame, area: Rect, model: &AppModel) {
         ),
         area,
     );
+    render_vertical_scrollbar(
+        frame,
+        area,
+        filtered.len(),
+        visible_height,
+        model.view.column_list_offset,
+    );
+}
+
+fn column_info_viewport_lines(popup_area: Rect) -> u16 {
+    Block::default().borders(Borders::ALL).inner(popup_area).height
 }
 
 fn column_info_filter_line(type_count: usize, repr_section_visible: bool) -> usize {
@@ -1360,7 +1766,7 @@ fn column_info_option_at_line(
     None
 }
 
-fn draw_column_info(frame: &mut ratatui::Frame, popup_area: Rect, model: &AppModel) {
+fn draw_column_info(frame: &mut ratatui::Frame, popup_area: Rect, model: &mut AppModel) {
     frame.render_widget(Clear, popup_area);
 
     let col = model.view.selected_col;
@@ -1525,19 +1931,24 @@ fn draw_column_info(frame: &mut ratatui::Frame, popup_area: Rect, model: &AppMod
 
     lines.push(Line::from(""));
     lines.push(Line::from(Span::styled(
-        " click/↑↓  Enter apply  q close ",
+        " click/↑↓  PgUp/PgDn scroll  Enter  q close ",
         Style::default().fg(Color::DarkGray),
     )));
 
+    let block = Block::default()
+        .title(" Column info ")
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(Color::Magenta));
+    let viewport = column_info_viewport_lines(popup_area);
+    model.column_info_clamp_scroll(viewport, lines.len());
+    let scroll = model.view.column_info_scroll;
+    let line_count = lines.len();
+
     frame.render_widget(
-        Paragraph::new(lines).block(
-            Block::default()
-                .title(" Column info ")
-                .borders(Borders::ALL)
-                .border_style(Style::default().fg(Color::Magenta)),
-        ),
+        Paragraph::new(lines).block(block).scroll((scroll, 0)),
         popup_area,
     );
+    render_vertical_scrollbar(frame, popup_area, line_count, viewport as usize, scroll as usize);
 }
 
 fn draw_help(frame: &mut ratatui::Frame, area: Rect) {
@@ -1553,6 +1964,56 @@ fn draw_help(frame: &mut ratatui::Frame, area: Rect) {
             )
             .wrap(Wrap { trim: true }),
         popup_area,
+    );
+}
+
+fn render_vertical_scrollbar(
+    frame: &mut ratatui::Frame,
+    area: Rect,
+    content_length: usize,
+    viewport_length: usize,
+    position: usize,
+) {
+    if content_length <= viewport_length || viewport_length == 0 {
+        return;
+    }
+    let mut state = ScrollbarState::new(content_length)
+        .viewport_content_length(viewport_length)
+        .position(position);
+    frame.render_stateful_widget(
+        Scrollbar::new(ScrollbarOrientation::VerticalRight)
+            .begin_symbol(Some("▲"))
+            .end_symbol(Some("▼")),
+        area.inner(Margin {
+            vertical: 1,
+            horizontal: 0,
+        }),
+        &mut state,
+    );
+}
+
+fn render_horizontal_scrollbar(
+    frame: &mut ratatui::Frame,
+    area: Rect,
+    content_length: usize,
+    viewport_length: usize,
+    position: usize,
+) {
+    if content_length <= viewport_length || viewport_length == 0 {
+        return;
+    }
+    let mut state = ScrollbarState::new(content_length)
+        .viewport_content_length(viewport_length)
+        .position(position);
+    frame.render_stateful_widget(
+        Scrollbar::new(ScrollbarOrientation::HorizontalBottom)
+            .begin_symbol(Some("◀"))
+            .end_symbol(Some("▶")),
+        area.inner(Margin {
+            vertical: 0,
+            horizontal: 1,
+        }),
+        &mut state,
     );
 }
 

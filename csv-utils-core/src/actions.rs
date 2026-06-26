@@ -40,6 +40,10 @@ pub enum ViewAction {
     GoHome,
     GoEnd,
     SetColumnWidth { col: usize, width: u16 },
+    SetRowOffset(usize),
+    SetColOffset(usize),
+    SetColumnListOffset(usize),
+    SetColumnInfoScroll { scroll: usize, viewport: u16 },
 }
 
 impl AppModel {
@@ -53,6 +57,7 @@ impl AppModel {
     pub fn apply_action(&mut self, action: ViewAction, layout: ViewLayout) {
         match action {
             ViewAction::RowDelta(delta) => {
+                self.couple_table_scroll_to_selection();
                 if delta < 0 {
                     self.view.selected_row = self
                         .view
@@ -63,6 +68,7 @@ impl AppModel {
                 }
             }
             ViewAction::ColDelta(delta) => {
+                self.couple_table_scroll_to_selection();
                 if delta < 0 {
                     self.view.selected_col = self
                         .view
@@ -84,6 +90,7 @@ impl AppModel {
                 }
             }
             ViewAction::PageRows(delta) => {
+                self.couple_table_scroll_to_selection();
                 if delta < 0 {
                     self.view.selected_row = self
                         .view
@@ -94,11 +101,13 @@ impl AppModel {
                 }
             }
             ViewAction::SelectCell { row, col } => {
+                self.couple_table_scroll_to_selection();
                 self.view.selected_row = row;
                 self.view.selected_col = col;
                 self.ensure_column_list_shows_selection(layout.column_list_height);
             }
             ViewAction::SelectColumn(col) => {
+                self.couple_table_scroll_to_selection();
                 self.view.selected_col = col;
                 self.ensure_column_list_shows_selection(layout.column_list_height);
             }
@@ -115,12 +124,30 @@ impl AppModel {
             ViewAction::ColumnInfoDecimalBackspace => self.column_info_decimal_backspace(),
             ViewAction::ToggleHelp => self.view.show_help = true,
             ViewAction::CloseHelp => self.view.show_help = false,
-            ViewAction::GoHome => self.view.selected_row = 0,
+            ViewAction::GoHome => {
+                self.couple_table_scroll_to_selection();
+                self.view.selected_row = 0;
+            }
             ViewAction::GoEnd => {
+                self.couple_table_scroll_to_selection();
                 self.view.selected_row = self.preview.row_count().saturating_sub(1);
             }
             ViewAction::SetColumnWidth { col, width } => {
                 self.set_column_width(col, width);
+            }
+            ViewAction::SetRowOffset(offset) => {
+                self.set_row_offset(offset, layout.viewport_rows);
+            }
+            ViewAction::SetColOffset(offset) => {
+                self.set_col_offset(offset, layout.table_width);
+            }
+            ViewAction::SetColumnListOffset(offset) => {
+                self.set_column_list_scroll(offset, layout.column_list_height);
+            }
+            ViewAction::SetColumnInfoScroll { scroll, viewport } => {
+                let col = self.view.selected_col;
+                let total = self.column_info_content_line_count(col);
+                self.set_column_info_scroll_position(scroll, viewport, total);
             }
         }
         self.tick(layout);
