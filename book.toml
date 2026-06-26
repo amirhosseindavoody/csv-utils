@@ -13,7 +13,7 @@ create-missing = false
 [output.html]
 git-repository-url = "https://github.com/amirhosseindavoody/csv-utils"
 edit-url-template = "https://github.com/amirhosseindavoody/csv-utils/edit/main/{path}"
-default-theme = "rust"
+default-theme = "light"
 preferred-dark-theme = "ayu"
 
 [output.html.fold]
