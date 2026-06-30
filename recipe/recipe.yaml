@@ -1,7 +1,7 @@
 # yaml-language-server: $schema=https://raw.githubusercontent.com/prefix-dev/recipe-format/main/schema.json
 
 context:
-  version: 2026.6.26+1
+  version: 2026.6.30+0
 
 package:
   name: csv-utils
