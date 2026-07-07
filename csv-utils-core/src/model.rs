@@ -69,6 +69,8 @@ pub struct TableViewState {
     pub multi_selected_cols: Vec<usize>,
     /// Rows hidden from the table (session-only).
     pub row_hidden: Vec<bool>,
+    /// Pinned row indices in chronological pin order (top of the table).
+    pub row_pin_order: Vec<usize>,
     /// Multi-selection for bulk row actions (Ctrl+click on table body). Empty means use `selected_row` only.
     pub multi_selected_rows: Vec<usize>,
     /// Anchor corner (row, col) for Ctrl+click / Ctrl+drag cell range selection.
@@ -124,6 +126,7 @@ impl Default for TableViewState {
             column_pin_order: Vec::new(),
             multi_selected_cols: Vec::new(),
             row_hidden: Vec::new(),
+            row_pin_order: Vec::new(),
             multi_selected_rows: Vec::new(),
             cell_range_anchor: None,
             cell_range_focus: None,
@@ -444,10 +447,113 @@ impl AppModel {
         if self.view.row_hidden.len() < n {
             self.view.row_hidden.resize(n, false);
         }
+        self.view.row_pin_order.retain(|&row| row < n);
     }
 
     pub fn is_row_hidden(&self, row: usize) -> bool {
         self.view.row_hidden.get(row).copied().unwrap_or(false)
+    }
+
+    pub fn is_row_pinned(&self, row: usize) -> bool {
+        self.view.row_pin_order.contains(&row)
+    }
+
+    /// Pinned rows in chronological pin order that are visible in the table (not hidden, pass filters).
+    pub fn pinned_table_rows(&self, matching: &[usize]) -> Vec<usize> {
+        self.view
+            .row_pin_order
+            .iter()
+            .copied()
+            .filter(|&row| matching.contains(&row))
+            .collect()
+    }
+
+    /// Matching rows that are not pinned (horizontally scrollable segment below pinned rows).
+    pub fn scrollable_table_rows(&self, matching: &[usize]) -> Vec<usize> {
+        matching
+            .iter()
+            .copied()
+            .filter(|&row| !self.is_row_pinned(row))
+            .collect()
+    }
+
+    pub fn scrollable_row_visible_count(&self, viewport_rows: usize) -> usize {
+        self.visible_table_rows(viewport_rows)
+            .iter()
+            .filter(|&&row| !self.is_row_pinned(row))
+            .count()
+            .max(1)
+    }
+
+    pub fn toggle_pin_selected_rows(&mut self) {
+        self.ensure_row_hidden();
+        for row in self.rows_for_bulk_action() {
+            if self.is_row_pinned(row) {
+                self.view.row_pin_order.retain(|&r| r != row);
+            } else {
+                self.view.row_pin_order.push(row);
+            }
+        }
+        self.snap_row_offset_after_pin_change();
+    }
+
+    fn snap_row_offset_after_pin_change(&mut self) {
+        let empty: &[usize] = &[];
+        let matching = self.view.cached_matching_rows.as_deref().unwrap_or(empty);
+        let scrollable = self.scrollable_table_rows(matching);
+        let max = scrollable.len().saturating_sub(1);
+        self.view.row_offset = self.view.row_offset.min(max);
+    }
+
+    /// Row indices shown in the table viewport (pinned first, then scrollable window).
+    pub fn visible_table_rows(&self, viewport_rows: usize) -> Vec<usize> {
+        let matching = self.matching_rows_for_display();
+        if matching.is_empty() {
+            return Vec::new();
+        }
+
+        let pinned = self.pinned_table_rows(&matching);
+        let scrollable = self.scrollable_table_rows(&matching);
+        let mut result = pinned;
+
+        if scrollable.is_empty() {
+            if result.is_empty() {
+                result.push(matching[0]);
+            }
+            return result;
+        }
+
+        let start_idx = self.view.row_offset.min(scrollable.len().saturating_sub(1));
+        for &row in &scrollable[start_idx..] {
+            if !result.is_empty() && result.len() >= viewport_rows {
+                break;
+            }
+            result.push(row);
+        }
+
+        if result.is_empty() {
+            result.push(
+                self.pinned_table_rows(&matching)
+                    .first()
+                    .copied()
+                    .unwrap_or(scrollable[start_idx]),
+            );
+        }
+
+        result
+    }
+
+    fn matching_rows_for_display(&self) -> Vec<usize> {
+        if let Some(m) = self.cached_matching_rows() {
+            return m.to_vec();
+        }
+        let current_count = self.preview.row_count();
+        (0..current_count)
+            .filter(|&row| {
+                !self.is_row_hidden(row)
+                    && (!self.row_value_filters_active() || self.row_passes_value_filters(row))
+            })
+            .collect()
     }
 
     pub fn rows_hidden_active(&self) -> bool {
@@ -1042,13 +1148,19 @@ impl AppModel {
 
     pub fn max_row_offset(&mut self, viewport_rows: usize) -> usize {
         self.matching_row_indices();
-        let count = self
+        let matching = self
             .view
             .cached_matching_rows
             .as_ref()
-            .map(|m| m.len())
-            .unwrap_or_else(|| self.preview.row_count());
-        count.saturating_sub(viewport_rows.max(1))
+            .map(|m| m.as_slice())
+            .unwrap_or(&[]);
+        let scrollable = self.scrollable_table_rows(matching);
+        if scrollable.is_empty() {
+            return 0;
+        }
+        let pinned_count = self.pinned_table_rows(matching).len();
+        let scrollable_visible = viewport_rows.saturating_sub(pinned_count).max(1);
+        scrollable.len().saturating_sub(scrollable_visible)
     }
 
     pub fn max_col_offset(&self, table_width: u16) -> usize {
@@ -1556,6 +1668,9 @@ impl AppModel {
         let match_len = m.len();
         let max_cols = self.preview.headers().len().saturating_sub(1);
         let table_cols = self.table_visible_columns();
+        let pinned_row_count = self.pinned_table_rows(m).len();
+        let scrollable_rows = self.scrollable_table_rows(m);
+        let scrollable_row_visible = viewport_rows.saturating_sub(pinned_row_count).max(1);
 
         self.view.selected_col = self.view.selected_col.min(max_cols);
 
@@ -1565,15 +1680,23 @@ impl AppModel {
             }
         }
 
-        let max_offset = match_len.saturating_sub(viewport_rows.max(1));
-        if !self.view.table_scroll_decoupled {
-            if selected_pos < self.view.row_offset {
-                self.view.row_offset = selected_pos;
-            } else if viewport_rows > 0 && selected_pos >= self.view.row_offset + viewport_rows {
-                self.view.row_offset = selected_pos.saturating_sub(viewport_rows - 1);
+        let max_offset = scrollable_rows.len().saturating_sub(scrollable_row_visible);
+        if !self.view.table_scroll_decoupled && !self.is_row_pinned(self.view.selected_row) {
+            if let Some(sel_pos) = scrollable_rows
+                .iter()
+                .position(|&r| r == self.view.selected_row)
+            {
+                if sel_pos < self.view.row_offset {
+                    self.view.row_offset = sel_pos;
+                } else if scrollable_row_visible > 0
+                    && sel_pos >= self.view.row_offset + scrollable_row_visible
+                {
+                    self.view.row_offset = sel_pos.saturating_sub(scrollable_row_visible - 1);
+                }
             }
         }
         self.view.row_offset = self.view.row_offset.min(max_offset);
+        let _ = (match_len, selected_pos);
 
         if !table_cols.is_empty() {
             let scrollable = self.scrollable_table_columns();
@@ -1679,8 +1802,7 @@ impl AppModel {
 
         let mut visible_rows = Vec::new();
         let mut visible_row_indices = Vec::new();
-        for i in 0..viewport_rows {
-            let row_idx = self.view.row_offset + i;
+        for &row_idx in &self.visible_table_rows(viewport_rows) {
             if let Some(fields) = self.preview.row_fields(row_idx) {
                 visible_row_indices.push(row_idx);
                 visible_rows.push(fields);
@@ -2202,5 +2324,54 @@ mod tests {
             .expect("visible cols");
         assert!(hidden_pos > last_visible_pos);
         assert_eq!(sidebar.first().copied(), Some(0));
+    }
+
+    #[test]
+    fn pin_selected_rows_keeps_them_in_viewport() {
+        let path = PathBuf::from("test-data/generated/test_1000x100.csv");
+        if !path.exists() {
+            return;
+        }
+        let mut model = AppModel::open(Some(path)).expect("open csv");
+        model.view.selected_row = 50;
+        model.toggle_pin_selected_rows();
+        assert!(model.is_row_pinned(50));
+        model.view.row_offset = 40;
+        model.matching_row_indices();
+        let visible = model.visible_table_rows(10);
+        assert!(visible.contains(&50));
+        assert_eq!(visible.first().copied(), Some(50));
+    }
+
+    #[test]
+    fn pinned_rows_use_chronological_order() {
+        let path = PathBuf::from("test-data/generated/test_1000x100.csv");
+        if !path.exists() {
+            return;
+        }
+        let mut model = AppModel::open(Some(path)).expect("open csv");
+        model.view.selected_row = 50;
+        model.toggle_pin_selected_rows();
+        model.view.selected_row = 10;
+        model.toggle_pin_selected_rows();
+        model.matching_row_indices();
+        let matching = model.cached_matching_rows().unwrap();
+        assert_eq!(model.pinned_table_rows(matching), vec![50, 10]);
+    }
+
+    #[test]
+    fn toggle_pin_selected_rows_bulk() {
+        let path = PathBuf::from("test-data/generated/test_1000x100.csv");
+        if !path.exists() {
+            return;
+        }
+        let mut model = AppModel::open(Some(path)).expect("open csv");
+        model.view.multi_selected_rows = vec![1, 3];
+        model.toggle_pin_selected_rows();
+        assert!(model.is_row_pinned(1));
+        assert!(model.is_row_pinned(3));
+        model.toggle_pin_selected_rows();
+        assert!(!model.is_row_pinned(1));
+        assert!(!model.is_row_pinned(3));
     }
 }

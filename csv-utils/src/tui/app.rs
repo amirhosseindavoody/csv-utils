@@ -51,7 +51,7 @@ csv — keyboard shortcuts
   :unhide / :u  unhide selected or all hidden columns/rows (same axis as :hide)
   :web       open browser UI on a free local port and exit terminal view
   /          fuzzy-find columns (filters sidebar)
-  p          pin/unpin selected column(s) (sidebar or ←/→ column axis)
+  p          pin/unpin selected row(s) (↑/↓ row axis) or column(s) (sidebar / ←/→)
   :filter    filter rows on selected column, or sidebar when focused (:f)
 
 Mouse: click table cells; Ctrl+click or Ctrl+drag on cells to select a range; Ctrl+click column header or sidebar for column multi-select; right-click column sidebar for hide/info/pin menu; drag header borders to resize columns; drag sidebar left border to resize sidebar; wheel scrolls rows/columns. Click sidebar to focus it — then ↑/↓ navigate columns.
@@ -508,12 +508,12 @@ fn column_list_visible_height(columns_area: Rect) -> usize {
 }
 
 fn table_row_scroll_metrics(model: &AppModel, area: Rect) -> ScrollMetrics {
+    let viewport = area.height.saturating_sub(3) as usize;
+    let empty: &[usize] = &[];
+    let matching = model.cached_matching_rows().unwrap_or(empty);
     ScrollMetrics {
-        content_length: model
-            .cached_matching_rows()
-            .map(|m| m.len())
-            .unwrap_or_else(|| model.preview.row_count()),
-        viewport_length: area.height.saturating_sub(3) as usize,
+        content_length: model.scrollable_table_rows(matching).len(),
+        viewport_length: model.scrollable_row_visible_count(viewport),
         position: model.view.row_offset,
     }
 }
@@ -1036,6 +1036,10 @@ fn handle_key(
             model.toggle_pin_selected_columns();
             model.ensure_column_list_shows_selection(column_list_height);
         }
+        KeyCode::Char('p') if model.view.last_multi_select_axis == MultiSelectAxis::Row =>
+        {
+            model.toggle_pin_selected_rows();
+        }
         KeyCode::Up | KeyCode::Char('k') => {
             if model.view.column_sidebar_focused {
                 model.move_selected_sidebar_column(-1, column_list_height);
@@ -1498,6 +1502,8 @@ fn row_indicator_label(model: &AppModel, row_idx: usize) -> &'static str {
         "◆"
     } else if model.view.selected_row == row_idx || model.row_in_cell_range_row_span(row_idx) {
         "▸"
+    } else if model.is_row_pinned(row_idx) {
+        "▐"
     } else {
         " "
     }
@@ -1514,6 +1520,8 @@ fn row_indicator_style(model: &AppModel, row_idx: usize) -> Style {
             .fg(Color::Cyan)
             .bg(Color::DarkGray)
             .add_modifier(Modifier::BOLD)
+    } else if model.is_row_pinned(row_idx) {
+        Style::default().fg(Color::Cyan)
     } else if model.row_in_cell_range_row_span(row_idx) {
         Style::default().fg(Color::Blue).add_modifier(Modifier::BOLD)
     } else {
@@ -1707,9 +1715,9 @@ fn hit_test_table(mouse_x: u16, mouse_y: u16, table_area: Rect, model: &AppModel
     if rel_x < ROW_GUTTER_WIDTH {
         if rel_y >= 2 {
             let data_row = (rel_y - 2) as usize;
-            let empty: &[usize] = &[];
-            let matching = model.cached_matching_rows().unwrap_or(empty);
-            if let Some(&row_idx) = matching.get(model.view.row_offset + data_row) {
+            let body_height = table_area.height.saturating_sub(3) as usize;
+            let visible_rows = model.visible_table_rows(body_height);
+            if let Some(&row_idx) = visible_rows.get(data_row) {
                 return Some(TableHit {
                     row: Some(row_idx),
                     col: model.view.selected_col,
@@ -1743,9 +1751,9 @@ fn hit_test_table(mouse_x: u16, mouse_y: u16, table_area: Rect, model: &AppModel
     }
 
     let data_row = (rel_y - 2) as usize;
-    let empty: &[usize] = &[];
-    let matching = model.cached_matching_rows().unwrap_or(empty);
-    let Some(&row_idx) = matching.get(model.view.row_offset + data_row) else {
+    let body_height = table_area.height.saturating_sub(3) as usize;
+    let visible_rows = model.visible_table_rows(body_height);
+    let Some(&row_idx) = visible_rows.get(data_row) else {
         return None;
     };
 
@@ -1915,13 +1923,9 @@ fn draw_table(frame: &mut ratatui::Frame, area: Rect, model: &AppModel) {
         .bottom_margin(1);
 
     let body_height = area.height.saturating_sub(3) as usize;
-    let empty: &[usize] = &[];
-    let matching = model.cached_matching_rows().unwrap_or(empty);
+    let visible_row_indices = model.visible_table_rows(body_height);
     let mut rows = Vec::new();
-    for r in 0..body_height {
-        let Some(&row_idx) = matching.get(model.view.row_offset + r) else {
-            break;
-        };
+    for &row_idx in &visible_row_indices {
         let Some(fields) = model.preview.row_fields(row_idx) else {
             break;
         };
@@ -1950,15 +1954,18 @@ fn draw_table(frame: &mut ratatui::Frame, area: Rect, model: &AppModel) {
     frame.render_widget(table, area);
     draw_column_border_lines(frame, area, model, &col_indices);
 
-    let total_rows = model
-        .cached_matching_rows()
-        .map(|m| m.len())
-        .unwrap_or_else(|| model.preview.row_count());
+    let empty: &[usize] = &[];
+    let matching = model.cached_matching_rows().unwrap_or(empty);
+    let scrollable_rows = model.scrollable_table_rows(matching);
+    let scrollable_visible = visible_row_indices
+        .iter()
+        .filter(|&&r| !model.is_row_pinned(r))
+        .count();
     render_vertical_scrollbar(
         frame,
         area,
-        total_rows,
-        body_height,
+        scrollable_rows.len(),
+        scrollable_visible.max(1),
         model.view.row_offset,
     );
 
