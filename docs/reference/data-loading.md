@@ -67,10 +67,23 @@ though the background scan itself was already cancelled promptly
 Both methods now use `AppModel::replace_and_discard`, which does
 `std::mem::replace` and hands the old value to a detached
 `std::thread::spawn(move || drop(old_model))`. The caller (UI thread) never
-waits on the deallocation, so closing/switching files — and quitting — stays
-under ~100ms regardless of how much stats state had accumulated. See
+waits on the deallocation, so closing/switching files stays under ~100ms
+regardless of how much stats state had accumulated. See
 `model::tests::close_file_does_not_block_on_large_accumulated_stats` for the
 regression test.
+
+### TUI exit: avoid blocking the shell on background deallocation
+
+Even after `replace_and_discard`, detached drop threads can keep the `csv`
+process alive for up to ~1s while they free accumulated stats. On some
+platforms the runtime also waits for spawned threads before the process
+fully exits, so the shell prompt may not return promptly after the
+alternate screen is restored. After `:web`, the shared `AppModel` may still
+hold a fully scanned file when the terminal session ends.
+
+The TUI therefore calls `std::process::exit(0)` after restoring the
+terminal (see `csv-utils/src/tui/app.rs`). The OS reclaims memory; the
+user gets an immediate prompt instead of waiting on background frees.
 
 ### Interaction with row-filter cache
 
