@@ -53,6 +53,7 @@ pub struct ClientColumnHeader {
 pub struct ClientTableRow {
     pub index: usize,
     pub selected: bool,
+    pub pinned: bool,
     pub cells: Vec<ClientCell>,
 }
 
@@ -84,8 +85,9 @@ impl AppModel {
         let mut row_start = 0usize;
         let mut row_end = 0usize;
 
-        for i in 0..layout.viewport_rows {
-            let row_idx = self.view.row_offset + i;
+        let visible_row_list = self.visible_table_rows(layout.viewport_rows);
+
+        for (i, &row_idx) in visible_row_list.iter().enumerate() {
             let Some(fields) = self.preview.row_fields(row_idx) else {
                 break;
             };
@@ -116,6 +118,7 @@ impl AppModel {
             table_rows.push(ClientTableRow {
                 index: row_idx,
                 selected: row_selected,
+                pinned: self.is_row_pinned(row_idx),
                 cells,
             });
         }
@@ -145,10 +148,9 @@ impl AppModel {
             })
             .collect();
 
-        let row_total = self
-            .cached_matching_rows()
-            .map(|m| m.len())
-            .unwrap_or_else(|| self.preview.row_count());
+        let empty: &[usize] = &[];
+        let matching = self.cached_matching_rows().unwrap_or(empty);
+        let scrollable_rows = self.scrollable_table_rows(matching);
 
         let status_line = format!(
             "row {}/{}  col {}/{}  {}",
@@ -193,8 +195,9 @@ impl AppModel {
             sidebar,
             table_rows_scroll: ScrollMeta {
                 offset: self.view.row_offset,
-                total: row_total,
-                viewport: layout.viewport_rows,
+                total: scrollable_rows.len(),
+                viewport: self
+                    .scrollable_row_visible_count(layout.viewport_rows),
             },
             table_cols_scroll: ScrollMeta {
                 offset: self.view.col_offset,

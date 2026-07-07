@@ -60,7 +60,7 @@ Example action:
 {"action": "set_column_list_offset", "value": 12}
 ```
 
-The page polls `/api/state` while the background scan runs (`scan_done: false`). Pinned columns appear in the table’s fixed left segment (same as the TUI); sidebar items include a `pinned` boolean. Horizontal scroll metadata (`table_cols_scroll`) counts only unpinned columns.
+The page polls `/api/state` while the background scan runs (`scan_done: false`). Pinned columns appear in the table’s fixed left segment; pinned rows appear at the top of the table (same as the TUI). Sidebar items include a `pinned` boolean; table rows include `pinned` as well. Horizontal and vertical scroll metadata count only unpinned columns and rows respectively.
 
 Implementation: `csv-utils/src/web/server.rs`, embedded UI in `csv-utils/src/web/index.html`.
 
