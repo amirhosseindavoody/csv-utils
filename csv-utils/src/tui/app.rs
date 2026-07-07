@@ -47,14 +47,14 @@ csv — keyboard shortcuts
   :open      open file or browse directory by path
   :close     close file and open file picker
   :toggle-borders  show or hide table column border lines
-  :hide / :h  hide selected columns (←/→ or sidebar) or rows (↑/↓); Ctrl+click/drag cell range
+  :hide / :h  hide selected columns (←/→ or sidebar) or rows (↑/↓, drag, or Ctrl+click cells)
   :unhide / :u  unhide selected or all hidden columns/rows (same axis as :hide)
   :web       open browser UI on a free local port and exit terminal view
   /          fuzzy-find columns (filters sidebar)
   p          pin/unpin selected row(s) (↑/↓ row axis) or column(s) (sidebar / ←/→)
   :filter    filter rows on selected column, or sidebar when focused (:f)
 
-Mouse: click table cells; Ctrl+click or Ctrl+drag on cells to select a range; Ctrl+click column header, sidebar, or row gutter to add to selection; right-click column sidebar or row gutter for context menu; drag header borders to resize columns; drag sidebar left border to resize sidebar; wheel scrolls rows/columns. Click sidebar to focus it — then ↑/↓ navigate columns.
+Mouse: click table cells; drag on table body to select a cell rectangle; Ctrl+click table cells to toggle individual cells; Ctrl+click column header, sidebar, or row gutter to add to selection; right-click column sidebar or row gutter for context menu; drag header borders to resize columns; drag sidebar left border to resize sidebar; wheel scrolls rows/columns. Click sidebar to focus it — then ↑/↓ navigate columns.
 
 Press q or ? to close.";
 
@@ -1531,6 +1531,9 @@ fn handle_mouse(
                 return;
             }
             MouseEventKind::Up(crossterm::event::MouseButton::Left) => {
+                if model.view.cell_range_focus == Some(drag.anchor) {
+                    model.clear_cell_range();
+                }
                 *cell_range_drag = None;
                 return;
             }
@@ -1590,15 +1593,15 @@ fn handle_mouse(
                 let extend = mouse.modifiers.contains(KeyModifiers::CONTROL);
                 if let Some(row_idx) = hit.row {
                     if extend {
-                        let anchor = model.begin_cell_range_if_needed(row_idx, hit.col);
-                        model.set_cell_range_focus(row_idx, hit.col);
-                        model.set_multi_select_axis(MultiSelectAxis::Row);
+                        model.toggle_cell_multi_select(row_idx, hit.col, column_list_height);
+                    } else {
+                        model.set_cell_range_corners(row_idx, hit.col, row_idx, hit.col);
                         model.view.selected_row = row_idx;
                         model.view.selected_col = hit.col;
                         model.ensure_column_list_shows_selection(column_list_height);
-                        *cell_range_drag = Some(CellRangeDrag { anchor });
-                    } else {
-                        model.select_table_cell_click(row_idx, hit.col, false, column_list_height);
+                        *cell_range_drag = Some(CellRangeDrag {
+                            anchor: (row_idx, hit.col),
+                        });
                     }
                 } else if extend {
                     model.select_table_header_click(hit.col, true, column_list_height);
@@ -2892,7 +2895,7 @@ mod tests {
     }
 
     #[test]
-    fn ctrl_click_table_body_cell_does_not_multi_select_columns() {
+    fn ctrl_click_table_body_cell_toggles_individual_cell() {
         let Some(mut model) = test_model() else {
             return;
         };
@@ -2918,7 +2921,6 @@ mod tests {
             mut command_error,
         ) = empty_mouse_state();
 
-        // Ctrl+click on a body cell begins a cell-range selection, not column multi-select.
         handle_mouse(
             MouseEvent {
                 kind: MouseEventKind::Down(MouseButton::Left),
@@ -2939,6 +2941,59 @@ mod tests {
             screen,
         );
         assert!(model.view.multi_selected_cols.is_empty());
+        assert!(!cell_range_drag.is_some());
+        let visible_rows = model.visible_table_rows(table_area.height.saturating_sub(3) as usize);
+        let row_idx = visible_rows.first().copied().expect("visible row");
+        assert!(model.is_cell_multi_selected(row_idx, 0));
+    }
+
+    #[test]
+    fn plain_drag_table_body_starts_cell_range() {
+        let Some(mut model) = test_model() else {
+            return;
+        };
+        let table_area = Rect::new(0, 3, 40, 20);
+        let areas = LayoutAreas {
+            table: table_area,
+            columns: Rect::default(),
+            column_info_popup: None,
+            file_picker_list: None,
+        };
+        let screen = Rect::new(0, 0, 80, 30);
+        let inner = table_inner_area(table_area);
+        let col0_mid_x = inner.x + table_data_x_offset(&model) + 2;
+        let data_row = inner.y + 2;
+
+        let (
+            mut column_resize,
+            mut sidebar_resize,
+            mut cell_range_drag,
+            mut scrollbar_drag,
+            mut column_context_menu,
+            mut row_context_menu,
+            mut command_error,
+        ) = empty_mouse_state();
+
+        handle_mouse(
+            MouseEvent {
+                kind: MouseEventKind::Down(MouseButton::Left),
+                column: col0_mid_x,
+                row: data_row,
+                modifiers: KeyModifiers::NONE,
+            },
+            &mut model,
+            &areas,
+            20,
+            &mut column_resize,
+            &mut sidebar_resize,
+            &mut cell_range_drag,
+            &mut scrollbar_drag,
+            &mut column_context_menu,
+            &mut row_context_menu,
+            &mut command_error,
+            screen,
+        );
         assert!(cell_range_drag.is_some());
+        assert!(model.cell_range_active());
     }
 }
