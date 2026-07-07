@@ -623,7 +623,13 @@ pub fn run(file: Option<&str>) -> Result<()> {
         shared_model.lock().unwrap().abandon_scan_thread();
     }
 
-    Ok(())
+    // Issue #24: return to the shell immediately. `close_file`/`reopen` already
+    // offload heavy `AppModel` drops to detached threads (`replace_and_discard`),
+    // but the process can still linger while those threads free millions of
+    // per-column stats allocations — and after `:web` the model may still hold
+    // that state when the session ends. Exiting here avoids blocking the prompt
+    // on deallocation or platform-specific waits for spawned threads.
+    std::process::exit(0);
 }
 
 fn restore_terminal(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Result<()> {
