@@ -117,6 +117,7 @@ struct ScrollbarDrag {
 #[derive(Debug, Clone, Copy)]
 enum ColumnContextAction {
     Select,
+    ToggleMultiSelect,
     Hide,
     Unhide,
     Info,
@@ -141,6 +142,14 @@ impl ColumnContextMenu {
         items.push(ColumnContextMenuItem {
             action: ColumnContextAction::Select,
             label: "Select".to_string(),
+        });
+        items.push(ColumnContextMenuItem {
+            action: ColumnContextAction::ToggleMultiSelect,
+            label: if model.is_column_multi_selected(col) {
+                "Remove from Selection".to_string()
+            } else {
+                "Add to Selection".to_string()
+            },
         });
         if model.is_column_hidden(col) {
             items.push(ColumnContextMenuItem {
@@ -207,10 +216,14 @@ fn execute_column_context_action(
     col: usize,
     column_list_height: usize,
 ) -> Option<String> {
+    if matches!(action, ColumnContextAction::ToggleMultiSelect) {
+        model.toggle_column_in_multi_select(col, column_list_height);
+        return None;
+    }
     let single_select = matches!(action, ColumnContextAction::Select);
     model.focus_column_for_context_action(col, column_list_height, single_select);
     match action {
-        ColumnContextAction::Select => None,
+        ColumnContextAction::Select | ColumnContextAction::ToggleMultiSelect => None,
         ColumnContextAction::Hide => model.hide_selected_columns().err().map(str::to_string),
         ColumnContextAction::Unhide => model.unhide_selected_columns().err().map(str::to_string),
         ColumnContextAction::Info => {
@@ -232,6 +245,7 @@ fn draw_column_context_menu(frame: &mut ratatui::Frame, menu: &ColumnContextMenu
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum RowContextAction {
     Select,
+    ToggleMultiSelect,
     Hide,
     Unhide,
     TogglePin,
@@ -255,6 +269,14 @@ impl RowContextMenu {
         items.push(RowContextMenuItem {
             action: RowContextAction::Select,
             label: "Select".to_string(),
+        });
+        items.push(RowContextMenuItem {
+            action: RowContextAction::ToggleMultiSelect,
+            label: if model.is_row_multi_selected(row) {
+                "Remove from Selection".to_string()
+            } else {
+                "Add to Selection".to_string()
+            },
         });
         if model.is_row_hidden(row) {
             items.push(RowContextMenuItem {
@@ -316,10 +338,14 @@ fn execute_row_context_action(
     model: &mut AppModel,
     row: usize,
 ) -> Option<String> {
+    if matches!(action, RowContextAction::ToggleMultiSelect) {
+        model.toggle_row_in_multi_select(row);
+        return None;
+    }
     let single_select = matches!(action, RowContextAction::Select);
     model.focus_row_for_context_action(row, single_select);
     match action {
-        RowContextAction::Select => None,
+        RowContextAction::Select | RowContextAction::ToggleMultiSelect => None,
         RowContextAction::Hide => model.hide_selected_rows().err().map(str::to_string),
         RowContextAction::Unhide => model.unhide_selected_rows().err().map(str::to_string),
         RowContextAction::TogglePin => {
@@ -2695,6 +2721,176 @@ mod tests {
             "expected column {} to be added to multi-select, got {:?}",
             col_indices[1],
             model.view.multi_selected_cols
+        );
+        assert_eq!(command_error, None);
+    }
+
+    #[test]
+    fn context_menu_add_to_selection_multi_selects_columns_without_ctrl() {
+        let Some(mut model) = test_model() else {
+            return;
+        };
+        let table_area = Rect::new(0, 3, 40, 20);
+        let areas = LayoutAreas {
+            table: table_area,
+            columns: Rect::default(),
+            column_info_popup: None,
+            file_picker_list: None,
+        };
+        let screen = Rect::new(0, 0, 80, 30);
+        let inner = table_inner_area(table_area);
+        let col_indices = model.visible_table_columns(table_data_width(&model, table_area));
+        assert!(col_indices.len() >= 3, "need at least 3 visible columns for this test");
+
+        let header_row = inner.y;
+        let col0_mid_x = inner.x + table_data_x_offset(&model) + 2;
+        let col1_mid_x = inner.x + table_data_x_offset(&model) + 7;
+        let col2_mid_x = inner.x + table_data_x_offset(&model) + 12;
+
+        let (
+            mut column_resize,
+            mut sidebar_resize,
+            mut cell_range_drag,
+            mut scrollbar_drag,
+            mut column_context_menu,
+            mut row_context_menu,
+            mut command_error,
+        ) = empty_mouse_state();
+
+        // Plain click selects column 0 only (no modifiers involved).
+        handle_mouse(
+            MouseEvent {
+                kind: MouseEventKind::Down(MouseButton::Left),
+                column: col0_mid_x,
+                row: header_row,
+                modifiers: KeyModifiers::NONE,
+            },
+            &mut model,
+            &areas,
+            20,
+            &mut column_resize,
+            &mut sidebar_resize,
+            &mut cell_range_drag,
+            &mut scrollbar_drag,
+            &mut column_context_menu,
+            &mut row_context_menu,
+            &mut command_error,
+            screen,
+        );
+        assert_eq!(model.view.selected_col, col_indices[0]);
+
+        // Right-click column 1 without Ctrl opens the menu (selection unchanged so far).
+        handle_mouse(
+            MouseEvent {
+                kind: MouseEventKind::Down(MouseButton::Right),
+                column: col1_mid_x,
+                row: header_row,
+                modifiers: KeyModifiers::NONE,
+            },
+            &mut model,
+            &areas,
+            20,
+            &mut column_resize,
+            &mut sidebar_resize,
+            &mut cell_range_drag,
+            &mut scrollbar_drag,
+            &mut column_context_menu,
+            &mut row_context_menu,
+            &mut command_error,
+            screen,
+        );
+        let menu = column_context_menu.as_ref().expect("menu opened on column 1");
+        assert_eq!(menu.col, col_indices[1]);
+        let idx = menu
+            .items
+            .iter()
+            .position(|item| matches!(item.action, ColumnContextAction::ToggleMultiSelect))
+            .expect("Add to Selection item present");
+        assert_eq!(menu.items[idx].label, "Add to Selection");
+        let click_pos = Position {
+            x: menu.area.x + 1,
+            y: menu.area.y + 1 + idx as u16,
+        };
+
+        // Clicking "Add to Selection" seeds column 0 and adds column 1 — no Ctrl needed.
+        handle_mouse(
+            MouseEvent {
+                kind: MouseEventKind::Down(MouseButton::Left),
+                column: click_pos.x,
+                row: click_pos.y,
+                modifiers: KeyModifiers::NONE,
+            },
+            &mut model,
+            &areas,
+            20,
+            &mut column_resize,
+            &mut sidebar_resize,
+            &mut cell_range_drag,
+            &mut scrollbar_drag,
+            &mut column_context_menu,
+            &mut row_context_menu,
+            &mut command_error,
+            screen,
+        );
+        assert!(column_context_menu.is_none(), "menu should close after activation");
+        assert_eq!(
+            model.view.multi_selected_cols,
+            vec![col_indices[0], col_indices[1]]
+        );
+        assert_eq!(model.view.selected_col, col_indices[1]);
+
+        // Right-click column 2 and add it too — selection keeps growing.
+        handle_mouse(
+            MouseEvent {
+                kind: MouseEventKind::Down(MouseButton::Right),
+                column: col2_mid_x,
+                row: header_row,
+                modifiers: KeyModifiers::NONE,
+            },
+            &mut model,
+            &areas,
+            20,
+            &mut column_resize,
+            &mut sidebar_resize,
+            &mut cell_range_drag,
+            &mut scrollbar_drag,
+            &mut column_context_menu,
+            &mut row_context_menu,
+            &mut command_error,
+            screen,
+        );
+        let menu = column_context_menu.as_ref().expect("menu opened on column 2");
+        let idx = menu
+            .items
+            .iter()
+            .position(|item| matches!(item.action, ColumnContextAction::ToggleMultiSelect))
+            .expect("Add to Selection item present");
+        let click_pos = Position {
+            x: menu.area.x + 1,
+            y: menu.area.y + 1 + idx as u16,
+        };
+        handle_mouse(
+            MouseEvent {
+                kind: MouseEventKind::Down(MouseButton::Left),
+                column: click_pos.x,
+                row: click_pos.y,
+                modifiers: KeyModifiers::NONE,
+            },
+            &mut model,
+            &areas,
+            20,
+            &mut column_resize,
+            &mut sidebar_resize,
+            &mut cell_range_drag,
+            &mut scrollbar_drag,
+            &mut column_context_menu,
+            &mut row_context_menu,
+            &mut command_error,
+            screen,
+        );
+        assert_eq!(
+            model.view.multi_selected_cols,
+            vec![col_indices[0], col_indices[1], col_indices[2]]
         );
         assert_eq!(command_error, None);
     }
