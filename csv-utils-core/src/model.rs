@@ -63,8 +63,8 @@ pub struct TableViewState {
     pub(crate) cached_row_count: usize,
     /// Columns hidden from the table (still listed in the sidebar).
     pub column_hidden: Vec<bool>,
-    /// Columns pinned to the left of the table (always visible when not hidden).
-    pub column_pinned: Vec<bool>,
+    /// Pinned column indices in chronological pin order (left-to-right in the table).
+    pub column_pin_order: Vec<usize>,
     /// Multi-selection for bulk column actions (Ctrl+click). Empty means use `selected_col` only.
     pub multi_selected_cols: Vec<usize>,
     /// Rows hidden from the table (session-only).
@@ -121,7 +121,7 @@ impl Default for TableViewState {
             cached_matching_rows: None,
             cached_row_count: 0,
             column_hidden: Vec::new(),
-            column_pinned: Vec::new(),
+            column_pin_order: Vec::new(),
             multi_selected_cols: Vec::new(),
             row_hidden: Vec::new(),
             multi_selected_rows: Vec::new(),
@@ -275,9 +275,7 @@ impl AppModel {
         if self.view.column_hidden.len() != n {
             self.view.column_hidden = vec![false; n];
         }
-        if self.view.column_pinned.len() != n {
-            self.view.column_pinned = vec![false; n];
-        }
+        self.view.column_pin_order.retain(|&col| col < n);
     }
 
     pub fn is_column_hidden(&self, col: usize) -> bool {
@@ -285,14 +283,16 @@ impl AppModel {
     }
 
     pub fn is_column_pinned(&self, col: usize) -> bool {
-        self.view.column_pinned.get(col).copied().unwrap_or(false)
+        self.view.column_pin_order.contains(&col)
     }
 
-    /// Non-hidden pinned column indices in header order (fixed left segment of the table).
+    /// Non-hidden pinned column indices in chronological pin order (fixed left segment).
     pub fn pinned_table_columns(&self) -> Vec<usize> {
-        self.table_visible_columns()
-            .into_iter()
-            .filter(|&col| self.is_column_pinned(col))
+        self.view
+            .column_pin_order
+            .iter()
+            .copied()
+            .filter(|&col| !self.is_column_hidden(col))
             .collect()
     }
 
@@ -338,8 +338,10 @@ impl AppModel {
     pub fn toggle_pin_selected_columns(&mut self) {
         self.ensure_column_state();
         for col in self.columns_for_bulk_action() {
-            if col < self.view.column_pinned.len() {
-                self.view.column_pinned[col] = !self.view.column_pinned[col];
+            if self.is_column_pinned(col) {
+                self.view.column_pin_order.retain(|&c| c != col);
+            } else {
+                self.view.column_pin_order.push(col);
             }
         }
         self.snap_col_offset_after_pin_change();
@@ -1496,7 +1498,7 @@ impl AppModel {
     }
 
     /// Sidebar column indices after applying `column_name_filter`.
-    /// Pinned columns are listed first (preserving order within pinned / unpinned groups).
+    /// Pinned columns are listed first in chronological pin order.
     pub fn filtered_sidebar_columns(&self) -> Vec<usize> {
         self.order_sidebar_columns(self.sidebar_columns_for_filter(
             &self.view.column_name_filter,
@@ -1504,17 +1506,14 @@ impl AppModel {
     }
 
     fn order_sidebar_columns(&self, cols: Vec<usize>) -> Vec<usize> {
-        let mut pinned = Vec::new();
-        let mut unpinned = Vec::new();
-        for col in cols {
-            if self.is_column_pinned(col) {
-                pinned.push(col);
-            } else {
-                unpinned.push(col);
+        let mut ordered = Vec::with_capacity(cols.len());
+        for &col in &self.view.column_pin_order {
+            if cols.contains(&col) {
+                ordered.push(col);
             }
         }
-        pinned.extend(unpinned);
-        pinned
+        ordered.extend(cols.into_iter().filter(|c| !self.is_column_pinned(*c)));
+        ordered
     }
 
     fn sidebar_position_of_column(&self, col: usize) -> Option<usize> {
@@ -2157,8 +2156,25 @@ mod tests {
         model.view.selected_col = 10;
         model.toggle_pin_selected_columns();
         let sidebar = model.filtered_sidebar_columns();
-        assert_eq!(sidebar.first().copied(), Some(10));
-        assert_eq!(sidebar.get(1).copied(), Some(50));
+        assert_eq!(sidebar.first().copied(), Some(50));
+        assert_eq!(sidebar.get(1).copied(), Some(10));
+        assert_eq!(model.pinned_table_columns(), vec![50, 10]);
         assert!(!model.is_column_pinned(sidebar[2]));
+    }
+
+    #[test]
+    fn unpinning_preserves_order_of_remaining_pinned_columns() {
+        let path = PathBuf::from("test-data/generated/test_1000x100.csv");
+        if !path.exists() {
+            return;
+        }
+        let mut model = AppModel::open(Some(path)).expect("open csv");
+        for col in [50, 10, 30] {
+            model.view.selected_col = col;
+            model.toggle_pin_selected_columns();
+        }
+        model.view.selected_col = 10;
+        model.toggle_pin_selected_columns();
+        assert_eq!(model.pinned_table_columns(), vec![50, 30]);
     }
 }
