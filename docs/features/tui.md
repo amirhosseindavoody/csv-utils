@@ -64,11 +64,11 @@ Each frame: `maybe_refit_column_widths()` (when loaded row count changes), `clam
 | Key | Action |
 |-----|--------|
 | `q` | Close open panel; with a file loaded, return to file picker; from file picker, quit |
-| `↑`/`↓` or `j`/`k` | Previous / next row; when the **sidebar is focused** (click or scroll it), previous / next column |
+| `↑`/`↓` or `j`/`k` | Previous / next row (pinned rows first in pin order, then scrollable rows); when the **sidebar is focused** (click or scroll it), previous / next column |
 | `←`/`→` or `h`/`l` | Previous / next **visible** column (hidden columns are skipped) |
 | `Space` | Toggle multi-select on the current row or column (follows the last arrow axis) |
 | `PgUp`/`PgDn` | Move selection ±10 rows |
-| `Home`/`End` | First / last loaded row |
+| `Home`/`End` | First / last row in navigation order (pinned rows first, then scrollable) |
 | `c` | Open column info panel |
 | `p` | Pin or unpin selected row(s) after **↑/↓** (row axis), or column(s) when the sidebar is focused or the last arrow axis was column (**←/→**); works with multi-select |
 | `?` | Help overlay |
@@ -136,6 +136,7 @@ The panel shows editable **type** options filtered by inferred data (e.g. text-o
 | Table header border | Drag to resize column width (4–64 chars) |
 | Table header | Select column only (click, not on border); **Ctrl+click** toggles column multi-select |
 | Table body cell | Select row + column; **Ctrl+click** extends a cell range from the anchor; **Ctrl+drag** selects a rectangular cell range |
+| Row gutter (`▸`/`▐`) **right-click** | Open context menu: **Select**, **Hide** / **Unhide**, **Pin** / **Unpin** |
 | Table wheel | Move `selected_row` ±3 |
 | Table / column sidebar / column info | Scrollbars (▲▼ / ◀▶) when content exceeds the viewport; drag thumb or track |
 | Column list click | Select column; **Ctrl+click** toggles column multi-select |
@@ -145,7 +146,7 @@ The panel shows editable **type** options filtered by inferred data (e.g. text-o
 
 Multi-selected columns show a blue highlight down the full column (`◆` prefix in the sidebar). Multi-selected rows use a blue row background; **Ctrl+click** or **Ctrl+drag** on table cells highlights a blue rectangle (anchor fixed until a plain click clears it). With only the cursor on a cell (no row/column multi-select), the **column header** and a **`▸` row gutter** mark the current row/column — body cells are not striped. The active cell keeps the yellow highlight. Row/column multi-select (**Space** or Ctrl+click on headers/sidebar) and cell-range select are mutually exclusive — toggling one clears the others. Arrow keys and plain clicks move focus without clearing the other selection mode. Hidden columns remain in the sidebar with a dim `·` prefix at the **end** of the list (after pinned and visible unpinned columns) but are omitted from the table and skipped by `←`/`→`. Pinned columns show a cyan `▐` prefix in the sidebar, are listed first in chronological pin order (matching their fixed left position in the table), and stay visible while unpinned columns scroll horizontally. Pinned rows show a cyan `▐` in the row gutter, stay fixed at the top of the table in chronological pin order, and unpinned rows scroll vertically beneath them. Select a hidden column in the sidebar and run `:unhide` to show it again; run `:unhide` on the table to restore hidden rows. Hidden rows are omitted from the table entirely. At least one column and one row must stay visible; `:hide` reports an error if the selection would hide every column or every row. With an active cell range, `:hide` on the table hides every row spanned by the range.
 
-Context menu keys (after right-click on the column sidebar): **↑/↓** move highlight, **Enter** activate, **Esc** / **q** dismiss; left-click an item to activate. **Ctrl+right-click** adds the column to a multi-selection (same as Ctrl+click). **Select** applies single-column selection; other actions preserve an existing column multi-select and include the clicked column in bulk operations.
+Context menu keys (after right-click on the column sidebar or row gutter): **↑/↓** move highlight, **Enter** activate, **Esc** / **q** dismiss; left-click an item to activate. **Ctrl+right-click** adds the column or row to a multi-selection (same as Ctrl+click). **Select** applies single-column or single-row selection; other actions preserve an existing multi-select and include the clicked column or row in bulk operations.
 
 Hit-testing: `hit_test_table` / `hit_test_column_resize` in `app.rs` (variable-width columns plus a one-character gap between columns; gap shows `│` when column borders are enabled).
 
