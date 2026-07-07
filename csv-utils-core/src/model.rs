@@ -21,6 +21,15 @@ pub enum MultiSelectAxis {
     Column,
 }
 
+/// Per-column or per-row visibility in the table (mutually exclusive).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum AxisStatus {
+    #[default]
+    Normal,
+    Pinned,
+    Hidden,
+}
+
 #[derive(Debug, Clone)]
 pub struct TableViewState {
     pub selected_row: usize,
@@ -61,14 +70,14 @@ pub struct TableViewState {
     pub(crate) cached_matching_rows: Option<Vec<usize>>,
     /// Row count at the time the cache was built, used to detect new rows arriving.
     pub(crate) cached_row_count: usize,
-    /// Columns hidden from the table (still listed in the sidebar).
-    pub column_hidden: Vec<bool>,
+    /// Per-column table status (normal, pinned, or hidden — mutually exclusive).
+    pub column_status: Vec<AxisStatus>,
     /// Pinned column indices in chronological pin order (left-to-right in the table).
     pub column_pin_order: Vec<usize>,
     /// Multi-selection for bulk column actions (Ctrl+click). Empty means use `selected_col` only.
     pub multi_selected_cols: Vec<usize>,
-    /// Rows hidden from the table (session-only).
-    pub row_hidden: Vec<bool>,
+    /// Per-row table status (normal, pinned, or hidden — mutually exclusive; session-only).
+    pub row_status: Vec<AxisStatus>,
     /// Pinned row indices in chronological pin order (top of the table).
     pub row_pin_order: Vec<usize>,
     /// Multi-selection for bulk row actions (Ctrl+click on table body). Empty means use `selected_row` only.
@@ -124,10 +133,10 @@ impl Default for TableViewState {
             column_info_scroll: 0,
             cached_matching_rows: None,
             cached_row_count: 0,
-            column_hidden: Vec::new(),
+            column_status: Vec::new(),
             column_pin_order: Vec::new(),
             multi_selected_cols: Vec::new(),
-            row_hidden: Vec::new(),
+            row_status: Vec::new(),
             row_pin_order: Vec::new(),
             multi_selected_rows: Vec::new(),
             cell_range_anchor: None,
@@ -294,27 +303,90 @@ impl AppModel {
         if self.view.column_value_filters.len() != n {
             self.view.column_value_filters = vec![None; n];
         }
-        if self.view.column_hidden.len() != n {
-            self.view.column_hidden = vec![false; n];
+        if self.view.column_status.len() != n {
+            self.view.column_status = vec![AxisStatus::Normal; n];
         }
-        self.view.column_pin_order.retain(|&col| col < n);
+        self.sync_column_pin_order();
+    }
+
+    fn column_status_at(&self, col: usize) -> AxisStatus {
+        self.view
+            .column_status
+            .get(col)
+            .copied()
+            .unwrap_or(AxisStatus::Normal)
+    }
+
+    fn row_status_at(&self, row: usize) -> AxisStatus {
+        self.view
+            .row_status
+            .get(row)
+            .copied()
+            .unwrap_or(AxisStatus::Normal)
+    }
+
+    fn sync_column_pin_order(&mut self) {
+        self.view.column_pin_order.retain(|&col| {
+            col < self.view.column_status.len()
+                && self.view.column_status[col] == AxisStatus::Pinned
+        });
+    }
+
+    fn sync_row_pin_order(&mut self) {
+        self.view.row_pin_order.retain(|&row| {
+            row < self.view.row_status.len() && self.view.row_status[row] == AxisStatus::Pinned
+        });
+    }
+
+    fn set_column_status(&mut self, col: usize, status: AxisStatus) {
+        if col >= self.view.column_status.len() {
+            return;
+        }
+        self.view.column_status[col] = status;
+        match status {
+            AxisStatus::Pinned => {
+                if !self.view.column_pin_order.contains(&col) {
+                    self.view.column_pin_order.push(col);
+                }
+            }
+            AxisStatus::Normal | AxisStatus::Hidden => {
+                self.view.column_pin_order.retain(|&c| c != col);
+            }
+        }
+    }
+
+    fn set_row_status(&mut self, row: usize, status: AxisStatus) {
+        if row >= self.view.row_status.len() {
+            return;
+        }
+        self.view.row_status[row] = status;
+        match status {
+            AxisStatus::Pinned => {
+                if !self.view.row_pin_order.contains(&row) {
+                    self.view.row_pin_order.push(row);
+                }
+            }
+            AxisStatus::Normal | AxisStatus::Hidden => {
+                self.view.row_pin_order.retain(|&r| r != row);
+            }
+        }
     }
 
     pub fn is_column_hidden(&self, col: usize) -> bool {
-        self.view.column_hidden.get(col).copied().unwrap_or(false)
+        self.column_status_at(col) == AxisStatus::Hidden
     }
 
     pub fn is_column_pinned(&self, col: usize) -> bool {
-        self.view.column_pin_order.contains(&col)
+        self.column_status_at(col) == AxisStatus::Pinned
     }
 
-    /// Non-hidden pinned column indices in chronological pin order (fixed left segment).
+    /// Pinned column indices in chronological pin order (fixed left segment).
     pub fn pinned_table_columns(&self) -> Vec<usize> {
         self.view
             .column_pin_order
             .iter()
             .copied()
-            .filter(|&col| !self.is_column_hidden(col))
+            .filter(|&col| self.is_column_pinned(col))
             .collect()
     }
 
@@ -368,11 +440,12 @@ impl AppModel {
     pub fn toggle_pin_selected_columns(&mut self) {
         self.ensure_column_state();
         for col in self.columns_for_bulk_action() {
-            if self.is_column_pinned(col) {
-                self.view.column_pin_order.retain(|&c| c != col);
+            let next = if self.is_column_pinned(col) {
+                AxisStatus::Normal
             } else {
-                self.view.column_pin_order.push(col);
-            }
+                AxisStatus::Pinned
+            };
+            self.set_column_status(col, next);
         }
         self.snap_col_offset_after_pin_change();
     }
@@ -482,13 +555,16 @@ impl AppModel {
             return Err("Cannot hide every column");
         }
         for col in targets {
-            if col < self.view.column_hidden.len() {
-                self.view.column_hidden[col] = true;
-            }
+            self.set_column_status(col, AxisStatus::Hidden);
         }
-        self.view
-            .multi_selected_cols
-            .retain(|&col| col < self.view.column_hidden.len() && !self.view.column_hidden[col]);
+        self.view.multi_selected_cols.retain(|&col| {
+            self.view
+                .column_status
+                .get(col)
+                .copied()
+                .unwrap_or(AxisStatus::Normal)
+                != AxisStatus::Hidden
+        });
         self.snap_selection_after_column_visibility_change();
         Ok(())
     }
@@ -501,30 +577,30 @@ impl AppModel {
             .filter(|&col| self.is_column_hidden(col))
             .collect();
         if targets.is_empty() {
-            targets = (0..self.view.column_hidden.len())
+            targets = (0..self.view.column_status.len())
                 .filter(|&col| self.is_column_hidden(col))
                 .collect();
         }
         for col in targets {
-            self.view.column_hidden[col] = false;
+            self.set_column_status(col, AxisStatus::Normal);
         }
         Ok(())
     }
 
-    fn ensure_row_hidden(&mut self) {
+    fn ensure_row_state(&mut self) {
         let n = self.preview.row_count();
-        if self.view.row_hidden.len() < n {
-            self.view.row_hidden.resize(n, false);
+        if self.view.row_status.len() < n {
+            self.view.row_status.resize(n, AxisStatus::Normal);
         }
-        self.view.row_pin_order.retain(|&row| row < n);
+        self.sync_row_pin_order();
     }
 
     pub fn is_row_hidden(&self, row: usize) -> bool {
-        self.view.row_hidden.get(row).copied().unwrap_or(false)
+        self.row_status_at(row) == AxisStatus::Hidden
     }
 
     pub fn is_row_pinned(&self, row: usize) -> bool {
-        self.view.row_pin_order.contains(&row)
+        self.row_status_at(row) == AxisStatus::Pinned
     }
 
     /// Pinned rows in chronological pin order that are visible in the table (not hidden, pass filters).
@@ -562,13 +638,14 @@ impl AppModel {
     }
 
     pub fn toggle_pin_selected_rows(&mut self) {
-        self.ensure_row_hidden();
+        self.ensure_row_state();
         for row in self.rows_for_bulk_action() {
-            if self.is_row_pinned(row) {
-                self.view.row_pin_order.retain(|&r| r != row);
+            let next = if self.is_row_pinned(row) {
+                AxisStatus::Normal
             } else {
-                self.view.row_pin_order.push(row);
-            }
+                AxisStatus::Pinned
+            };
+            self.set_row_status(row, next);
         }
         self.snap_row_offset_after_pin_change();
     }
@@ -633,7 +710,10 @@ impl AppModel {
     }
 
     pub fn rows_hidden_active(&self) -> bool {
-        self.view.row_hidden.iter().any(|&hidden| hidden)
+        self.view
+            .row_status
+            .iter()
+            .any(|&status| status == AxisStatus::Hidden)
     }
 
     pub fn is_row_multi_selected(&self, row: usize) -> bool {
@@ -873,7 +953,7 @@ impl AppModel {
     }
 
     pub fn hide_selected_rows(&mut self) -> Result<(), &'static str> {
-        self.ensure_row_hidden();
+        self.ensure_row_state();
         let targets: Vec<usize> = self
             .rows_for_bulk_action()
             .into_iter()
@@ -889,18 +969,31 @@ impl AppModel {
             return Err("Cannot hide every row");
         }
         for row in targets {
-            if row < self.view.row_hidden.len() {
-                self.view.row_hidden[row] = true;
-            }
+            self.set_row_status(row, AxisStatus::Hidden);
         }
         self.view.multi_selected_rows.retain(|&row| {
-            row < self.view.row_hidden.len() && !self.view.row_hidden[row]
+            self.view
+                .row_status
+                .get(row)
+                .copied()
+                .unwrap_or(AxisStatus::Normal)
+                != AxisStatus::Hidden
         });
         self.view.multi_selected_cells.retain(|&(row, _)| {
-            row < self.view.row_hidden.len() && !self.view.row_hidden[row]
+            self.view
+                .row_status
+                .get(row)
+                .copied()
+                .unwrap_or(AxisStatus::Normal)
+                != AxisStatus::Hidden
         });
         self.view.cell_range_anchor = self.view.cell_range_anchor.filter(|&(r, _)| {
-            r < self.view.row_hidden.len() && !self.view.row_hidden[r]
+            self.view
+                .row_status
+                .get(r)
+                .copied()
+                .unwrap_or(AxisStatus::Normal)
+                != AxisStatus::Hidden
         });
         if self.view.cell_range_anchor.is_none() {
             self.view.cell_range_focus = None;
@@ -911,7 +1004,7 @@ impl AppModel {
     }
 
     pub fn unhide_selected_rows(&mut self) -> Result<(), &'static str> {
-        self.ensure_row_hidden();
+        self.ensure_row_state();
         let mut targets: Vec<usize> = self
             .rows_for_bulk_action()
             .into_iter()
@@ -923,9 +1016,7 @@ impl AppModel {
                 .collect();
         }
         for row in targets {
-            if row < self.view.row_hidden.len() {
-                self.view.row_hidden[row] = false;
-            }
+            self.set_row_status(row, AxisStatus::Normal);
         }
         self.invalidate_row_cache();
         Ok(())
@@ -1620,7 +1711,7 @@ impl AppModel {
 
     /// Rebuild the cache if stale (filters changed or new rows arrived), then return a slice.
     pub fn matching_row_indices(&mut self) -> &[usize] {
-        self.ensure_row_hidden();
+        self.ensure_row_state();
         let current_count = self.preview.row_count();
         let cache_valid = self.view.cached_matching_rows.is_some()
             && self.view.cached_row_count == current_count;
@@ -2404,7 +2495,7 @@ mod tests {
         }
         let mut model = AppModel::open(Some(path)).expect("open csv");
         model.view.selected_col = 0;
-        model.view.column_hidden[1] = true;
+        model.view.column_status[1] = AxisStatus::Hidden;
         model.move_selected_column(1, 20);
         assert_eq!(model.view.selected_col, 2);
         model.move_selected_column(-1, 20);
@@ -2566,6 +2657,68 @@ mod tests {
             .expect("visible cols");
         assert!(hidden_pos > last_visible_pos);
         assert_eq!(sidebar.first().copied(), Some(0));
+    }
+
+    #[test]
+    fn hide_removes_pinned_column_status() {
+        let path = PathBuf::from("test-data/generated/test_1000x100.csv");
+        if !path.exists() {
+            return;
+        }
+        let mut model = AppModel::open(Some(path)).expect("open csv");
+        model.view.selected_col = 5;
+        model.toggle_pin_selected_columns();
+        assert!(model.is_column_pinned(5));
+        model.hide_selected_columns().expect("hide");
+        assert!(model.is_column_hidden(5));
+        assert!(!model.is_column_pinned(5));
+        assert!(!model.view.column_pin_order.contains(&5));
+    }
+
+    #[test]
+    fn pin_hidden_column_becomes_pinned_not_hidden() {
+        let path = PathBuf::from("test-data/generated/test_1000x100.csv");
+        if !path.exists() {
+            return;
+        }
+        let mut model = AppModel::open(Some(path)).expect("open csv");
+        model.view.selected_col = 5;
+        model.hide_selected_columns().expect("hide");
+        assert!(model.is_column_hidden(5));
+        model.toggle_pin_selected_columns();
+        assert!(model.is_column_pinned(5));
+        assert!(!model.is_column_hidden(5));
+    }
+
+    #[test]
+    fn hide_removes_pinned_row_status() {
+        let path = PathBuf::from("test-data/generated/test_1000x100.csv");
+        if !path.exists() {
+            return;
+        }
+        let mut model = AppModel::open(Some(path)).expect("open csv");
+        model.view.selected_row = 5;
+        model.toggle_pin_selected_rows();
+        assert!(model.is_row_pinned(5));
+        model.hide_selected_rows().expect("hide");
+        assert!(model.is_row_hidden(5));
+        assert!(!model.is_row_pinned(5));
+        assert!(!model.view.row_pin_order.contains(&5));
+    }
+
+    #[test]
+    fn pin_hidden_row_becomes_pinned_not_hidden() {
+        let path = PathBuf::from("test-data/generated/test_1000x100.csv");
+        if !path.exists() {
+            return;
+        }
+        let mut model = AppModel::open(Some(path)).expect("open csv");
+        model.view.selected_row = 5;
+        model.hide_selected_rows().expect("hide");
+        assert!(model.is_row_hidden(5));
+        model.toggle_pin_selected_rows();
+        assert!(model.is_row_pinned(5));
+        assert!(!model.is_row_hidden(5));
     }
 
     #[test]
