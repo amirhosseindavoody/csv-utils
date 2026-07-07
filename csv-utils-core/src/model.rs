@@ -1508,11 +1508,16 @@ impl AppModel {
     fn order_sidebar_columns(&self, cols: Vec<usize>) -> Vec<usize> {
         let mut ordered = Vec::with_capacity(cols.len());
         for &col in &self.view.column_pin_order {
-            if cols.contains(&col) {
+            if cols.contains(&col) && !self.is_column_hidden(col) {
                 ordered.push(col);
             }
         }
-        ordered.extend(cols.into_iter().filter(|c| !self.is_column_pinned(*c)));
+        ordered.extend(
+            cols.iter()
+                .copied()
+                .filter(|c| !self.is_column_pinned(*c) && !self.is_column_hidden(*c)),
+        );
+        ordered.extend(cols.iter().copied().filter(|c| self.is_column_hidden(*c)));
         ordered
     }
 
@@ -2176,5 +2181,26 @@ mod tests {
         model.view.selected_col = 10;
         model.toggle_pin_selected_columns();
         assert_eq!(model.pinned_table_columns(), vec![50, 30]);
+    }
+
+    #[test]
+    fn hidden_columns_appear_at_end_of_sidebar() {
+        let path = PathBuf::from("test-data/generated/test_1000x100.csv");
+        if !path.exists() {
+            return;
+        }
+        let mut model = AppModel::open(Some(path)).expect("open csv");
+        model.view.selected_col = 0;
+        model.toggle_pin_selected_columns();
+        model.view.selected_col = 5;
+        model.hide_selected_columns().expect("hide");
+        let sidebar = model.filtered_sidebar_columns();
+        let hidden_pos = sidebar.iter().position(|&c| c == 5).expect("hidden col listed");
+        let last_visible_pos = sidebar
+            .iter()
+            .rposition(|&c| !model.is_column_hidden(c))
+            .expect("visible cols");
+        assert!(hidden_pos > last_visible_pos);
+        assert_eq!(sidebar.first().copied(), Some(0));
     }
 }

@@ -204,14 +204,13 @@ impl ColumnContextMenu {
 fn execute_column_context_action(
     action: ColumnContextAction,
     model: &mut AppModel,
+    col: usize,
     column_list_height: usize,
 ) -> Option<String> {
+    model.select_column_click(col, false, column_list_height);
+    model.view.column_sidebar_focused = true;
     match action {
-        ColumnContextAction::Select => {
-            model.view.column_sidebar_focused = true;
-            model.ensure_column_list_shows_selection(column_list_height);
-            None
-        }
+        ColumnContextAction::Select => None,
         ColumnContextAction::Hide => model.hide_selected_columns().err().map(str::to_string),
         ColumnContextAction::Unhide => model.unhide_selected_columns().err().map(str::to_string),
         ColumnContextAction::Info => {
@@ -795,9 +794,8 @@ fn handle_key(
                 let col = menu.col;
                 *column_context_menu = None;
                 if let Some(action) = action {
-                    model.select_column_click(col, false, column_list_height);
                     if let Some(err) =
-                        execute_column_context_action(action, model, column_list_height)
+                        execute_column_context_action(action, model, col, column_list_height)
                     {
                         *command_error = Some(err);
                     }
@@ -1127,10 +1125,12 @@ fn handle_mouse(
                     let action = menu.items[idx].action;
                     let target_col = menu.col;
                     *column_context_menu = None;
-                    model.select_column_click(target_col, false, column_list_height);
-                    if let Some(err) =
-                        execute_column_context_action(action, model, column_list_height)
-                    {
+                    if let Some(err) = execute_column_context_action(
+                        action,
+                        model,
+                        target_col,
+                        column_list_height,
+                    ) {
                         *command_error = Some(err);
                     }
                 } else {
@@ -1439,7 +1439,6 @@ fn handle_mouse(
             let rel = row.saturating_sub(inner.y) as usize;
             let idx = model.view.column_list_offset + rel;
             if let Some(&target_col) = filtered.get(idx) {
-                model.select_column_click(target_col, false, column_list_height);
                 *column_context_menu =
                     Some(ColumnContextMenu::for_column(target_col, model, pos, screen));
             }
