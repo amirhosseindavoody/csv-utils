@@ -380,29 +380,27 @@ impl AppModel {
         self.couple_table_scroll_to_selection();
         self.set_multi_select_axis(MultiSelectAxis::Column);
         if extend {
-            self.toggle_column_multi_select(col);
-            self.view.selected_col = col;
+            self.add_column_to_selection(col, column_list_height);
         } else {
             self.clear_cell_range();
             self.view.multi_selected_cols.clear();
             self.view.selected_col = col;
-        }
-        if let Some(pos) = self.sidebar_position_of_column(col) {
-            let height = column_list_height.max(1);
-            if pos < self.view.column_list_offset {
-                self.view.column_list_offset = pos;
-            } else if pos >= self.view.column_list_offset + height {
-                self.view.column_list_offset = pos.saturating_sub(height - 1);
+            if let Some(pos) = self.sidebar_position_of_column(col) {
+                let height = column_list_height.max(1);
+                if pos < self.view.column_list_offset {
+                    self.view.column_list_offset = pos;
+                } else if pos >= self.view.column_list_offset + height {
+                    self.view.column_list_offset = pos.saturating_sub(height - 1);
+                }
             }
+            self.clamp_column_list_offset(column_list_height);
         }
-        self.clamp_column_list_offset(column_list_height);
     }
 
-    /// Add/remove a column from the multi-select via the context menu, without requiring
-    /// Ctrl+click (some terminals/multiplexers don't forward the Ctrl modifier on mouse events).
-    /// If nothing is explicitly multi-selected yet, the currently selected column is seeded
-    /// into the selection first so both columns end up selected together.
-    pub fn toggle_column_in_multi_select(&mut self, col: usize, column_list_height: usize) {
+    /// Select a column, or add it to an existing selection (seeds the previously-selected
+    /// column when building the first multi-select). Used by context-menu **Select** and
+    /// Ctrl+click — never removes columns from the selection.
+    pub fn add_column_to_selection(&mut self, col: usize, column_list_height: usize) {
         self.couple_table_scroll_to_selection();
         self.set_multi_select_axis(MultiSelectAxis::Column);
         self.clear_cell_range();
@@ -413,7 +411,11 @@ impl AppModel {
                 self.view.multi_selected_cols.push(current);
             }
         }
-        Self::toggle_sorted(&mut self.view.multi_selected_cols, col);
+        if !self.is_column_multi_selected(col) {
+            self.view.multi_selected_cols.push(col);
+            self.view.multi_selected_cols.sort_unstable();
+            self.view.multi_selected_cols.dedup();
+        }
         self.view.selected_col = col;
         self.ensure_column_list_shows_selection(column_list_height);
     }
@@ -749,14 +751,13 @@ impl AppModel {
         self.couple_table_scroll_to_selection();
         self.set_multi_select_axis(MultiSelectAxis::Column);
         if extend {
-            self.toggle_column_multi_select(col);
-            self.view.selected_col = col;
+            self.add_column_to_selection(col, column_list_height);
         } else {
             self.clear_cell_range();
             self.view.multi_selected_cols.clear();
             self.view.selected_col = col;
+            self.ensure_column_list_shows_selection(column_list_height);
         }
-        self.ensure_column_list_shows_selection(column_list_height);
     }
 
     pub fn hide_selected_rows(&mut self) -> Result<(), &'static str> {
@@ -1571,11 +1572,9 @@ impl AppModel {
         self.table_row_navigation_order(m).last().copied()
     }
 
-    /// Add/remove a row from the multi-select via the context menu, without requiring
-    /// Ctrl+click (some terminals/multiplexers don't forward the Ctrl modifier on mouse events).
-    /// If nothing is explicitly multi-selected yet, the currently selected row is seeded into
-    /// the selection first so both rows end up selected together.
-    pub fn toggle_row_in_multi_select(&mut self, row: usize) {
+    /// Select a row, or add it to an existing selection (seeds the previously-selected row
+    /// when building the first multi-select). Used by context-menu **Select** and Ctrl+click.
+    pub fn add_row_to_selection(&mut self, row: usize) {
         self.couple_table_scroll_to_selection();
         self.set_multi_select_axis(MultiSelectAxis::Row);
         self.view.column_sidebar_focused = false;
@@ -1587,7 +1586,11 @@ impl AppModel {
                 self.view.multi_selected_rows.push(current);
             }
         }
-        Self::toggle_sorted(&mut self.view.multi_selected_rows, row);
+        if !self.is_row_multi_selected(row) {
+            self.view.multi_selected_rows.push(row);
+            self.view.multi_selected_rows.sort_unstable();
+            self.view.multi_selected_rows.dedup();
+        }
         self.view.selected_row = row;
     }
 
@@ -2076,19 +2079,20 @@ mod tests {
     }
 
     #[test]
-    fn ctrl_click_multi_select_toggles() {
+    fn ctrl_click_multi_select_adds_columns() {
         let path = PathBuf::from("test-data/generated/test_1000x100.csv");
         if !path.exists() {
             return;
         }
         let mut model = AppModel::open(Some(path)).expect("open csv");
         model.select_column_click(0, false, 10);
-        assert!(!model.is_column_multi_selected(0));
+        assert!(model.view.multi_selected_cols.is_empty());
         model.select_column_click(1, true, 10);
+        assert_eq!(model.view.multi_selected_cols, vec![0, 1]);
         model.select_column_click(2, true, 10);
-        assert_eq!(model.view.multi_selected_cols, vec![1, 2]);
+        assert_eq!(model.view.multi_selected_cols, vec![0, 1, 2]);
         model.select_column_click(1, true, 10);
-        assert_eq!(model.view.multi_selected_cols, vec![2]);
+        assert_eq!(model.view.multi_selected_cols, vec![0, 1, 2]);
     }
 
     #[test]
@@ -2521,7 +2525,7 @@ mod tests {
     }
 
     #[test]
-    fn toggle_column_in_multi_select_builds_selection_without_ctrl() {
+    fn add_column_to_selection_builds_multi_select() {
         let path = PathBuf::from("test-data/generated/test_1000x100.csv");
         if !path.exists() {
             return;
@@ -2530,23 +2534,20 @@ mod tests {
         model.view.selected_col = 1;
         assert!(model.view.multi_selected_cols.is_empty());
 
-        // First toggle seeds the previously-selected column plus the target column.
-        model.toggle_column_in_multi_select(3, 20);
+        model.add_column_to_selection(3, 20);
         assert_eq!(model.view.multi_selected_cols, vec![1, 3]);
         assert_eq!(model.view.selected_col, 3);
 
-        // A second toggle on a new column extends the selection further.
-        model.toggle_column_in_multi_select(5, 20);
+        model.add_column_to_selection(5, 20);
         assert_eq!(model.view.multi_selected_cols, vec![1, 3, 5]);
         assert_eq!(model.view.selected_col, 5);
 
-        // Toggling an already-selected column removes it.
-        model.toggle_column_in_multi_select(3, 20);
-        assert_eq!(model.view.multi_selected_cols, vec![1, 5]);
+        model.add_column_to_selection(3, 20);
+        assert_eq!(model.view.multi_selected_cols, vec![1, 3, 5]);
     }
 
     #[test]
-    fn toggle_column_in_multi_select_from_already_selected_column() {
+    fn add_column_to_selection_on_current_column_stays_single() {
         let path = PathBuf::from("test-data/generated/test_1000x100.csv");
         if !path.exists() {
             return;
@@ -2555,16 +2556,16 @@ mod tests {
         assert_eq!(model.view.selected_col, 0);
         assert!(model.view.multi_selected_cols.is_empty());
 
-        // "Add to Selection" on the column that's already selected (no other column chosen yet).
-        model.toggle_column_in_multi_select(0, 20);
-        assert_eq!(model.view.multi_selected_cols, vec![0]);
+        model.add_column_to_selection(0, 20);
+        assert!(model.view.multi_selected_cols.is_empty());
+        assert_eq!(model.view.selected_col, 0);
 
-        model.toggle_column_in_multi_select(1, 20);
+        model.add_column_to_selection(1, 20);
         assert_eq!(model.view.multi_selected_cols, vec![0, 1]);
     }
 
     #[test]
-    fn toggle_row_in_multi_select_builds_selection_without_ctrl() {
+    fn add_row_to_selection_builds_multi_select() {
         let path = PathBuf::from("test-data/generated/test_1000x100.csv");
         if !path.exists() {
             return;
@@ -2573,15 +2574,15 @@ mod tests {
         model.view.selected_row = 2;
         assert!(model.view.multi_selected_rows.is_empty());
 
-        model.toggle_row_in_multi_select(4);
+        model.add_row_to_selection(4);
         assert_eq!(model.view.multi_selected_rows, vec![2, 4]);
         assert_eq!(model.view.selected_row, 4);
 
-        model.toggle_row_in_multi_select(6);
+        model.add_row_to_selection(6);
         assert_eq!(model.view.multi_selected_rows, vec![2, 4, 6]);
 
-        model.toggle_row_in_multi_select(4);
-        assert_eq!(model.view.multi_selected_rows, vec![2, 6]);
+        model.add_row_to_selection(4);
+        assert_eq!(model.view.multi_selected_rows, vec![2, 4, 6]);
     }
 
     #[test]
