@@ -240,14 +240,30 @@ impl AppModel {
 
     pub fn reopen(&mut self, file_path: PathBuf) -> std::io::Result<()> {
         self.abandon_scan_thread();
-        *self = Self::open(Some(file_path))?;
+        let new_model = Self::open(Some(file_path))?;
+        self.replace_and_discard(new_model);
         Ok(())
     }
 
     pub fn close_file(&mut self) -> std::io::Result<()> {
         self.abandon_scan_thread();
-        *self = Self::open(None)?;
+        let new_model = Self::open(None)?;
+        self.replace_and_discard(new_model);
         Ok(())
+    }
+
+    /// Swap in `new_model`, deallocating the previous state on a detached
+    /// background thread so the caller (the UI thread) is never blocked.
+    ///
+    /// A fully-scanned wide/tall CSV accumulates millions of small `String`
+    /// allocations in per-column statistics (see `ColumnStatsAccum::distinct`),
+    /// and freeing them synchronously can take the better part of a second —
+    /// see `docs/reference/data-loading.md` for the benchmark that uncovered
+    /// this. Moving the drop off the UI thread keeps closing/switching files
+    /// (and therefore quitting, which closes the file first) instant.
+    fn replace_and_discard(&mut self, new_model: Self) {
+        let old_model = std::mem::replace(self, new_model);
+        std::thread::spawn(move || drop(old_model));
     }
 
     pub fn file_label(&self) -> &str {
@@ -2669,5 +2685,44 @@ mod tests {
         model.focus_row_for_context_action(2, true);
         assert!(model.view.multi_selected_rows.is_empty());
         assert_eq!(model.view.selected_row, 2);
+    }
+
+    /// Regression test for a "quitting takes a couple of seconds" report: a
+    /// fully-scanned wide/tall CSV accumulates millions of small `String`
+    /// allocations in per-column `distinct` sets (see `ColumnStatsAccum`).
+    /// Dropping that state synchronously on the UI thread (as `close_file`
+    /// used to do via `*self = Self::open(None)?`) took ~940ms for a
+    /// 10,000x1,000 file in benchmarking. `close_file`/`reopen` must instead
+    /// hand the old state off to a detached thread so pressing `q` (which
+    /// always closes the file before quitting) returns immediately.
+    #[test]
+    fn close_file_does_not_block_on_large_accumulated_stats() {
+        use std::time::{Duration, Instant};
+
+        let mut model = AppModel::open(None).expect("open empty model");
+        model.file_path = Some(PathBuf::from("synthetic.csv"));
+
+        let cols = 500;
+        let rows = 6000;
+        let headers: Vec<String> = (0..cols).map(|c| format!("col_{c}")).collect();
+        {
+            let layout = model.preview.layout();
+            let mut layout = layout.lock().expect("layout lock");
+            layout.reset_from_headers(&headers);
+            for r in 0..rows {
+                let fields: Vec<String> = (0..cols).map(|c| format!("val_{r}_{c}")).collect();
+                layout.observe_fields(&fields);
+            }
+        }
+
+        let start = Instant::now();
+        model.close_file().expect("close file");
+        let elapsed = start.elapsed();
+
+        assert!(
+            elapsed < Duration::from_millis(100),
+            "close_file should return immediately even with large accumulated stats, took {elapsed:?}"
+        );
+        assert!(model.file_path.is_none());
     }
 }
