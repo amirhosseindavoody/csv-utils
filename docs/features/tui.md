@@ -66,7 +66,7 @@ Each frame: `maybe_refit_column_widths()` (when loaded row count changes), `clam
 |-----|--------|
 | `q` | Close open panel; with a file loaded, return to file picker; from file picker, quit |
 | `↑`/`↓` or `j`/`k` | Previous / next row (pinned rows first in pin order, then scrollable rows); when the **sidebar is focused** (click or scroll it), previous / next column |
-| `←`/`→` or `h`/`l` | Previous / next **visible** column (hidden columns are skipped) |
+| `←`/`→` or `h`/`l` | Previous / next **visible** column (pinned columns first in pin order, then scrollable columns; hidden columns are skipped) |
 | `Space` | Toggle multi-select on the current row or column (follows the last arrow axis) |
 | `PgUp`/`PgDn` | Move selection ±10 rows |
 | `Home`/`End` | First / last row in navigation order (pinned rows first, then scrollable) |

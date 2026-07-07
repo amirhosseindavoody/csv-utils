@@ -68,16 +68,7 @@ impl AppModel {
                 }
             }
             ViewAction::ColDelta(delta) => {
-                self.couple_table_scroll_to_selection();
-                if delta < 0 {
-                    self.view.selected_col = self
-                        .view
-                        .selected_col
-                        .saturating_sub((-delta) as usize);
-                } else {
-                    self.view.selected_col = self.view.selected_col.saturating_add(delta as usize);
-                }
-                self.ensure_column_list_shows_selection(layout.column_list_height);
+                self.move_selected_column(delta, layout.column_list_height);
             }
             ViewAction::ColumnListDelta(delta) => {
                 if delta < 0 {
