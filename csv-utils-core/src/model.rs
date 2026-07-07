@@ -310,6 +310,14 @@ impl AppModel {
             .collect()
     }
 
+    /// Column order for arrow-key navigation and cell-range column spans:
+    /// pinned columns first (pin order), then scrollable columns (file order).
+    pub fn table_column_navigation_order(&self) -> Vec<usize> {
+        let mut order = self.pinned_table_columns();
+        order.extend(self.scrollable_table_columns());
+        order
+    }
+
     fn pinned_columns_width(&self) -> u16 {
         self.pinned_table_columns()
             .iter()
@@ -632,10 +640,33 @@ impl AppModel {
         if self.is_cell_multi_selected(row, col) {
             return true;
         }
-        let Some((min_r, max_r, min_c, max_c)) = self.cell_range_bounds() else {
+        let Some((min_r, max_r, _, _)) = self.cell_range_bounds() else {
             return false;
         };
-        row >= min_r && row <= max_r && col >= min_c && col <= max_c
+        if row < min_r || row > max_r {
+            return false;
+        }
+        self.column_in_cell_range_column_span(col)
+    }
+
+    fn column_in_cell_range_column_span(&self, col: usize) -> bool {
+        let (anchor, focus) = match (self.view.cell_range_anchor, self.view.cell_range_focus) {
+            (Some(a), Some(f)) => (a, f),
+            _ => return false,
+        };
+        let order = self.table_column_navigation_order();
+        let Some(pos_col) = order.iter().position(|&c| c == col) else {
+            return false;
+        };
+        let Some(pos_anchor) = order.iter().position(|&c| c == anchor.1) else {
+            return false;
+        };
+        let Some(pos_focus) = order.iter().position(|&c| c == focus.1) else {
+            return false;
+        };
+        let min_pos = pos_anchor.min(pos_focus);
+        let max_pos = pos_anchor.max(pos_focus);
+        pos_col >= min_pos && pos_col <= max_pos
     }
 
     pub fn is_cell_multi_selected(&self, row: usize, col: usize) -> bool {
@@ -909,32 +940,20 @@ impl AppModel {
             || self.view.last_multi_select_axis == MultiSelectAxis::Column
     }
 
-    /// Move column selection by `delta`, skipping hidden columns.
+    /// Move column selection by `delta` along [`table_column_navigation_order`]
+    /// (pinned first, then scrollable; hidden columns are skipped).
     pub fn move_selected_column(&mut self, delta: i32, column_list_height: usize) {
         self.couple_table_scroll_to_selection();
-        let n = self.preview.headers().len();
-        if n == 0 {
+        let order = self.table_column_navigation_order();
+        if order.is_empty() {
             return;
         }
-        let step = if delta < 0 { -1i32 } else { 1 };
-        let mut col = self.view.selected_col;
-        loop {
-            let next = if step < 0 {
-                col.checked_sub(1)
-            } else if col + 1 < n {
-                Some(col + 1)
-            } else {
-                None
-            };
-            let Some(next) = next else {
-                break;
-            };
-            col = next;
-            if !self.is_column_hidden(col) {
-                self.view.selected_col = col;
-                break;
-            }
-        }
+        let pos = order
+            .iter()
+            .position(|&c| c == self.view.selected_col)
+            .unwrap_or(0);
+        let next = ((pos as i32) + delta).clamp(0, order.len() as i32 - 1) as usize;
+        self.view.selected_col = order[next];
         self.ensure_column_list_shows_selection(column_list_height);
     }
 
@@ -2374,6 +2393,45 @@ mod tests {
         assert_eq!(model.view.selected_col, 2);
         model.move_selected_column(-1, 20);
         assert_eq!(model.view.selected_col, 0);
+    }
+
+    #[test]
+    fn move_selected_column_follows_pin_order() {
+        let path = PathBuf::from("test-data/generated/test_1000x100.csv");
+        if !path.exists() {
+            return;
+        }
+        let mut model = AppModel::open(Some(path)).expect("open csv");
+        model.view.selected_col = 50;
+        model.toggle_pin_selected_columns();
+        model.view.selected_col = 10;
+        model.toggle_pin_selected_columns();
+        model.view.selected_col = 50;
+        model.move_selected_column(1, 20);
+        assert_eq!(model.view.selected_col, 10);
+        model.move_selected_column(1, 20);
+        assert_eq!(model.view.selected_col, 0);
+        model.move_selected_column(-1, 20);
+        assert_eq!(model.view.selected_col, 10);
+    }
+
+    #[test]
+    fn drag_cell_range_follows_column_navigation_order() {
+        let path = PathBuf::from("test-data/generated/test_1000x100.csv");
+        if !path.exists() {
+            return;
+        }
+        let mut model = AppModel::open(Some(path)).expect("open csv");
+        model.view.selected_col = 50;
+        model.toggle_pin_selected_columns();
+        model.view.selected_col = 10;
+        model.toggle_pin_selected_columns();
+        model.set_cell_range_corners(2, 50, 2, 0);
+        assert!(model.is_cell_in_selection_range(2, 50));
+        assert!(model.is_cell_in_selection_range(2, 10));
+        assert!(model.is_cell_in_selection_range(2, 0));
+        assert!(!model.is_cell_in_selection_range(2, 11));
+        assert!(!model.is_cell_in_selection_range(2, 25));
     }
 
     #[test]
