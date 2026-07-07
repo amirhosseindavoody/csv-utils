@@ -207,8 +207,8 @@ fn execute_column_context_action(
     col: usize,
     column_list_height: usize,
 ) -> Option<String> {
-    model.select_column_click(col, false, column_list_height);
-    model.view.column_sidebar_focused = true;
+    let single_select = matches!(action, ColumnContextAction::Select);
+    model.focus_column_for_context_action(col, column_list_height, single_select);
     match action {
         ColumnContextAction::Select => None,
         ColumnContextAction::Hide => model.hide_selected_columns().err().map(str::to_string),
@@ -1445,6 +1445,10 @@ fn handle_mouse(
             let rel = row.saturating_sub(inner.y) as usize;
             let idx = model.view.column_list_offset + rel;
             if let Some(&target_col) = filtered.get(idx) {
+                let extend = mouse.modifiers.contains(KeyModifiers::CONTROL);
+                if extend {
+                    model.select_column_click(target_col, true, column_list_height);
+                }
                 *column_context_menu =
                     Some(ColumnContextMenu::for_column(target_col, model, pos, screen));
             }

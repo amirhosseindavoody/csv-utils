@@ -398,6 +398,26 @@ impl AppModel {
         self.clamp_column_list_offset(column_list_height);
     }
 
+    /// Focus a column for a sidebar context-menu action without dropping bulk selection.
+    pub fn focus_column_for_context_action(
+        &mut self,
+        col: usize,
+        column_list_height: usize,
+        single_select: bool,
+    ) {
+        self.couple_table_scroll_to_selection();
+        self.set_multi_select_axis(MultiSelectAxis::Column);
+        self.view.column_sidebar_focused = true;
+        self.view.selected_col = col;
+        if single_select {
+            self.clear_cell_range();
+            self.view.multi_selected_cols.clear();
+        } else if !self.view.multi_selected_cols.is_empty() && !self.is_column_multi_selected(col) {
+            self.view.multi_selected_cols.push(col);
+        }
+        self.ensure_column_list_shows_selection(column_list_height);
+    }
+
     pub fn hide_selected_columns(&mut self) -> Result<(), &'static str> {
         self.ensure_column_state();
         let targets: Vec<usize> = self
@@ -2373,5 +2393,24 @@ mod tests {
         model.toggle_pin_selected_rows();
         assert!(!model.is_row_pinned(1));
         assert!(!model.is_row_pinned(3));
+    }
+
+    #[test]
+    fn context_menu_action_preserves_column_multi_select() {
+        let path = PathBuf::from("test-data/generated/test_1000x100.csv");
+        if !path.exists() {
+            return;
+        }
+        let mut model = AppModel::open(Some(path)).expect("open csv");
+        model.view.multi_selected_cols = vec![1, 3];
+        model.view.selected_col = 1;
+        model.focus_column_for_context_action(5, 20, false);
+        assert_eq!(model.view.multi_selected_cols, vec![1, 3, 5]);
+        assert_eq!(model.view.selected_col, 5);
+        model.focus_column_for_context_action(3, 20, false);
+        assert_eq!(model.view.multi_selected_cols, vec![1, 3]);
+        model.focus_column_for_context_action(2, 20, true);
+        assert!(model.view.multi_selected_cols.is_empty());
+        assert_eq!(model.view.selected_col, 2);
     }
 }
