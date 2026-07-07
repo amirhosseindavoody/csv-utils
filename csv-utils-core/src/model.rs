@@ -5,6 +5,7 @@ use crate::column::{
 use crate::column_stats::{build_column_info, ColumnInfo};
 use crate::display::{format_cell_for_column, sanitize_ascii, truncate_middle};
 use crate::settings::{self, normalize_decimal_format, SettingsFile};
+use crate::sort::SortDirection;
 use crate::column_value_filter::{numeric_cell_matches, text_cell_matches, ColumnFilterError};
 use crate::fuzzy::rank_by_fuzzy;
 use std::path::PathBuf;
@@ -94,6 +95,11 @@ pub struct TableViewState {
     pub column_sidebar_width: u16,
     /// When true, table scroll offsets are not pulled to follow the selected cell.
     pub table_scroll_decoupled: bool,
+    /// Column used for row sort (session-only); pinned rows stay above the sorted block.
+    pub sort_column: Option<usize>,
+    pub sort_direction: SortDirection,
+    /// Cached scrollable row order after filter + sort. Built with `cached_matching_rows`.
+    pub(crate) cached_sorted_scrollable_rows: Option<Vec<usize>>,
 }
 
 #[derive(Debug)]
@@ -145,6 +151,9 @@ impl Default for TableViewState {
             last_multi_select_axis: MultiSelectAxis::default(),
             column_sidebar_width: 32,
             table_scroll_decoupled: false,
+            sort_column: None,
+            sort_direction: SortDirection::Ascending,
+            cached_sorted_scrollable_rows: None,
         }
     }
 }
@@ -613,8 +622,11 @@ impl AppModel {
             .collect()
     }
 
-    /// Matching rows that are not pinned (horizontally scrollable segment below pinned rows).
+    /// Matching rows that are not pinned (scrollable segment below pinned rows).
     pub fn scrollable_table_rows(&self, matching: &[usize]) -> Vec<usize> {
+        if let Some(cached) = &self.view.cached_sorted_scrollable_rows {
+            return cached.clone();
+        }
         matching
             .iter()
             .copied()
@@ -1206,11 +1218,19 @@ impl AppModel {
 
     pub fn format_column_header(&self, col: usize, name: &str) -> String {
         let width = self.column_width_chars(col);
-        let label = if self.column_has_value_filter(col) {
+        let mut label = if self.column_has_value_filter(col) {
             format!("{name}*")
         } else {
             name.to_string()
         };
+        if let Some(sort_col) = self.view.sort_column {
+            if sort_col == col {
+                label.push(match self.view.sort_direction {
+                    SortDirection::Ascending => '↑',
+                    SortDirection::Descending => '↓',
+                });
+            }
+        }
         let visible = sanitize_ascii(&label);
         if visible.len() <= width {
             format!("{visible:<width$}", width = width)
@@ -1701,6 +1721,92 @@ impl AppModel {
 
     fn invalidate_row_cache(&mut self) {
         self.view.cached_matching_rows = None;
+        self.view.cached_sorted_scrollable_rows = None;
+    }
+
+    fn rebuild_sorted_scrollable_cache(&mut self) {
+        let Some(matching) = self.view.cached_matching_rows.clone() else {
+            self.view.cached_sorted_scrollable_rows = None;
+            return;
+        };
+        let mut scrollable: Vec<usize> = matching
+            .iter()
+            .copied()
+            .filter(|&row| !self.is_row_pinned(row))
+            .collect();
+        if let Some(col) = self.view.sort_column {
+            if col < self.preview.headers().len() {
+                let kind = self.effective_column_kind(col);
+                let direction = self.view.sort_direction;
+                scrollable.sort_by(|&a, &b| {
+                    let cell_a = self
+                        .preview
+                        .row_fields(a)
+                        .and_then(|fields| fields.get(col).cloned())
+                        .unwrap_or_default();
+                    let cell_b = self
+                        .preview
+                        .row_fields(b)
+                        .and_then(|fields| fields.get(col).cloned())
+                        .unwrap_or_default();
+                    let ord = crate::sort::compare_cells(kind, &cell_a, &cell_b);
+                    match direction {
+                        SortDirection::Ascending => ord,
+                        SortDirection::Descending => ord.reverse(),
+                    }
+                });
+            }
+        }
+        self.view.cached_sorted_scrollable_rows = Some(scrollable);
+    }
+
+    fn snap_row_offset_after_sort_change(&mut self) {
+        let empty: &[usize] = &[];
+        let matching = self.view.cached_matching_rows.as_deref().unwrap_or(empty);
+        let scrollable = self.scrollable_table_rows(matching);
+        let max = scrollable.len().saturating_sub(1);
+        self.view.row_offset = self.view.row_offset.min(max);
+    }
+
+    pub fn is_sorted_by_column(&self, col: usize) -> bool {
+        self.view.sort_column == Some(col)
+    }
+
+    pub fn set_sort_column(&mut self, col: usize, direction: SortDirection) {
+        self.view.sort_column = Some(col);
+        self.view.sort_direction = direction;
+        self.matching_row_indices();
+        self.snap_row_offset_after_sort_change();
+    }
+
+    pub fn clear_sort(&mut self) {
+        self.view.sort_column = None;
+        self.matching_row_indices();
+        self.snap_row_offset_after_sort_change();
+    }
+
+    pub fn sort_column_from_command(&mut self, args: &str) -> Result<(), &'static str> {
+        let col = self.view.selected_col;
+        if col >= self.preview.headers().len() {
+            return Err("No column selected");
+        }
+        let trimmed = args.trim().to_ascii_lowercase();
+        match trimmed.as_str() {
+            "" => match self.view.sort_column {
+                Some(c) if c == col => match self.view.sort_direction {
+                    SortDirection::Ascending => {
+                        self.set_sort_column(col, SortDirection::Descending);
+                    }
+                    SortDirection::Descending => self.clear_sort(),
+                },
+                _ => self.set_sort_column(col, SortDirection::Ascending),
+            },
+            "asc" | "ascending" => self.set_sort_column(col, SortDirection::Ascending),
+            "desc" | "descending" => self.set_sort_column(col, SortDirection::Descending),
+            "clear" | "none" => self.clear_sort(),
+            _ => return Err("Usage: :sort [asc|desc|clear]"),
+        }
+        Ok(())
     }
 
     /// Return the cached matching rows without recomputing (may be stale if not yet ticked).
@@ -1724,6 +1830,7 @@ impl AppModel {
                 .collect();
             self.view.cached_matching_rows = Some(rows);
             self.view.cached_row_count = current_count;
+            self.rebuild_sorted_scrollable_cache();
         }
         self.view.cached_matching_rows.as_deref().unwrap()
     }
@@ -2906,6 +3013,69 @@ mod tests {
     /// 10,000x1,000 file in benchmarking. `close_file`/`reopen` must instead
     /// hand the old state off to a detached thread so pressing `q` (which
     /// always closes the file before quitting) returns immediately.
+    #[test]
+    fn sort_rows_by_column_ascending() {
+        let path = PathBuf::from("test-data/generated/test_1000x100.csv");
+        if !path.exists() {
+            return;
+        }
+        let mut model = AppModel::open(Some(path)).expect("open csv");
+        model.view.selected_col = 0;
+        model.set_sort_column(0, SortDirection::Ascending);
+        model.matching_row_indices();
+        let matching = model.cached_matching_rows().unwrap();
+        let scrollable = model.scrollable_table_rows(matching);
+        assert!(!scrollable.is_empty());
+        for window in scrollable.windows(2) {
+            let a = model
+                .preview
+                .row_fields(window[0])
+                .and_then(|f| f.first().cloned())
+                .unwrap_or_default();
+            let b = model
+                .preview
+                .row_fields(window[1])
+                .and_then(|f| f.first().cloned())
+                .unwrap_or_default();
+            assert!(a <= b, "expected ascending order, got {a} > {b}");
+        }
+        assert!(model.format_column_header(0, "col_0").contains('↑'));
+    }
+
+    #[test]
+    fn sort_command_toggles_direction_and_clear() {
+        let path = PathBuf::from("test-data/generated/test_1000x100.csv");
+        if !path.exists() {
+            return;
+        }
+        let mut model = AppModel::open(Some(path)).expect("open csv");
+        model.view.selected_col = 1;
+        model.sort_column_from_command("").expect("sort asc");
+        assert_eq!(model.view.sort_column, Some(1));
+        assert_eq!(model.view.sort_direction, SortDirection::Ascending);
+        model.sort_column_from_command("").expect("sort desc");
+        assert_eq!(model.view.sort_direction, SortDirection::Descending);
+        model.sort_column_from_command("").expect("sort clear");
+        assert_eq!(model.view.sort_column, None);
+    }
+
+    #[test]
+    fn pinned_rows_stay_above_sorted_scrollable_rows() {
+        let path = PathBuf::from("test-data/generated/test_1000x100.csv");
+        if !path.exists() {
+            return;
+        }
+        let mut model = AppModel::open(Some(path)).expect("open csv");
+        model.view.selected_row = 50;
+        model.toggle_pin_selected_rows();
+        model.view.selected_col = 0;
+        model.set_sort_column(0, SortDirection::Ascending);
+        model.matching_row_indices();
+        let matching = model.cached_matching_rows().unwrap();
+        let order = model.table_row_navigation_order(matching);
+        assert_eq!(order.first().copied(), Some(50));
+    }
+
     #[test]
     fn close_file_does_not_block_on_large_accumulated_stats() {
         use std::time::{Duration, Instant};

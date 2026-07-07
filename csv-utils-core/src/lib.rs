@@ -13,6 +13,7 @@ pub mod predicate;
 pub mod preview;
 pub mod schema;
 pub mod settings;
+pub mod sort;
 pub mod stats;
 pub mod unique;
 
