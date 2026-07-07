@@ -2584,3 +2584,169 @@ fn centered_rect(percent_x: u16, percent_y: u16, area: Rect) -> Rect {
         ])
         .split(popup_layout[1])[1]
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crossterm::event::{MouseButton, MouseEvent};
+
+    fn test_model() -> Option<AppModel> {
+        let path = PathBuf::from("test-data/generated/test_1000x100.csv");
+        if !path.exists() {
+            return None;
+        }
+        Some(AppModel::open(Some(path)).expect("open csv"))
+    }
+
+    fn empty_mouse_state() -> (
+        Option<ColumnResize>,
+        Option<SidebarResize>,
+        Option<CellRangeDrag>,
+        Option<ScrollbarDrag>,
+        Option<ColumnContextMenu>,
+        Option<RowContextMenu>,
+        Option<String>,
+    ) {
+        (None, None, None, None, None, None, None)
+    }
+
+    #[test]
+    fn ctrl_click_table_header_multi_selects_columns() {
+        let Some(mut model) = test_model() else {
+            return;
+        };
+        // Default column widths (MIN_COLUMN_WIDTH) give a deterministic layout.
+        let table_area = Rect::new(0, 3, 40, 20);
+        let areas = LayoutAreas {
+            table: table_area,
+            columns: Rect::default(),
+            column_info_popup: None,
+            file_picker_list: None,
+        };
+        let screen = Rect::new(0, 0, 80, 30);
+        let inner = table_inner_area(table_area);
+        let col_indices = model.visible_table_columns(table_data_width(&model, table_area));
+        assert!(col_indices.len() >= 2, "need at least 2 visible columns for this test");
+
+        let header_row = inner.y;
+        let col0_mid_x = inner.x + table_data_x_offset(&model) + 2;
+        let col1_mid_x = inner.x + table_data_x_offset(&model) + 7;
+
+        let (
+            mut column_resize,
+            mut sidebar_resize,
+            mut cell_range_drag,
+            mut scrollbar_drag,
+            mut column_context_menu,
+            mut row_context_menu,
+            mut command_error,
+        ) = empty_mouse_state();
+
+        handle_mouse(
+            MouseEvent {
+                kind: MouseEventKind::Down(MouseButton::Left),
+                column: col0_mid_x,
+                row: header_row,
+                modifiers: KeyModifiers::NONE,
+            },
+            &mut model,
+            &areas,
+            20,
+            &mut column_resize,
+            &mut sidebar_resize,
+            &mut cell_range_drag,
+            &mut scrollbar_drag,
+            &mut column_context_menu,
+            &mut row_context_menu,
+            &mut command_error,
+            screen,
+        );
+        assert_eq!(model.view.selected_col, col_indices[0]);
+        assert!(model.view.multi_selected_cols.is_empty());
+
+        handle_mouse(
+            MouseEvent {
+                kind: MouseEventKind::Down(MouseButton::Left),
+                column: col1_mid_x,
+                row: header_row,
+                modifiers: KeyModifiers::CONTROL,
+            },
+            &mut model,
+            &areas,
+            20,
+            &mut column_resize,
+            &mut sidebar_resize,
+            &mut cell_range_drag,
+            &mut scrollbar_drag,
+            &mut column_context_menu,
+            &mut row_context_menu,
+            &mut command_error,
+            screen,
+        );
+        assert_eq!(model.view.selected_col, col_indices[1]);
+        assert!(
+            model.view.multi_selected_cols.contains(&col_indices[0]),
+            "expected column {} to remain multi-selected, got {:?}",
+            col_indices[0],
+            model.view.multi_selected_cols
+        );
+        assert!(
+            model.view.multi_selected_cols.contains(&col_indices[1]),
+            "expected column {} to be added to multi-select, got {:?}",
+            col_indices[1],
+            model.view.multi_selected_cols
+        );
+        assert_eq!(command_error, None);
+    }
+
+    #[test]
+    fn ctrl_click_table_body_cell_does_not_multi_select_columns() {
+        let Some(mut model) = test_model() else {
+            return;
+        };
+        let table_area = Rect::new(0, 3, 40, 20);
+        let areas = LayoutAreas {
+            table: table_area,
+            columns: Rect::default(),
+            column_info_popup: None,
+            file_picker_list: None,
+        };
+        let screen = Rect::new(0, 0, 80, 30);
+        let inner = table_inner_area(table_area);
+        let col0_mid_x = inner.x + table_data_x_offset(&model) + 2;
+        let data_row = inner.y + 2;
+
+        let (
+            mut column_resize,
+            mut sidebar_resize,
+            mut cell_range_drag,
+            mut scrollbar_drag,
+            mut column_context_menu,
+            mut row_context_menu,
+            mut command_error,
+        ) = empty_mouse_state();
+
+        // Ctrl+click on a body cell begins a cell-range selection, not column multi-select.
+        handle_mouse(
+            MouseEvent {
+                kind: MouseEventKind::Down(MouseButton::Left),
+                column: col0_mid_x,
+                row: data_row,
+                modifiers: KeyModifiers::CONTROL,
+            },
+            &mut model,
+            &areas,
+            20,
+            &mut column_resize,
+            &mut sidebar_resize,
+            &mut cell_range_drag,
+            &mut scrollbar_drag,
+            &mut column_context_menu,
+            &mut row_context_menu,
+            &mut command_error,
+            screen,
+        );
+        assert!(model.view.multi_selected_cols.is_empty());
+        assert!(cell_range_drag.is_some());
+    }
+}
