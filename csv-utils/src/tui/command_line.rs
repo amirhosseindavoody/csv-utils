@@ -83,6 +83,12 @@ pub const VIEW_COMMANDS: &[CommandSpec] = &[
         takes_args: false,
     },
     CommandSpec {
+        primary: ":sort",
+        aliases: &[],
+        description: "Sort rows by selected column (asc → desc → clear)",
+        takes_args: true,
+    },
+    CommandSpec {
         primary: ":web",
         aliases: &[],
         description: "Open browser UI on a free local port and exit terminal view",
@@ -394,7 +400,7 @@ mod tests {
             suggestion_index: 0,
         };
         assert_eq!(state.filtered(PICKER_COMMANDS).len(), 3);
-        assert_eq!(state.filtered(VIEW_COMMANDS).len(), 7);
+        assert_eq!(state.filtered(VIEW_COMMANDS).len(), 8);
     }
 
     #[test]

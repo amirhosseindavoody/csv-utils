@@ -49,12 +49,14 @@ csv — keyboard shortcuts
   :toggle-borders  show or hide table column border lines
   :hide / :h  hide selected columns (←/→ or sidebar) or rows (↑/↓, drag, or Ctrl+click cells)
   :unhide / :u  unhide selected or all hidden columns/rows (same axis as :hide)
+  :sort        sort rows by selected column (asc → desc → clear)
+  :sort asc|desc|clear  explicit sort direction or clear
   :web       open browser UI on a free local port and exit terminal view
   /          fuzzy-find columns (filters sidebar)
   p          pin/unpin selected row(s) (↑/↓ row axis) or column(s) (sidebar / ←/→)
   :filter    filter rows on selected column, or sidebar when focused (:f)
 
-Mouse: click table cells; drag on table body to select a cell rectangle; Ctrl+click table cells to toggle individual cells; Ctrl+click column header, sidebar, or row gutter to add to selection; right-click column sidebar or row gutter for context menu; drag header borders to resize columns; drag sidebar left border to resize sidebar; wheel scrolls rows/columns. Click sidebar to focus it — then ↑/↓ navigate columns.
+Mouse: click table cells; drag on table body to select a cell rectangle; Ctrl+click table cells to toggle individual cells; Ctrl+click column header, sidebar, or row gutter to add to selection; right-click column header, sidebar, or row gutter for context menu; drag header borders to resize columns; drag sidebar left border to resize sidebar; wheel scrolls rows/columns. Click sidebar to focus it — then ↑/↓ navigate columns.
 
 Press q or ? to close.";
 
@@ -121,6 +123,9 @@ enum ColumnContextAction {
     Unhide,
     Info,
     TogglePin,
+    SortAsc,
+    SortDesc,
+    ClearSort,
 }
 
 struct ColumnContextMenuItem {
@@ -165,6 +170,20 @@ impl ColumnContextMenu {
                 "Pin".to_string()
             },
         });
+        items.push(ColumnContextMenuItem {
+            action: ColumnContextAction::SortAsc,
+            label: "Sort ascending".to_string(),
+        });
+        items.push(ColumnContextMenuItem {
+            action: ColumnContextAction::SortDesc,
+            label: "Sort descending".to_string(),
+        });
+        if model.is_sorted_by_column(col) {
+            items.push(ColumnContextMenuItem {
+                action: ColumnContextAction::ClearSort,
+                label: "Clear sort".to_string(),
+            });
+        }
         let width = items
             .iter()
             .map(|item| item.label.len().saturating_add(2))
@@ -229,6 +248,21 @@ fn execute_column_context_action(
             model.focus_column_for_context_action(col, column_list_height, false);
             model.toggle_pin_selected_columns();
             model.ensure_column_list_shows_selection(column_list_height);
+            None
+        }
+        ColumnContextAction::SortAsc => {
+            model.focus_column_for_context_action(col, column_list_height, false);
+            model.set_sort_column(col, csv_utils_core::sort::SortDirection::Ascending);
+            None
+        }
+        ColumnContextAction::SortDesc => {
+            model.focus_column_for_context_action(col, column_list_height, false);
+            model.set_sort_column(col, csv_utils_core::sort::SortDirection::Descending);
+            None
+        }
+        ColumnContextAction::ClearSort => {
+            model.focus_column_for_context_action(col, column_list_height, false);
+            model.clear_sort();
             None
         }
     }
@@ -1055,6 +1089,15 @@ fn handle_key(
                         }
                         Err(err) => *command_error = Some(err),
                     }
+                } else if cmd.starts_with(":sort ") {
+                    let args = cmd.strip_prefix(":sort ").unwrap_or("");
+                    match model.sort_column_from_command(args) {
+                        Ok(()) => {
+                            *command_line = None;
+                            *command_error = None;
+                        }
+                        Err(msg) => *command_error = Some(msg.to_string()),
+                    }
                 } else {
                     match cmd.as_str() {
                         ":close" => {
@@ -1078,6 +1121,15 @@ fn handle_key(
                         }
                         ":unhide" | ":u" => {
                             match model.unhide_from_command() {
+                                Ok(()) => {
+                                    *command_line = None;
+                                    *command_error = None;
+                                }
+                                Err(msg) => *command_error = Some(msg.to_string()),
+                            }
+                        }
+                        ":sort" => {
+                            match model.sort_column_from_command("") {
                                 Ok(()) => {
                                     *command_line = None;
                                     *command_error = None;
@@ -1676,6 +1728,21 @@ fn handle_mouse(
                 *column_context_menu = None;
                 *row_context_menu =
                     Some(RowContextMenu::for_row(row_idx, model, pos, screen));
+                return;
+            }
+            if let Some(hit) = hit_test_table(col, row, areas.table, model) {
+                if hit.row.is_none() {
+                    model.view.column_sidebar_focused = false;
+                    let extend = mouse.modifiers.contains(KeyModifiers::CONTROL);
+                    if extend {
+                        model.select_table_header_click(hit.col, true, column_list_height);
+                    } else {
+                        model.select_table_header_click(hit.col, false, column_list_height);
+                    }
+                    *row_context_menu = None;
+                    *column_context_menu =
+                        Some(ColumnContextMenu::for_column(hit.col, model, pos, screen));
+                }
             }
         }
         _ => {}
