@@ -1496,8 +1496,25 @@ impl AppModel {
     }
 
     /// Sidebar column indices after applying `column_name_filter`.
+    /// Pinned columns are listed first (preserving order within pinned / unpinned groups).
     pub fn filtered_sidebar_columns(&self) -> Vec<usize> {
-        self.sidebar_columns_for_filter(&self.view.column_name_filter)
+        self.order_sidebar_columns(self.sidebar_columns_for_filter(
+            &self.view.column_name_filter,
+        ))
+    }
+
+    fn order_sidebar_columns(&self, cols: Vec<usize>) -> Vec<usize> {
+        let mut pinned = Vec::new();
+        let mut unpinned = Vec::new();
+        for col in cols {
+            if self.is_column_pinned(col) {
+                pinned.push(col);
+            } else {
+                unpinned.push(col);
+            }
+        }
+        pinned.extend(unpinned);
+        pinned
     }
 
     fn sidebar_position_of_column(&self, col: usize) -> Option<usize> {
@@ -2126,5 +2143,22 @@ mod tests {
         model.toggle_pin_selected_columns();
         assert!(!model.is_column_pinned(1));
         assert!(!model.is_column_pinned(3));
+    }
+
+    #[test]
+    fn pinned_columns_list_first_in_sidebar() {
+        let path = PathBuf::from("test-data/generated/test_1000x100.csv");
+        if !path.exists() {
+            return;
+        }
+        let mut model = AppModel::open(Some(path)).expect("open csv");
+        model.view.selected_col = 50;
+        model.toggle_pin_selected_columns();
+        model.view.selected_col = 10;
+        model.toggle_pin_selected_columns();
+        let sidebar = model.filtered_sidebar_columns();
+        assert_eq!(sidebar.first().copied(), Some(10));
+        assert_eq!(sidebar.get(1).copied(), Some(50));
+        assert!(!model.is_column_pinned(sidebar[2]));
     }
 }
