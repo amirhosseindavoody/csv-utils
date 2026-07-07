@@ -116,6 +116,7 @@ struct ScrollbarDrag {
 
 #[derive(Debug, Clone, Copy)]
 enum ColumnContextAction {
+    Select,
     Hide,
     Unhide,
     Info,
@@ -137,6 +138,10 @@ struct ColumnContextMenu {
 impl ColumnContextMenu {
     fn for_column(col: usize, model: &AppModel, click: Position, screen: Rect) -> Self {
         let mut items = Vec::new();
+        items.push(ColumnContextMenuItem {
+            action: ColumnContextAction::Select,
+            label: "Select".to_string(),
+        });
         if model.is_column_hidden(col) {
             items.push(ColumnContextMenuItem {
                 action: ColumnContextAction::Unhide,
@@ -162,10 +167,10 @@ impl ColumnContextMenu {
         });
         let width = items
             .iter()
-            .map(|item| item.label.len())
+            .map(|item| item.label.len().saturating_add(2))
             .max()
             .unwrap_or(8)
-            .saturating_add(4) as u16;
+            .saturating_add(2) as u16;
         let height = items.len() as u16 + 2;
         let x = click.x.min(screen.width.saturating_sub(width));
         let y = click.y.min(screen.height.saturating_sub(height));
@@ -199,8 +204,14 @@ impl ColumnContextMenu {
 fn execute_column_context_action(
     action: ColumnContextAction,
     model: &mut AppModel,
+    column_list_height: usize,
 ) -> Option<String> {
     match action {
+        ColumnContextAction::Select => {
+            model.view.column_sidebar_focused = true;
+            model.ensure_column_list_shows_selection(column_list_height);
+            None
+        }
         ColumnContextAction::Hide => model.hide_selected_columns().err().map(str::to_string),
         ColumnContextAction::Unhide => model.unhide_selected_columns().err().map(str::to_string),
         ColumnContextAction::Info => {
@@ -209,6 +220,7 @@ fn execute_column_context_action(
         }
         ColumnContextAction::TogglePin => {
             model.toggle_pin_selected_columns();
+            model.ensure_column_list_shows_selection(column_list_height);
             None
         }
     }
@@ -231,7 +243,6 @@ fn draw_column_context_menu(frame: &mut ratatui::Frame, menu: &ColumnContextMenu
     frame.render_widget(
         Paragraph::new(lines).block(
             Block::default()
-                .title(" Column ")
                 .borders(Borders::ALL)
                 .border_style(Style::default().fg(Color::Cyan)),
         ),
@@ -785,7 +796,9 @@ fn handle_key(
                 *column_context_menu = None;
                 if let Some(action) = action {
                     model.select_column_click(col, false, column_list_height);
-                    if let Some(err) = execute_column_context_action(action, model) {
+                    if let Some(err) =
+                        execute_column_context_action(action, model, column_list_height)
+                    {
                         *command_error = Some(err);
                     }
                 }
@@ -1021,6 +1034,7 @@ fn handle_key(
             || model.view.last_multi_select_axis == MultiSelectAxis::Column =>
         {
             model.toggle_pin_selected_columns();
+            model.ensure_column_list_shows_selection(column_list_height);
         }
         KeyCode::Up | KeyCode::Char('k') => {
             if model.view.column_sidebar_focused {
@@ -1114,7 +1128,9 @@ fn handle_mouse(
                     let target_col = menu.col;
                     *column_context_menu = None;
                     model.select_column_click(target_col, false, column_list_height);
-                    if let Some(err) = execute_column_context_action(action, model) {
+                    if let Some(err) =
+                        execute_column_context_action(action, model, column_list_height)
+                    {
                         *command_error = Some(err);
                     }
                 } else {
