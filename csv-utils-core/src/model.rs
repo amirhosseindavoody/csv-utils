@@ -233,13 +233,13 @@ impl AppModel {
     }
 
     pub fn reopen(&mut self, file_path: PathBuf) -> std::io::Result<()> {
-        self.join_scan_thread();
+        self.abandon_scan_thread();
         *self = Self::open(Some(file_path))?;
         Ok(())
     }
 
     pub fn close_file(&mut self) -> std::io::Result<()> {
-        self.join_scan_thread();
+        self.abandon_scan_thread();
         *self = Self::open(None)?;
         Ok(())
     }

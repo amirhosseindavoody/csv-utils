@@ -473,6 +473,10 @@ pub fn run(file: Option<&str>) -> Result<()> {
         }
     }
 
+    if web_server.is_none() {
+        shared_model.lock().unwrap().abandon_scan_thread();
+    }
+
     restore_terminal(&mut terminal)?;
 
     if let Some(server) = web_server.take() {
@@ -480,8 +484,6 @@ pub fn run(file: Option<&str>) -> Result<()> {
         eprintln!("Press Ctrl+C to stop.");
         let _ = io::stderr().flush();
         server.wait();
-        shared_model.lock().unwrap().join_scan_thread();
-    } else {
         shared_model.lock().unwrap().abandon_scan_thread();
     }
 

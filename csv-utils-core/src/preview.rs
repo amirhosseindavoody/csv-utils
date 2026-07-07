@@ -205,9 +205,15 @@ fn continue_background_scan(
         match reader.read_byte_record(&mut record) {
             Ok(true) => {
                 let fields = fields_from_byte_record(&record);
+                if cancel.load(Ordering::Relaxed) {
+                    return;
+                }
                 {
                     let mut guard = data.lock().expect("preview mutex poisoned");
                     guard.record_offsets.push(offset);
+                }
+                if cancel.load(Ordering::Relaxed) {
+                    return;
                 }
                 layout
                     .lock()
