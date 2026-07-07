@@ -63,6 +63,8 @@ pub struct TableViewState {
     pub(crate) cached_row_count: usize,
     /// Columns hidden from the table (still listed in the sidebar).
     pub column_hidden: Vec<bool>,
+    /// Columns pinned to the left of the table (always visible when not hidden).
+    pub column_pinned: Vec<bool>,
     /// Multi-selection for bulk column actions (Ctrl+click). Empty means use `selected_col` only.
     pub multi_selected_cols: Vec<usize>,
     /// Rows hidden from the table (session-only).
@@ -119,6 +121,7 @@ impl Default for TableViewState {
             cached_matching_rows: None,
             cached_row_count: 0,
             column_hidden: Vec::new(),
+            column_pinned: Vec::new(),
             multi_selected_cols: Vec::new(),
             row_hidden: Vec::new(),
             multi_selected_rows: Vec::new(),
@@ -162,6 +165,7 @@ pub struct SidebarColumn {
     pub index: usize,
     pub label: String,
     pub selected: bool,
+    pub pinned: bool,
 }
 
 impl AppModel {
@@ -271,10 +275,80 @@ impl AppModel {
         if self.view.column_hidden.len() != n {
             self.view.column_hidden = vec![false; n];
         }
+        if self.view.column_pinned.len() != n {
+            self.view.column_pinned = vec![false; n];
+        }
     }
 
     pub fn is_column_hidden(&self, col: usize) -> bool {
         self.view.column_hidden.get(col).copied().unwrap_or(false)
+    }
+
+    pub fn is_column_pinned(&self, col: usize) -> bool {
+        self.view.column_pinned.get(col).copied().unwrap_or(false)
+    }
+
+    /// Non-hidden pinned column indices in header order (fixed left segment of the table).
+    pub fn pinned_table_columns(&self) -> Vec<usize> {
+        self.table_visible_columns()
+            .into_iter()
+            .filter(|&col| self.is_column_pinned(col))
+            .collect()
+    }
+
+    /// Non-hidden unpinned column indices in header order (horizontally scrollable).
+    pub fn scrollable_table_columns(&self) -> Vec<usize> {
+        self.table_visible_columns()
+            .into_iter()
+            .filter(|&col| !self.is_column_pinned(col))
+            .collect()
+    }
+
+    fn pinned_columns_width(&self) -> u16 {
+        self.pinned_table_columns()
+            .iter()
+            .map(|&col| self.column_slot_width(col))
+            .sum()
+    }
+
+    fn count_columns_fitting_width(&self, cols: &[usize], width: u16) -> usize {
+        if cols.is_empty() {
+            return 0;
+        }
+        let mut used = 0u16;
+        let mut count = 0usize;
+        for &col in cols {
+            let slot = self.column_slot_width(col);
+            if count > 0 && used.saturating_add(slot) > width {
+                break;
+            }
+            used = used.saturating_add(slot);
+            count += 1;
+        }
+        count.max(1)
+    }
+
+    pub fn scrollable_visible_count(&self, table_width: u16) -> usize {
+        let pinned_width = self.pinned_columns_width();
+        let remaining = table_width.saturating_sub(pinned_width);
+        let scrollable = self.scrollable_table_columns();
+        self.count_columns_fitting_width(&scrollable, remaining)
+    }
+
+    pub fn toggle_pin_selected_columns(&mut self) {
+        self.ensure_column_state();
+        for col in self.columns_for_bulk_action() {
+            if col < self.view.column_pinned.len() {
+                self.view.column_pinned[col] = !self.view.column_pinned[col];
+            }
+        }
+        self.snap_col_offset_after_pin_change();
+    }
+
+    fn snap_col_offset_after_pin_change(&mut self) {
+        let scrollable = self.scrollable_table_columns();
+        let max = scrollable.len().saturating_sub(1);
+        self.view.col_offset = self.view.col_offset.min(max);
     }
 
     /// Non-hidden column indices in header order (shown in the table).
@@ -648,7 +722,8 @@ impl AppModel {
         if !table_cols.contains(&self.view.selected_col) {
             self.view.selected_col = table_cols[0];
         }
-        let max_offset = table_cols.len().saturating_sub(1);
+        let scrollable = self.scrollable_table_columns();
+        let max_offset = scrollable.len().saturating_sub(1);
         self.view.col_offset = self.view.col_offset.min(max_offset);
     }
 
@@ -975,13 +1050,14 @@ impl AppModel {
     }
 
     pub fn max_col_offset(&self, table_width: u16) -> usize {
-        let table_cols = self.table_visible_columns();
-        let max_visible = self.max_visible_columns(table_width);
-        if table_cols.is_empty() || max_visible == 0 {
-            0
-        } else {
-            table_cols.len().saturating_sub(max_visible)
+        let scrollable = self.scrollable_table_columns();
+        if scrollable.is_empty() {
+            return 0;
         }
+        let pinned_width = self.pinned_columns_width();
+        let remaining = table_width.saturating_sub(pinned_width);
+        let max_visible = self.count_columns_fitting_width(&scrollable, remaining);
+        scrollable.len().saturating_sub(max_visible)
     }
 
     pub fn set_row_offset(&mut self, offset: usize, viewport_rows: usize) {
@@ -1459,7 +1535,6 @@ impl AppModel {
         let match_len = m.len();
         let max_cols = self.preview.headers().len().saturating_sub(1);
         let table_cols = self.table_visible_columns();
-        let max_visible = self.max_visible_columns(table_width);
 
         self.view.selected_col = self.view.selected_col.min(max_cols);
 
@@ -1480,18 +1555,25 @@ impl AppModel {
         self.view.row_offset = self.view.row_offset.min(max_offset);
 
         if !table_cols.is_empty() {
+            let scrollable = self.scrollable_table_columns();
             let max_col_offset = if self.view.table_scroll_decoupled {
                 self.max_col_offset(table_width)
             } else {
-                table_cols.len().saturating_sub(1)
+                scrollable.len().saturating_sub(1)
             };
             self.view.col_offset = self.view.col_offset.min(max_col_offset);
-            if !self.view.table_scroll_decoupled {
-                if let Some(sel_pos) = table_cols.iter().position(|&c| c == self.view.selected_col) {
+            if !self.view.table_scroll_decoupled && !self.is_column_pinned(self.view.selected_col) {
+                let scrollable_visible = self.scrollable_visible_count(table_width);
+                if let Some(sel_pos) = scrollable
+                    .iter()
+                    .position(|&c| c == self.view.selected_col)
+                {
                     if sel_pos < self.view.col_offset {
                         self.view.col_offset = sel_pos;
-                    } else if max_visible > 0 && sel_pos >= self.view.col_offset + max_visible {
-                        self.view.col_offset = sel_pos.saturating_sub(max_visible - 1);
+                    } else if scrollable_visible > 0
+                        && sel_pos >= self.view.col_offset + scrollable_visible
+                    {
+                        self.view.col_offset = sel_pos.saturating_sub(scrollable_visible - 1);
                     }
                 }
             }
@@ -1520,16 +1602,20 @@ impl AppModel {
         self.clamp_column_list_offset(height);
     }
 
-    /// Column indices shown in the table viewport (non-hidden, within horizontal scroll).
+    /// Column indices shown in the table viewport (pinned first, then scrollable window).
     pub fn visible_table_columns(&self, table_width: u16) -> Vec<usize> {
         let table_cols = self.table_visible_columns();
         if table_cols.is_empty() {
             return Vec::new();
         }
-        let start_idx = self.view.col_offset.min(table_cols.len().saturating_sub(1));
+
+        let pinned = self.pinned_table_columns();
+        let scrollable = self.scrollable_table_columns();
+
         let mut used = 0u16;
         let mut result = Vec::new();
-        for &col in &table_cols[start_idx..] {
+
+        for &col in &pinned {
             let slot = self.column_slot_width(col);
             if !result.is_empty() && used.saturating_add(slot) > table_width {
                 break;
@@ -1537,9 +1623,32 @@ impl AppModel {
             used = used.saturating_add(slot);
             result.push(col);
         }
-        if result.is_empty() {
-            result.push(table_cols[start_idx]);
+
+        if scrollable.is_empty() {
+            if result.is_empty() {
+                result.push(table_cols[0]);
+            }
+            return result;
         }
+
+        let start_idx = self.view.col_offset.min(scrollable.len().saturating_sub(1));
+        for &col in &scrollable[start_idx..] {
+            let slot = self.column_slot_width(col);
+            if !result.is_empty() && used.saturating_add(slot) > table_width {
+                break;
+            }
+            used = used.saturating_add(slot);
+            result.push(col);
+        }
+
+        if result.is_empty() {
+            if !pinned.is_empty() {
+                result.push(pinned[0]);
+            } else {
+                result.push(scrollable[start_idx]);
+            }
+        }
+
         result
     }
 
@@ -1580,6 +1689,7 @@ impl AppModel {
                     index: col_idx,
                     label: self.format_sidebar_column_label(col_idx, name),
                     selected: col_idx == self.view.selected_col,
+                    pinned: self.is_column_pinned(col_idx),
                 }
             })
             .collect();
@@ -1967,5 +2077,54 @@ mod tests {
         assert_eq!(model.view.selected_col, 1);
         model.move_selected_sidebar_column(-1, 20);
         assert_eq!(model.view.selected_col, 0);
+    }
+
+    #[test]
+    fn pin_selected_columns_keeps_them_in_viewport() {
+        let path = PathBuf::from("test-data/generated/test_1000x100.csv");
+        if !path.exists() {
+            return;
+        }
+        let mut model = AppModel::open(Some(path)).expect("open csv");
+        model.view.selected_col = 5;
+        model.toggle_pin_selected_columns();
+        assert!(model.is_column_pinned(5));
+        model.view.col_offset = 50;
+        let visible = model.visible_table_columns(40);
+        assert!(visible.contains(&5));
+        assert_eq!(visible.first().copied(), Some(5));
+    }
+
+    #[test]
+    fn pinned_columns_stay_left_when_scrolling() {
+        let path = PathBuf::from("test-data/generated/test_1000x100.csv");
+        if !path.exists() {
+            return;
+        }
+        let mut model = AppModel::open(Some(path)).expect("open csv");
+        model.view.selected_col = 0;
+        model.toggle_pin_selected_columns();
+        model.view.selected_col = 10;
+        model.toggle_pin_selected_columns();
+        model.view.col_offset = 20;
+        let visible = model.visible_table_columns(60);
+        assert_eq!(visible.first().copied(), Some(0));
+        assert!(visible.contains(&10));
+    }
+
+    #[test]
+    fn toggle_pin_selected_columns_bulk() {
+        let path = PathBuf::from("test-data/generated/test_1000x100.csv");
+        if !path.exists() {
+            return;
+        }
+        let mut model = AppModel::open(Some(path)).expect("open csv");
+        model.view.multi_selected_cols = vec![1, 3];
+        model.toggle_pin_selected_columns();
+        assert!(model.is_column_pinned(1));
+        assert!(model.is_column_pinned(3));
+        model.toggle_pin_selected_columns();
+        assert!(!model.is_column_pinned(1));
+        assert!(!model.is_column_pinned(3));
     }
 }

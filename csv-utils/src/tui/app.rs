@@ -51,9 +51,10 @@ csv — keyboard shortcuts
   :unhide / :u  unhide selected or all hidden columns/rows (same axis as :hide)
   :web       open browser UI on a free local port and exit terminal view
   /          fuzzy-find columns (filters sidebar)
+  p          pin/unpin selected column(s) (sidebar or ←/→ column axis)
   :filter    filter rows on selected column, or sidebar when focused (:f)
 
-Mouse: click table cells; Ctrl+click or Ctrl+drag on cells to select a range; Ctrl+click column header or sidebar for column multi-select; drag header borders to resize columns; drag sidebar left border to resize sidebar; wheel scrolls rows/columns. Click sidebar to focus it — then ↑/↓ navigate columns.
+Mouse: click table cells; Ctrl+click or Ctrl+drag on cells to select a range; Ctrl+click column header or sidebar for column multi-select; right-click column sidebar for hide/info/pin menu; drag header borders to resize columns; drag sidebar left border to resize sidebar; wheel scrolls rows/columns. Click sidebar to focus it — then ↑/↓ navigate columns.
 
 Press q or ? to close.";
 
@@ -113,6 +114,131 @@ struct ScrollbarDrag {
     grab_offset: u16,
 }
 
+#[derive(Debug, Clone, Copy)]
+enum ColumnContextAction {
+    Hide,
+    Unhide,
+    Info,
+    TogglePin,
+}
+
+struct ColumnContextMenuItem {
+    action: ColumnContextAction,
+    label: String,
+}
+
+struct ColumnContextMenu {
+    area: Rect,
+    col: usize,
+    selected: usize,
+    items: Vec<ColumnContextMenuItem>,
+}
+
+impl ColumnContextMenu {
+    fn for_column(col: usize, model: &AppModel, click: Position, screen: Rect) -> Self {
+        let mut items = Vec::new();
+        if model.is_column_hidden(col) {
+            items.push(ColumnContextMenuItem {
+                action: ColumnContextAction::Unhide,
+                label: "Unhide".to_string(),
+            });
+        } else {
+            items.push(ColumnContextMenuItem {
+                action: ColumnContextAction::Hide,
+                label: "Hide".to_string(),
+            });
+        }
+        items.push(ColumnContextMenuItem {
+            action: ColumnContextAction::Info,
+            label: "Info".to_string(),
+        });
+        items.push(ColumnContextMenuItem {
+            action: ColumnContextAction::TogglePin,
+            label: if model.is_column_pinned(col) {
+                "Unpin".to_string()
+            } else {
+                "Pin".to_string()
+            },
+        });
+        let width = items
+            .iter()
+            .map(|item| item.label.len())
+            .max()
+            .unwrap_or(8)
+            .saturating_add(4) as u16;
+        let height = items.len() as u16 + 2;
+        let x = click.x.min(screen.width.saturating_sub(width));
+        let y = click.y.min(screen.height.saturating_sub(height));
+        Self {
+            area: Rect {
+                x,
+                y,
+                width,
+                height,
+            },
+            col,
+            selected: 0,
+            items,
+        }
+    }
+
+    fn item_at(&self, pos: Position) -> Option<usize> {
+        let inner = Block::default().borders(Borders::ALL).inner(self.area);
+        if !inner.contains(pos) {
+            return None;
+        }
+        let rel = pos.y.saturating_sub(inner.y) as usize;
+        if rel < self.items.len() {
+            Some(rel)
+        } else {
+            None
+        }
+    }
+}
+
+fn execute_column_context_action(
+    action: ColumnContextAction,
+    model: &mut AppModel,
+) -> Option<String> {
+    match action {
+        ColumnContextAction::Hide => model.hide_selected_columns().err().map(str::to_string),
+        ColumnContextAction::Unhide => model.unhide_selected_columns().err().map(str::to_string),
+        ColumnContextAction::Info => {
+            model.open_column_info_pane();
+            None
+        }
+        ColumnContextAction::TogglePin => {
+            model.toggle_pin_selected_columns();
+            None
+        }
+    }
+}
+
+fn draw_column_context_menu(frame: &mut ratatui::Frame, menu: &ColumnContextMenu) {
+    let mut lines = Vec::new();
+    for (idx, item) in menu.items.iter().enumerate() {
+        let style = if idx == menu.selected {
+            Style::default()
+                .fg(Color::Black)
+                .bg(Color::Cyan)
+                .add_modifier(Modifier::BOLD)
+        } else {
+            Style::default()
+        };
+        lines.push(Line::from(Span::styled(format!(" {} ", item.label), style)));
+    }
+    frame.render_widget(Clear, menu.area);
+    frame.render_widget(
+        Paragraph::new(lines).block(
+            Block::default()
+                .title(" Column ")
+                .borders(Borders::ALL)
+                .border_style(Style::default().fg(Color::Cyan)),
+        ),
+        menu.area,
+    );
+}
+
 pub fn run(file: Option<&str>) -> Result<()> {
     let file_path = file.map(PathBuf::from);
     let shared_model = Arc::new(Mutex::new(AppModel::open(file_path.clone())?));
@@ -159,6 +285,7 @@ pub fn run(file: Option<&str>) -> Result<()> {
     let mut command_line: Option<CommandLineState> = None;
     let mut command_error: Option<String> = None;
     let mut column_finder: Option<ColumnFinderState> = None;
+    let mut column_context_menu: Option<ColumnContextMenu> = None;
     let mut pending_web_layout: Option<ViewLayout> = None;
 
     while running {
@@ -174,6 +301,7 @@ pub fn run(file: Option<&str>) -> Result<()> {
                     command_line.as_ref(),
                     command_error.as_deref(),
                     column_finder.as_ref(),
+                    column_context_menu.as_ref(),
                 )
             };
         })?;
@@ -249,6 +377,7 @@ pub fn run(file: Option<&str>) -> Result<()> {
                         &mut command_line,
                         &mut command_error,
                         &mut column_finder,
+                        &mut column_context_menu,
                     ) {
                         MainKeyAction::Continue => {}
                         MainKeyAction::Quit => running = false,
@@ -276,6 +405,7 @@ pub fn run(file: Option<&str>) -> Result<()> {
                             command_line = None;
                             command_error = None;
                             column_finder = None;
+                            column_context_menu = None;
                         }
                         MainKeyAction::OpenPath(path) => {
                             let extensions = model.settings.file_picker.normalized_extensions();
@@ -292,10 +422,12 @@ pub fn run(file: Option<&str>) -> Result<()> {
                             command_line = None;
                             command_error = None;
                             column_finder = None;
+                            column_context_menu = None;
                         }
                     }
                 }
                 Event::Mouse(mouse) => {
+                    let screen = Rect::new(0, 0, size.width, size.height);
                     handle_mouse(
                         mouse,
                         &mut model,
@@ -305,6 +437,9 @@ pub fn run(file: Option<&str>) -> Result<()> {
                         &mut sidebar_resize,
                         &mut cell_range_drag,
                         &mut scrollbar_drag,
+                        &mut column_context_menu,
+                        &mut command_error,
+                        screen,
                     );
                 }
                 Event::Resize(_, _) => {}
@@ -373,9 +508,14 @@ fn table_row_scroll_metrics(model: &AppModel, area: Rect) -> ScrollMetrics {
 
 fn table_col_scroll_metrics(model: &AppModel, area: Rect) -> ScrollMetrics {
     let table_width = table_data_width(model, area);
+    let visible = model.visible_table_columns(table_width);
     ScrollMetrics {
-        content_length: model.table_visible_columns().len(),
-        viewport_length: model.visible_table_columns(table_width).len(),
+        content_length: model.scrollable_table_columns().len(),
+        viewport_length: visible
+            .iter()
+            .filter(|&&c| !model.is_column_pinned(c))
+            .count()
+            .max(1),
         position: model.view.col_offset,
     }
 }
@@ -626,7 +766,35 @@ fn handle_key(
     command_line: &mut Option<CommandLineState>,
     command_error: &mut Option<String>,
     column_finder: &mut Option<ColumnFinderState>,
+    column_context_menu: &mut Option<ColumnContextMenu>,
 ) -> MainKeyAction {
+    if let Some(menu) = column_context_menu.as_mut() {
+        match key.code {
+            KeyCode::Esc | KeyCode::Char('q') => *column_context_menu = None,
+            KeyCode::Up | KeyCode::Char('k') => {
+                menu.selected = menu.selected.saturating_sub(1);
+            }
+            KeyCode::Down | KeyCode::Char('j') => {
+                if !menu.items.is_empty() {
+                    menu.selected = (menu.selected + 1).min(menu.items.len() - 1);
+                }
+            }
+            KeyCode::Enter => {
+                let action = menu.items.get(menu.selected).map(|item| item.action);
+                let col = menu.col;
+                *column_context_menu = None;
+                if let Some(action) = action {
+                    model.select_column_click(col, false, column_list_height);
+                    if let Some(err) = execute_column_context_action(action, model) {
+                        *command_error = Some(err);
+                    }
+                }
+            }
+            _ => {}
+        }
+        return MainKeyAction::Continue;
+    }
+
     if let Some(finder) = column_finder.as_mut() {
         match finder.handle_key(key, model, column_list_height) {
             ColumnFinderAction::Continue => {}
@@ -834,11 +1002,13 @@ fn handle_key(
             return MainKeyAction::Quit;
         }
         KeyCode::Char(':') => {
+            *column_context_menu = None;
             *command_line = Some(CommandLineState::start());
             *command_error = None;
             *column_finder = None;
         }
         KeyCode::Char('/') => {
+            *column_context_menu = None;
             *column_finder = Some(ColumnFinderState::start());
             *command_line = None;
             *command_error = None;
@@ -847,6 +1017,11 @@ fn handle_key(
         }
         KeyCode::Char('?') => model.view.show_help = true,
         KeyCode::Char('c') => model.open_column_info_pane(),
+        KeyCode::Char('p') if model.view.column_sidebar_focused
+            || model.view.last_multi_select_axis == MultiSelectAxis::Column =>
+        {
+            model.toggle_pin_selected_columns();
+        }
         KeyCode::Up | KeyCode::Char('k') => {
             if model.view.column_sidebar_focused {
                 model.move_selected_sidebar_column(-1, column_list_height);
@@ -919,6 +1094,9 @@ fn handle_mouse(
     sidebar_resize: &mut Option<SidebarResize>,
     cell_range_drag: &mut Option<CellRangeDrag>,
     scrollbar_drag: &mut Option<ScrollbarDrag>,
+    column_context_menu: &mut Option<ColumnContextMenu>,
+    command_error: &mut Option<String>,
+    screen: Rect,
 ) {
     if model.view.show_help {
         return;
@@ -927,6 +1105,29 @@ fn handle_mouse(
     let row = mouse.row;
     let col = mouse.column;
     let pos = Position { x: col, y: row };
+
+    if let Some(menu) = column_context_menu.as_ref() {
+        match mouse.kind {
+            MouseEventKind::Down(crossterm::event::MouseButton::Left) => {
+                if let Some(idx) = menu.item_at(pos) {
+                    let action = menu.items[idx].action;
+                    let target_col = menu.col;
+                    *column_context_menu = None;
+                    model.select_column_click(target_col, false, column_list_height);
+                    if let Some(err) = execute_column_context_action(action, model) {
+                        *command_error = Some(err);
+                    }
+                } else {
+                    *column_context_menu = None;
+                }
+                return;
+            }
+            MouseEventKind::Down(crossterm::event::MouseButton::Right) => {
+                *column_context_menu = None;
+            }
+            _ => return,
+        }
+    }
     let table_width = table_data_width(model, areas.table);
     let viewport_rows = areas.table.height.saturating_sub(3) as usize;
 
@@ -1202,9 +1403,29 @@ fn handle_mouse(
             let filtered = model.filtered_sidebar_columns();
             let rel = row.saturating_sub(inner.y) as usize;
             let idx = model.view.column_list_offset + rel;
-            if let Some(&col) = filtered.get(idx) {
+            if let Some(&target_col) = filtered.get(idx) {
                 let extend = mouse.modifiers.contains(KeyModifiers::CONTROL);
-                model.select_column_click(col, extend, column_list_height);
+                model.select_column_click(target_col, extend, column_list_height);
+            }
+        }
+        MouseEventKind::Down(crossterm::event::MouseButton::Right)
+            if areas.columns.contains(pos) =>
+        {
+            if hit_test_sidebar_resize(col, row, areas.columns) {
+                return;
+            }
+            model.view.column_sidebar_focused = true;
+            let inner = Block::default().borders(Borders::ALL).inner(areas.columns);
+            if !inner.contains(pos) {
+                return;
+            }
+            let filtered = model.filtered_sidebar_columns();
+            let rel = row.saturating_sub(inner.y) as usize;
+            let idx = model.view.column_list_offset + rel;
+            if let Some(&target_col) = filtered.get(idx) {
+                model.select_column_click(target_col, false, column_list_height);
+                *column_context_menu =
+                    Some(ColumnContextMenu::for_column(target_col, model, pos, screen));
             }
         }
         _ => {}
@@ -1346,6 +1567,8 @@ fn column_sidebar_style(model: &AppModel, col_idx: usize) -> Style {
             .add_modifier(Modifier::BOLD)
     } else if model.is_column_hidden(col_idx) {
         Style::default().fg(Color::DarkGray)
+    } else if model.is_column_pinned(col_idx) {
+        Style::default().fg(Color::Cyan)
     } else {
         Style::default()
     }
@@ -1541,6 +1764,7 @@ fn draw(
     command_line: Option<&CommandLineState>,
     command_error: Option<&str>,
     column_finder: Option<&ColumnFinderState>,
+    column_context_menu: Option<&ColumnContextMenu>,
 ) -> LayoutAreas {
     let area = frame.area();
     let bottom_height = column_finder
@@ -1611,7 +1835,7 @@ fn draw(
     } else if let Some(command) = command_line {
         command.draw(frame, outer[2], VIEW_COMMANDS, command_error);
     } else {
-        let hints = " q quit  Space multi-select  Ctrl+click  :hide  :unhide  / columns  :filter  c info  ? help ";
+        let hints = " q quit  p pin  Space multi-select  Ctrl+click  :hide  :unhide  / columns  :filter  c info  ? help ";
         frame.render_widget(
             Paragraph::new(hints).style(Style::default().fg(Color::DarkGray)),
             outer[2],
@@ -1620,6 +1844,9 @@ fn draw(
 
     if model.view.show_help {
         draw_help(frame, area);
+    }
+    if let Some(menu) = column_context_menu {
+        draw_column_context_menu(frame, menu);
     }
     let column_info_popup = if model.view.show_column_info {
         let popup_area = centered_rect(54, 72, area);
@@ -1718,12 +1945,16 @@ fn draw_table(frame: &mut ratatui::Frame, area: Rect, model: &AppModel) {
         model.view.row_offset,
     );
 
-    let table_cols = model.table_visible_columns();
+    let table_cols = model.scrollable_table_columns();
+    let scrollable_visible = col_indices
+        .iter()
+        .filter(|&&c| !model.is_column_pinned(c))
+        .count();
     render_horizontal_scrollbar(
         frame,
         area,
         table_cols.len(),
-        col_indices.len(),
+        scrollable_visible.max(1),
         model.view.col_offset,
     );
 }
@@ -1739,11 +1970,14 @@ fn draw_column_list(frame: &mut ratatui::Frame, area: Rect, model: &AppModel) {
         if let Some(&col_idx) = filtered.get(model.view.column_list_offset + i) {
             let name = headers.get(col_idx).map(String::as_str).unwrap_or("");
             let text = model.format_sidebar_column_label(col_idx, name);
-            let display = if model.is_column_hidden(col_idx) {
-                truncate_middle(&format!("· {text}"), inner.width as usize)
-            } else {
-                truncate_middle(&text, inner.width as usize)
-            };
+            let mut label = text;
+            if model.is_column_pinned(col_idx) {
+                label = format!("▐ {label}");
+            }
+            if model.is_column_hidden(col_idx) {
+                label = format!("· {label}");
+            }
+            let display = truncate_middle(&label, inner.width as usize);
             let style = column_sidebar_style(model, col_idx);
             let prefix = if col_idx == model.view.selected_col {
                 "▸ "

@@ -68,12 +68,13 @@ pub struct ClientSidebarItem {
     pub index: usize,
     pub label: String,
     pub selected: bool,
+    pub pinned: bool,
 }
 
 impl AppModel {
     pub fn client_view(&self, layout: ViewLayout) -> ClientView {
         let headers = self.preview.headers();
-        let table_cols = self.table_visible_columns();
+        let scrollable_cols = self.scrollable_table_columns();
         let col_indices = self.visible_table_columns(layout.table_width);
         let filtered_sidebar = self.filtered_sidebar_columns();
         let sidebar_start = self.view.column_list_offset;
@@ -139,6 +140,7 @@ impl AppModel {
                     index: col_idx,
                     label: display,
                     selected: col_idx == self.view.selected_col,
+                    pinned: self.is_column_pinned(col_idx),
                 })
             })
             .collect();
@@ -196,8 +198,12 @@ impl AppModel {
             },
             table_cols_scroll: ScrollMeta {
                 offset: self.view.col_offset,
-                total: table_cols.len(),
-                viewport: col_indices.len(),
+                total: scrollable_cols.len(),
+                viewport: col_indices
+                    .iter()
+                    .filter(|&&c| !self.is_column_pinned(c))
+                    .count()
+                    .max(1),
             },
             sidebar_scroll: ScrollMeta {
                 offset: self.view.column_list_offset,
