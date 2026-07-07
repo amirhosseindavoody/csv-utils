@@ -47,11 +47,11 @@ Data table uses ratatui `Table`. Column sidebar uses manual `Paragraph` lines (n
 | `column_value_filters` | Per-column row value filters (`:filter` on selected column) |
 | `column_sidebar_focused` | When true, `:filter` applies to the sidebar instead of row values; **↑/↓** navigate columns |
 | `column_sidebar_width` | Column sidebar pane width in terminal columns (default 32; drag left border to resize) |
-| `column_hidden` | Per-column flag: hidden from the table but still listed in the sidebar |
-| `column_pin_order` | Chronological list of pinned column indices (left-to-right in the table and top of the sidebar; horizontal scroll applies only to unpinned columns) |
+| `column_status` | Per-column table status: `normal` (default), `pinned`, or `hidden` (mutually exclusive; hidden columns stay in the sidebar) |
+| `column_pin_order` | Chronological list of pinned column indices (left-to-right in the table and top of the sidebar; horizontal scroll applies only to normal columns) |
 | `multi_selected_cols` | Ctrl+click multi-selection for bulk `:hide` (empty = use `selected_col` only); cleared when row **Space** multi-select or cell range starts |
-| `row_pin_order` | Chronological list of pinned row indices (fixed at the top of the table; vertical scroll applies only to unpinned rows) |
-| `row_hidden` | Per-row flag: hidden from the table (session-only) |
+| `row_status` | Per-row table status: `normal`, `pinned`, or `hidden` (mutually exclusive; session-only) |
+| `row_pin_order` | Chronological list of pinned row indices (fixed at the top of the table; vertical scroll applies only to normal rows) |
 | `multi_selected_rows` | **Space** toggles individual rows for bulk row `:hide`; cleared when column multi-select or cell range starts |
 | `cell_range_anchor` / `cell_range_focus` | Inclusive corners for click-drag rectangular cell selection; `:hide` uses the row span |
 | `multi_selected_cells` | Individual `(row, col)` pairs toggled with Ctrl+click; `:hide` uses their distinct rows |
