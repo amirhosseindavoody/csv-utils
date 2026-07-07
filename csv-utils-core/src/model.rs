@@ -497,6 +497,13 @@ impl AppModel {
             .collect()
     }
 
+    /// Row order for arrow-key navigation: pinned rows first (pin order), then scrollable rows.
+    pub fn table_row_navigation_order(&self, matching: &[usize]) -> Vec<usize> {
+        let mut order = self.pinned_table_rows(matching);
+        order.extend(self.scrollable_table_rows(matching));
+        order
+    }
+
     pub fn scrollable_row_visible_count(&self, viewport_rows: usize) -> usize {
         self.visible_table_rows(viewport_rows)
             .iter()
@@ -1520,16 +1527,46 @@ impl AppModel {
 
     pub fn move_selected_row(&mut self, delta: i32) {
         self.couple_table_scroll_to_selection();
-        self.matching_row_indices(); // ensure cache is warm
+        self.matching_row_indices();
         let sel = self.view.selected_row;
         let m = self.view.cached_matching_rows.as_deref().unwrap();
-        if m.is_empty() {
+        let order = self.table_row_navigation_order(m);
+        if order.is_empty() {
             return;
         }
-        let pos = m.iter().position(|&r| r == sel).unwrap_or(0);
-        let next = ((pos as i32) + delta).clamp(0, m.len() as i32 - 1) as usize;
-        let target = m[next];
-        self.view.selected_row = target;
+        let pos = order.iter().position(|&r| r == sel).unwrap_or(0);
+        let next = ((pos as i32) + delta).clamp(0, order.len() as i32 - 1) as usize;
+        self.view.selected_row = order[next];
+    }
+
+    pub fn first_navigation_row(&mut self) -> Option<usize> {
+        self.matching_row_indices();
+        let m = self.view.cached_matching_rows.as_deref()?;
+        self.table_row_navigation_order(m).first().copied()
+    }
+
+    pub fn last_navigation_row(&mut self) -> Option<usize> {
+        self.matching_row_indices();
+        let m = self.view.cached_matching_rows.as_deref()?;
+        self.table_row_navigation_order(m).last().copied()
+    }
+
+    /// Focus a row for a gutter context-menu action without dropping bulk selection.
+    pub fn focus_row_for_context_action(
+        &mut self,
+        row: usize,
+        single_select: bool,
+    ) {
+        self.couple_table_scroll_to_selection();
+        self.set_multi_select_axis(MultiSelectAxis::Row);
+        self.view.column_sidebar_focused = false;
+        self.view.selected_row = row;
+        if single_select {
+            self.clear_cell_range();
+            self.view.multi_selected_rows.clear();
+        } else if !self.view.multi_selected_rows.is_empty() && !self.is_row_multi_selected(row) {
+            self.view.multi_selected_rows.push(row);
+        }
     }
 
     /// Move selection up/down in the filtered column sidebar list.
@@ -2412,5 +2449,53 @@ mod tests {
         model.focus_column_for_context_action(2, 20, true);
         assert!(model.view.multi_selected_cols.is_empty());
         assert_eq!(model.view.selected_col, 2);
+    }
+
+    #[test]
+    fn row_navigation_order_pins_first() {
+        let path = PathBuf::from("test-data/generated/test_1000x100.csv");
+        if !path.exists() {
+            return;
+        }
+        let mut model = AppModel::open(Some(path)).expect("open csv");
+        model.view.selected_row = 50;
+        model.toggle_pin_selected_rows();
+        model.view.selected_row = 10;
+        model.toggle_pin_selected_rows();
+        model.matching_row_indices();
+        let matching = model.cached_matching_rows().unwrap();
+        let order = model.table_row_navigation_order(matching);
+        assert_eq!(order.first().copied(), Some(50));
+        assert_eq!(order.get(1).copied(), Some(10));
+        let first_scrollable = order
+            .iter()
+            .find(|&&row| !model.is_row_pinned(row))
+            .copied()
+            .expect("scrollable row");
+        model.view.selected_row = 10;
+        model.move_selected_row(1);
+        assert_eq!(model.view.selected_row, first_scrollable);
+        model.view.selected_row = first_scrollable;
+        model.move_selected_row(-1);
+        assert_eq!(model.view.selected_row, 10);
+    }
+
+    #[test]
+    fn context_menu_action_preserves_row_multi_select() {
+        let path = PathBuf::from("test-data/generated/test_1000x100.csv");
+        if !path.exists() {
+            return;
+        }
+        let mut model = AppModel::open(Some(path)).expect("open csv");
+        model.view.multi_selected_rows = vec![1, 3];
+        model.view.selected_row = 1;
+        model.focus_row_for_context_action(5, false);
+        assert_eq!(model.view.multi_selected_rows, vec![1, 3, 5]);
+        assert_eq!(model.view.selected_row, 5);
+        model.focus_row_for_context_action(3, false);
+        assert_eq!(model.view.multi_selected_rows, vec![1, 3]);
+        model.focus_row_for_context_action(2, true);
+        assert!(model.view.multi_selected_rows.is_empty());
+        assert_eq!(model.view.selected_row, 2);
     }
 }

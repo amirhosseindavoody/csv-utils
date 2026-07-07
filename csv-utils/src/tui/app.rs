@@ -226,9 +226,118 @@ fn execute_column_context_action(
 }
 
 fn draw_column_context_menu(frame: &mut ratatui::Frame, menu: &ColumnContextMenu) {
+    draw_context_menu(frame, menu.area, menu.selected, menu.items.iter().map(|item| item.label.as_str()));
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum RowContextAction {
+    Select,
+    Hide,
+    Unhide,
+    TogglePin,
+}
+
+struct RowContextMenuItem {
+    action: RowContextAction,
+    label: String,
+}
+
+struct RowContextMenu {
+    area: Rect,
+    row: usize,
+    selected: usize,
+    items: Vec<RowContextMenuItem>,
+}
+
+impl RowContextMenu {
+    fn for_row(row: usize, model: &AppModel, click: Position, screen: Rect) -> Self {
+        let mut items = Vec::new();
+        items.push(RowContextMenuItem {
+            action: RowContextAction::Select,
+            label: "Select".to_string(),
+        });
+        if model.is_row_hidden(row) {
+            items.push(RowContextMenuItem {
+                action: RowContextAction::Unhide,
+                label: "Unhide".to_string(),
+            });
+        } else {
+            items.push(RowContextMenuItem {
+                action: RowContextAction::Hide,
+                label: "Hide".to_string(),
+            });
+        }
+        items.push(RowContextMenuItem {
+            action: RowContextAction::TogglePin,
+            label: if model.is_row_pinned(row) {
+                "Unpin".to_string()
+            } else {
+                "Pin".to_string()
+            },
+        });
+        let width = items
+            .iter()
+            .map(|item| item.label.len().saturating_add(2))
+            .max()
+            .unwrap_or(8)
+            .saturating_add(2) as u16;
+        let height = items.len() as u16 + 2;
+        let x = click.x.min(screen.width.saturating_sub(width));
+        let y = click.y.min(screen.height.saturating_sub(height));
+        Self {
+            area: Rect {
+                x,
+                y,
+                width,
+                height,
+            },
+            row,
+            selected: 0,
+            items,
+        }
+    }
+
+    fn item_at(&self, pos: Position) -> Option<usize> {
+        let inner = Block::default().borders(Borders::ALL).inner(self.area);
+        if !inner.contains(pos) {
+            return None;
+        }
+        let rel = pos.y.saturating_sub(inner.y) as usize;
+        if rel < self.items.len() {
+            Some(rel)
+        } else {
+            None
+        }
+    }
+}
+
+fn execute_row_context_action(
+    action: RowContextAction,
+    model: &mut AppModel,
+    row: usize,
+) -> Option<String> {
+    let single_select = matches!(action, RowContextAction::Select);
+    model.focus_row_for_context_action(row, single_select);
+    match action {
+        RowContextAction::Select => None,
+        RowContextAction::Hide => model.hide_selected_rows().err().map(str::to_string),
+        RowContextAction::Unhide => model.unhide_selected_rows().err().map(str::to_string),
+        RowContextAction::TogglePin => {
+            model.toggle_pin_selected_rows();
+            None
+        }
+    }
+}
+
+fn draw_context_menu<'a>(
+    frame: &mut ratatui::Frame,
+    area: Rect,
+    selected: usize,
+    labels: impl Iterator<Item = &'a str>,
+) {
     let mut lines = Vec::new();
-    for (idx, item) in menu.items.iter().enumerate() {
-        let style = if idx == menu.selected {
+    for (idx, label) in labels.enumerate() {
+        let style = if idx == selected {
             Style::default()
                 .fg(Color::Black)
                 .bg(Color::Cyan)
@@ -236,17 +345,21 @@ fn draw_column_context_menu(frame: &mut ratatui::Frame, menu: &ColumnContextMenu
         } else {
             Style::default()
         };
-        lines.push(Line::from(Span::styled(format!(" {} ", item.label), style)));
+        lines.push(Line::from(Span::styled(format!(" {} ", label), style)));
     }
-    frame.render_widget(Clear, menu.area);
+    frame.render_widget(Clear, area);
     frame.render_widget(
         Paragraph::new(lines).block(
             Block::default()
                 .borders(Borders::ALL)
                 .border_style(Style::default().fg(Color::Cyan)),
         ),
-        menu.area,
+        area,
     );
+}
+
+fn draw_row_context_menu(frame: &mut ratatui::Frame, menu: &RowContextMenu) {
+    draw_context_menu(frame, menu.area, menu.selected, menu.items.iter().map(|item| item.label.as_str()));
 }
 
 pub fn run(file: Option<&str>) -> Result<()> {
@@ -296,6 +409,7 @@ pub fn run(file: Option<&str>) -> Result<()> {
     let mut command_error: Option<String> = None;
     let mut column_finder: Option<ColumnFinderState> = None;
     let mut column_context_menu: Option<ColumnContextMenu> = None;
+    let mut row_context_menu: Option<RowContextMenu> = None;
     let mut pending_web_layout: Option<ViewLayout> = None;
 
     while running {
@@ -312,6 +426,7 @@ pub fn run(file: Option<&str>) -> Result<()> {
                     command_error.as_deref(),
                     column_finder.as_ref(),
                     column_context_menu.as_ref(),
+                    row_context_menu.as_ref(),
                 )
             };
         })?;
@@ -388,6 +503,7 @@ pub fn run(file: Option<&str>) -> Result<()> {
                         &mut command_error,
                         &mut column_finder,
                         &mut column_context_menu,
+                        &mut row_context_menu,
                     ) {
                         MainKeyAction::Continue => {}
                         MainKeyAction::Quit => running = false,
@@ -416,6 +532,7 @@ pub fn run(file: Option<&str>) -> Result<()> {
                             command_error = None;
                             column_finder = None;
                             column_context_menu = None;
+                            row_context_menu = None;
                         }
                         MainKeyAction::OpenPath(path) => {
                             let extensions = model.settings.file_picker.normalized_extensions();
@@ -433,6 +550,7 @@ pub fn run(file: Option<&str>) -> Result<()> {
                             command_error = None;
                             column_finder = None;
                             column_context_menu = None;
+                            row_context_menu = None;
                         }
                     }
                 }
@@ -448,6 +566,7 @@ pub fn run(file: Option<&str>) -> Result<()> {
                         &mut cell_range_drag,
                         &mut scrollbar_drag,
                         &mut column_context_menu,
+                        &mut row_context_menu,
                         &mut command_error,
                         screen,
                     );
@@ -779,6 +898,7 @@ fn handle_key(
     command_error: &mut Option<String>,
     column_finder: &mut Option<ColumnFinderState>,
     column_context_menu: &mut Option<ColumnContextMenu>,
+    row_context_menu: &mut Option<RowContextMenu>,
 ) -> MainKeyAction {
     if let Some(menu) = column_context_menu.as_mut() {
         match key.code {
@@ -799,6 +919,32 @@ fn handle_key(
                     if let Some(err) =
                         execute_column_context_action(action, model, col, column_list_height)
                     {
+                        *command_error = Some(err);
+                    }
+                }
+            }
+            _ => {}
+        }
+        return MainKeyAction::Continue;
+    }
+
+    if let Some(menu) = row_context_menu.as_mut() {
+        match key.code {
+            KeyCode::Esc | KeyCode::Char('q') => *row_context_menu = None,
+            KeyCode::Up | KeyCode::Char('k') => {
+                menu.selected = menu.selected.saturating_sub(1);
+            }
+            KeyCode::Down | KeyCode::Char('j') => {
+                if !menu.items.is_empty() {
+                    menu.selected = (menu.selected + 1).min(menu.items.len() - 1);
+                }
+            }
+            KeyCode::Enter => {
+                let action = menu.items.get(menu.selected).map(|item| item.action);
+                let row = menu.row;
+                *row_context_menu = None;
+                if let Some(action) = action {
+                    if let Some(err) = execute_row_context_action(action, model, row) {
                         *command_error = Some(err);
                     }
                 }
@@ -1016,12 +1162,14 @@ fn handle_key(
         }
         KeyCode::Char(':') => {
             *column_context_menu = None;
+            *row_context_menu = None;
             *command_line = Some(CommandLineState::start());
             *command_error = None;
             *column_finder = None;
         }
         KeyCode::Char('/') => {
             *column_context_menu = None;
+            *row_context_menu = None;
             *column_finder = Some(ColumnFinderState::start());
             *command_line = None;
             *command_error = None;
@@ -1081,16 +1229,14 @@ fn handle_key(
         KeyCode::Home => {
             model.view.column_sidebar_focused = false;
             model.set_multi_select_axis(MultiSelectAxis::Row);
-            let first = model.matching_row_indices().first().copied();
-            if let Some(r) = first {
+            if let Some(r) = model.first_navigation_row() {
                 model.view.selected_row = r;
             }
         }
         KeyCode::End => {
             model.view.column_sidebar_focused = false;
             model.set_multi_select_axis(MultiSelectAxis::Row);
-            let last = model.matching_row_indices().last().copied();
-            if let Some(r) = last {
+            if let Some(r) = model.last_navigation_row() {
                 model.view.selected_row = r;
             }
         }
@@ -1113,6 +1259,7 @@ fn handle_mouse(
     cell_range_drag: &mut Option<CellRangeDrag>,
     scrollbar_drag: &mut Option<ScrollbarDrag>,
     column_context_menu: &mut Option<ColumnContextMenu>,
+    row_context_menu: &mut Option<RowContextMenu>,
     command_error: &mut Option<String>,
     screen: Rect,
 ) {
@@ -1146,6 +1293,28 @@ fn handle_mouse(
             }
             MouseEventKind::Down(crossterm::event::MouseButton::Right) => {
                 *column_context_menu = None;
+            }
+            _ => return,
+        }
+    }
+
+    if let Some(menu) = row_context_menu.as_ref() {
+        match mouse.kind {
+            MouseEventKind::Down(crossterm::event::MouseButton::Left) => {
+                if let Some(idx) = menu.item_at(pos) {
+                    let action = menu.items[idx].action;
+                    let target_row = menu.row;
+                    *row_context_menu = None;
+                    if let Some(err) = execute_row_context_action(action, model, target_row) {
+                        *command_error = Some(err);
+                    }
+                } else {
+                    *row_context_menu = None;
+                }
+                return;
+            }
+            MouseEventKind::Down(crossterm::event::MouseButton::Right) => {
+                *row_context_menu = None;
             }
             _ => return,
         }
@@ -1449,8 +1618,25 @@ fn handle_mouse(
                 if extend {
                     model.select_column_click(target_col, true, column_list_height);
                 }
+                *row_context_menu = None;
                 *column_context_menu =
                     Some(ColumnContextMenu::for_column(target_col, model, pos, screen));
+            }
+        }
+        MouseEventKind::Down(crossterm::event::MouseButton::Right)
+            if areas.table.contains(pos) =>
+        {
+            if let Some(row_idx) = hit_test_row_gutter(col, row, areas.table, model) {
+                model.view.column_sidebar_focused = false;
+                let extend = mouse.modifiers.contains(KeyModifiers::CONTROL);
+                if extend {
+                    model.set_multi_select_axis(MultiSelectAxis::Row);
+                    model.toggle_row_multi_select(row_idx);
+                    model.view.selected_row = row_idx;
+                }
+                *column_context_menu = None;
+                *row_context_menu =
+                    Some(RowContextMenu::for_row(row_idx, model, pos, screen));
             }
         }
         _ => {}
@@ -1481,6 +1667,32 @@ fn visible_column_separator_offsets(
 }
 
 const ROW_GUTTER_WIDTH: u16 = 2;
+
+fn hit_test_row_gutter(
+    mouse_x: u16,
+    mouse_y: u16,
+    table_area: Rect,
+    model: &AppModel,
+) -> Option<usize> {
+    let inner = Block::default().borders(Borders::ALL).inner(table_area);
+    if !inner.contains(Position {
+        x: mouse_x,
+        y: mouse_y,
+    }) {
+        return None;
+    }
+    let rel_x = mouse_x.saturating_sub(inner.x);
+    if rel_x >= ROW_GUTTER_WIDTH {
+        return None;
+    }
+    let rel_y = mouse_y.saturating_sub(inner.y);
+    if rel_y < 2 {
+        return None;
+    }
+    let data_row = (rel_y - 2) as usize;
+    let body_height = table_area.height.saturating_sub(3) as usize;
+    model.visible_table_rows(body_height).get(data_row).copied()
+}
 
 fn table_inner_area(table_area: Rect) -> Rect {
     Block::default().borders(Borders::ALL).inner(table_area)
@@ -1794,6 +2006,7 @@ fn draw(
     command_error: Option<&str>,
     column_finder: Option<&ColumnFinderState>,
     column_context_menu: Option<&ColumnContextMenu>,
+    row_context_menu: Option<&RowContextMenu>,
 ) -> LayoutAreas {
     let area = frame.area();
     let bottom_height = column_finder
@@ -1876,6 +2089,9 @@ fn draw(
     }
     if let Some(menu) = column_context_menu {
         draw_column_context_menu(frame, menu);
+    }
+    if let Some(menu) = row_context_menu {
+        draw_row_context_menu(frame, menu);
     }
     let column_info_popup = if model.view.show_column_info {
         let popup_area = centered_rect(54, 72, area);
