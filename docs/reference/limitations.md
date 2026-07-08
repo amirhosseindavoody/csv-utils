@@ -12,7 +12,14 @@ Current constraints and intentional trade-offs.
 
 ## Filtering
 
-- The row-filter cache is rebuilt whenever any column filter changes or new rows arrive from the background scan. For very large row counts (millions), the rebuild is still a linear scan of all indexed rows; no index structure is maintained per-column. See [Row filtering design](../design/row-filtering.md).
+- The row-filter cache is rebuilt in full when any column filter changes or rows
+  are hidden/unhidden. When the background scan only appends newly indexed rows,
+  the cache **extends** in O(Δ) rather than rescanning all indexed rows. With an
+  active sort, extending still rebuilds the sorted scrollable order with one
+  parse per matching row (precomputed keys). For very large row counts with
+  frequent filter edits, each full rebuild is still a linear scan; no per-column
+  index structure is maintained. See [Row filtering design](../design/row-filtering.md)
+  and [Performance & TUI responsiveness](../design/performance-tui-responsiveness.md).
 - Fuzzy text row filtering (`text_cell_matches`) rescores every cell in the column on each rebuild. It does not cache per-cell scores between filter edits.
 - Numeric filter expressions are re-parsed from their string representation on every cache rebuild. For compound expressions (`(>=10) & (<20) | (==0)`) this is negligible; if pathological nesting becomes a concern, parsed `Expr` trees could be stored alongside the expression string.
 - Row filters and hidden rows are session-only; they are not persisted in settings files and reset when a file is closed or reopened.
@@ -30,3 +37,7 @@ Current constraints and intentional trade-offs.
 - No custom CSV dialect configuration (delimiter, etc.); comma-separated with standard quoting.
 
 When a limitation is removed, update this file and [principles](../principles.md#non-goals-for-now) if applicable.
+
+For prioritized ideas to address interactive lag (redraw rate, incremental
+filter cache, sort key precomputation, lock contention), see
+[Performance & TUI responsiveness](../design/performance-tui-responsiveness.md).

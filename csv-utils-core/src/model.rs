@@ -659,6 +659,10 @@ impl AppModel {
             };
             self.set_row_status(row, next);
         }
+        // Pin changes do not affect matching rows, but they do change which
+        // matching rows belong in the scrollable (sorted) segment.
+        self.matching_row_indices();
+        self.rebuild_sorted_scrollable_cache();
         self.snap_row_offset_after_pin_change();
     }
 
@@ -1722,6 +1726,12 @@ impl AppModel {
     fn invalidate_row_cache(&mut self) {
         self.view.cached_matching_rows = None;
         self.view.cached_sorted_scrollable_rows = None;
+        self.view.cached_row_count = 0;
+    }
+
+    fn row_is_matching(&self, row: usize) -> bool {
+        !self.is_row_hidden(row)
+            && (!self.row_value_filters_active() || self.row_passes_value_filters(row))
     }
 
     fn rebuild_sorted_scrollable_cache(&mut self) {
@@ -1738,26 +1748,43 @@ impl AppModel {
             if col < self.preview.headers().len() {
                 let kind = self.effective_column_kind(col);
                 let direction = self.view.sort_direction;
-                scrollable.sort_by(|&a, &b| {
-                    let cell_a = self
-                        .preview
-                        .row_fields(a)
-                        .and_then(|fields| fields.get(col).cloned())
-                        .unwrap_or_default();
-                    let cell_b = self
-                        .preview
-                        .row_fields(b)
-                        .and_then(|fields| fields.get(col).cloned())
-                        .unwrap_or_default();
-                    let ord = crate::sort::compare_cells(kind, &cell_a, &cell_b);
-                    match direction {
-                        SortDirection::Ascending => ord,
-                        SortDirection::Descending => ord.reverse(),
-                    }
-                });
+                // One `row_fields` parse per row, then an in-memory key sort.
+                let cells: Vec<String> = scrollable
+                    .iter()
+                    .map(|&row| {
+                        self.preview
+                            .row_fields(row)
+                            .and_then(|fields| fields.get(col).cloned())
+                            .unwrap_or_default()
+                    })
+                    .collect();
+                crate::sort::sort_indices_by_cells(kind, direction, &mut scrollable, &cells);
             }
         }
         self.view.cached_sorted_scrollable_rows = Some(scrollable);
+    }
+
+    /// When only newly indexed rows arrived, extend the sorted scrollable cache
+    /// (no sort) or rebuild it with precomputed keys (sort active).
+    fn extend_or_rebuild_sorted_scrollable_cache(&mut self, new_matches: &[usize]) {
+        if self.view.sort_column.is_some() {
+            self.rebuild_sorted_scrollable_cache();
+            return;
+        }
+        if self.view.cached_sorted_scrollable_rows.is_some() {
+            let to_append: Vec<usize> = new_matches
+                .iter()
+                .copied()
+                .filter(|&row| !self.is_row_pinned(row))
+                .collect();
+            self.view
+                .cached_sorted_scrollable_rows
+                .as_mut()
+                .unwrap()
+                .extend(to_append);
+        } else {
+            self.rebuild_sorted_scrollable_cache();
+        }
     }
 
     fn snap_row_offset_after_sort_change(&mut self) {
@@ -1776,12 +1803,14 @@ impl AppModel {
         self.view.sort_column = Some(col);
         self.view.sort_direction = direction;
         self.matching_row_indices();
+        self.rebuild_sorted_scrollable_cache();
         self.snap_row_offset_after_sort_change();
     }
 
     pub fn clear_sort(&mut self) {
         self.view.sort_column = None;
         self.matching_row_indices();
+        self.rebuild_sorted_scrollable_cache();
         self.snap_row_offset_after_sort_change();
     }
 
@@ -1815,23 +1844,34 @@ impl AppModel {
         self.view.cached_matching_rows.as_deref()
     }
 
-    /// Rebuild the cache if stale (filters changed or new rows arrived), then return a slice.
+    /// Rebuild or extend the cache if stale, then return a slice.
+    ///
+    /// - Filter/hide invalidation sets the cache to `None` → full O(R) rebuild.
+    /// - When the background scan only appends rows (`cached_row_count < row_count`),
+    ///   evaluate **new** rows only and append survivors (O(Δ) instead of O(R)).
     pub fn matching_row_indices(&mut self) -> &[usize] {
         self.ensure_row_state();
         let current_count = self.preview.row_count();
-        let cache_valid = self.view.cached_matching_rows.is_some()
-            && self.view.cached_row_count == current_count;
-        if !cache_valid {
+
+        if self.view.cached_matching_rows.is_none() || self.view.cached_row_count > current_count {
             let rows: Vec<usize> = (0..current_count)
-                .filter(|&row| {
-                    !self.is_row_hidden(row)
-                        && (!self.row_value_filters_active() || self.row_passes_value_filters(row))
-                })
+                .filter(|&row| self.row_is_matching(row))
                 .collect();
             self.view.cached_matching_rows = Some(rows);
             self.view.cached_row_count = current_count;
             self.rebuild_sorted_scrollable_cache();
+        } else if self.view.cached_row_count < current_count {
+            let start = self.view.cached_row_count;
+            let new_matches: Vec<usize> = (start..current_count)
+                .filter(|&row| self.row_is_matching(row))
+                .collect();
+            if let Some(cache) = self.view.cached_matching_rows.as_mut() {
+                cache.extend(new_matches.iter().copied());
+            }
+            self.view.cached_row_count = current_count;
+            self.extend_or_rebuild_sorted_scrollable_cache(&new_matches);
         }
+
         self.view.cached_matching_rows.as_deref().unwrap()
     }
 
@@ -3005,14 +3045,6 @@ mod tests {
         assert_eq!(model.view.selected_row, 2);
     }
 
-    /// Regression test for a "quitting takes a couple of seconds" report: a
-    /// fully-scanned wide/tall CSV accumulates millions of small `String`
-    /// allocations in per-column `distinct` sets (see `ColumnStatsAccum`).
-    /// Dropping that state synchronously on the UI thread (as `close_file`
-    /// used to do via `*self = Self::open(None)?`) took ~940ms for a
-    /// 10,000x1,000 file in benchmarking. `close_file`/`reopen` must instead
-    /// hand the old state off to a detached thread so pressing `q` (which
-    /// always closes the file before quitting) returns immediately.
     #[test]
     fn sort_rows_by_column_ascending() {
         let path = PathBuf::from("test-data/generated/test_1000x100.csv");
@@ -3040,6 +3072,34 @@ mod tests {
             assert!(a <= b, "expected ascending order, got {a} > {b}");
         }
         assert!(model.format_column_header(0, "col_0").contains('↑'));
+    }
+
+    #[test]
+    fn sort_rows_by_column_descending() {
+        let path = PathBuf::from("test-data/generated/test_1000x100.csv");
+        if !path.exists() {
+            return;
+        }
+        let mut model = AppModel::open(Some(path)).expect("open csv");
+        model.view.selected_col = 0;
+        model.set_sort_column(0, SortDirection::Descending);
+        let matching = model.cached_matching_rows().unwrap();
+        let scrollable = model.scrollable_table_rows(matching);
+        assert!(!scrollable.is_empty());
+        for window in scrollable.windows(2) {
+            let a = model
+                .preview
+                .row_fields(window[0])
+                .and_then(|f| f.first().cloned())
+                .unwrap_or_default();
+            let b = model
+                .preview
+                .row_fields(window[1])
+                .and_then(|f| f.first().cloned())
+                .unwrap_or_default();
+            assert!(a >= b, "expected descending order, got {a} < {b}");
+        }
+        assert!(model.format_column_header(0, "col_0").contains('↓'));
     }
 
     #[test]
@@ -3076,6 +3136,83 @@ mod tests {
         assert_eq!(order.first().copied(), Some(50));
     }
 
+    #[test]
+    fn matching_row_cache_extends_when_row_count_grows() {
+        use std::time::{Duration, Instant};
+
+        let path = PathBuf::from("test-data/generated/test_1000x100.csv");
+        if !path.exists() {
+            return;
+        }
+        let mut model = AppModel::open(Some(path)).expect("open csv");
+        let initial = model.matching_row_indices().to_vec();
+        assert!(!initial.is_empty());
+        let initial_count = model.view.cached_row_count;
+        assert_eq!(initial.len(), initial_count);
+
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while model.preview.row_count() <= initial_count {
+            if Instant::now() > deadline {
+                // Scan already finished before we could observe growth — still OK.
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(5));
+        }
+
+        let grown = model.preview.row_count();
+        if grown <= initial_count {
+            return;
+        }
+
+        let after = model.matching_row_indices().to_vec();
+        assert_eq!(model.view.cached_row_count, grown);
+        assert_eq!(after.len(), grown);
+        assert_eq!(&after[..initial_count], &initial[..]);
+        assert_eq!(after[initial_count], initial_count);
+    }
+
+    #[test]
+    fn matching_row_cache_append_preserves_existing_prefix() {
+        let path = PathBuf::from("test-data/generated/test_1000x100.csv");
+        if !path.exists() {
+            return;
+        }
+        let mut model = AppModel::open(Some(path)).expect("open csv");
+        // Wait until enough rows are indexed to exercise an append.
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        while model.preview.row_count() < 200 {
+            if model.preview.scan_done() || std::time::Instant::now() > deadline {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        let total = model.preview.row_count();
+        if total < 20 {
+            return;
+        }
+
+        model.matching_row_indices();
+        // Simulate a cache that was built when only the first half was indexed.
+        let half = total / 2;
+        model.view.cached_matching_rows = Some((0..half).collect());
+        model.view.cached_row_count = half;
+        model.view.cached_sorted_scrollable_rows = Some((0..half).collect());
+
+        let after = model.matching_row_indices().to_vec();
+        assert_eq!(model.view.cached_row_count, total);
+        assert_eq!(after.len(), total);
+        assert_eq!(&after[..half], &(0..half).collect::<Vec<_>>()[..]);
+        assert_eq!(after[half], half);
+    }
+
+    /// Regression test for a "quitting takes a couple of seconds" report: a
+    /// fully-scanned wide/tall CSV accumulates millions of small `String`
+    /// allocations in per-column `distinct` sets (see `ColumnStatsAccum`).
+    /// Dropping that state synchronously on the UI thread (as `close_file`
+    /// used to do via `*self = Self::open(None)?`) took ~940ms for a
+    /// 10,000x1,000 file in benchmarking. `close_file`/`reopen` must instead
+    /// hand the old state off to a detached thread so pressing `q` (which
+    /// always closes the file before quitting) returns immediately.
     #[test]
     fn close_file_does_not_block_on_large_accumulated_stats() {
         use std::time::{Duration, Instant};

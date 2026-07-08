@@ -95,20 +95,26 @@ cached_row_count: usize,                   // row count at last build
 
 `matching_row_indices(&mut self) -> &[usize]`:
 
-1. Check `cached_matching_rows.is_some() && cached_row_count == preview.row_count()`.
-2. If stale: run the O(R × F) scan, store the result, record the row count.
-3. Return `cached_matching_rows.as_deref().unwrap()`.
+1. If `cached_matching_rows` is `None` (or `cached_row_count > row_count`): full
+   O(R × F) scan over `0..row_count`, then rebuild the sorted scrollable cache.
+2. Else if `cached_row_count < row_count` (background scan appended rows):
+   evaluate only `cached_row_count..row_count`, **append** survivors, and either
+   append to the sorted scrollable cache (no sort) or rebuild it with
+   precomputed sort keys (sort active).
+3. Else: cache hit — return the existing slice.
 
-Invalidation points (set `cached_matching_rows = None`):
+Invalidation points (set `cached_matching_rows = None`, reset `cached_row_count`):
 
 | Trigger | Code |
 |---------|------|
 | Filter applied | `set_column_value_filter` |
 | Filter cleared | `clear_column_value_filter` |
-| New rows from background scan | Implicit: `cached_row_count` mismatch triggers rebuild on next access |
+| Rows hidden / unhidden | `hide_selected_rows` / `unhide_…` |
+| New rows from background scan | Incremental append (not a full invalidate) |
 
-The cache is warmed exactly once per event-loop tick inside
-`maybe_update_column_layout()`, which runs before `terminal.draw(...)`.
+The cache is warmed when the TUI draws (`maybe_update_column_layout` before
+`terminal.draw`). The TUI only draws on input, resize, or throttled scan
+progress — see [Performance & TUI responsiveness](performance-tui-responsiveness.md).
 All draw functions use the read-only `cached_matching_rows(&self)` accessor;
 they never trigger a rescan.
 
@@ -116,10 +122,10 @@ they never trigger a rescan.
 
 | Scenario | Scan cost |
 |----------|-----------|
-| No filter active | O(1) — returns `(0..count).collect()` immediately when cache valid |
-| Filter active, no new rows | O(1) — cache hit; result already computed |
-| Filter active, N new rows since last tick | O(R × F) once per tick, not once per draw call |
-| Filter changed | O(R × F) once on the next tick after the change |
+| No filter active, cache valid | O(1) — return existing slice |
+| Filter active, no new rows | O(1) — cache hit |
+| N new rows since last access (no filter change) | O(N × F) append; sort rebuild O(R) keys if sort active |
+| Filter / hide changed | O(R × F) once on the next access |
 
 ### Borrow-checker considerations
 
@@ -160,4 +166,5 @@ column count is at most a few hundred, so no caching is needed).
 
 - [Architecture](../architecture.md) — row-filter cache in the view model overview
 - [Data loading](../reference/data-loading.md) — background scan and row count growth
+- [Performance & TUI responsiveness](performance-tui-responsiveness.md) — incremental cache and filter eval proposals
 - [TUI](../features/tui.md) — keyboard and column info panel usage

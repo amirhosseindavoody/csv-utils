@@ -21,6 +21,7 @@
 - [Large-file preview](design/large-file-preview.md)
 - [Row filtering](design/row-filtering.md)
 - [Settings config](design/settings-config.md)
+- [Performance & TUI responsiveness](design/performance-tui-responsiveness.md)
 
 # Developer
 

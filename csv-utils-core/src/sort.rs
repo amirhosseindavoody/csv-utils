@@ -93,6 +93,36 @@ pub fn compare_cells(kind: ColumnKind, a: &str, b: &str) -> Ordering {
     compare_sort_keys(&sort_key_for_cell(kind, a), &sort_key_for_cell(kind, b))
 }
 
+/// Sort `indices` using precomputed `cells` (one cell string per index).
+///
+/// Extracts a [`SortKey`] once per row, then sorts keys in memory. Callers should
+/// build `cells` with a single pass over the file (one `row_fields` per row)
+/// instead of parsing inside each comparison.
+pub fn sort_indices_by_cells(
+    kind: ColumnKind,
+    direction: SortDirection,
+    indices: &mut [usize],
+    cells: &[String],
+) {
+    debug_assert_eq!(indices.len(), cells.len());
+    let mut keyed: Vec<(SortKey, usize)> = cells
+        .iter()
+        .zip(indices.iter().copied())
+        .map(|(cell, row)| (sort_key_for_cell(kind, cell), row))
+        .collect();
+    keyed.sort_by(|(key_a, row_a), (key_b, row_b)| {
+        let ord = compare_sort_keys(key_a, key_b);
+        let ord = match direction {
+            SortDirection::Ascending => ord,
+            SortDirection::Descending => ord.reverse(),
+        };
+        ord.then_with(|| row_a.cmp(row_b))
+    });
+    for (i, (_, row)) in keyed.into_iter().enumerate() {
+        indices[i] = row;
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -139,5 +169,23 @@ mod tests {
             compare_cells(ColumnKind::Auto, "10", "2"),
             Ordering::Greater
         );
+    }
+
+    #[test]
+    fn sort_indices_by_cells_orders_once_per_row() {
+        let mut indices = vec![0, 1, 2, 3];
+        let cells = vec![
+            "10".to_string(),
+            "2".to_string(),
+            "".to_string(),
+            "3".to_string(),
+        ];
+        sort_indices_by_cells(
+            ColumnKind::Int,
+            SortDirection::Ascending,
+            &mut indices,
+            &cells,
+        );
+        assert_eq!(indices, vec![1, 3, 0, 2]);
     }
 }

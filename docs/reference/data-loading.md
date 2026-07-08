@@ -89,12 +89,13 @@ user gets an immediate prompt instead of waiting on background frees.
 
 `TableViewState` caches the filtered row index list (`cached_matching_rows`) and
 records the row count at cache build time (`cached_row_count`). When the
-background scan adds new rows, the next call to `matching_row_indices` detects
-`cached_row_count != preview.row_count()` and rebuilds the cache. The rebuild
-happens at most once per event-loop tick (inside `maybe_update_column_layout`),
-so the rendering cost of filtering scales with tick rate, not with the number of
-draw calls per tick. See [Row filtering design](../design/row-filtering.md) for
-the full caching strategy.
+background scan adds new rows, the next call to `matching_row_indices` **appends**
+evaluations for `cached_row_count..row_count` instead of rescanning all indexed
+rows. A full rebuild still runs when filters or hidden-row state invalidate the
+cache. The TUI warms the cache on each redraw (`maybe_update_column_layout`);
+redraws are gated by a dirty flag and throttled during scan (about 10 Hz for
+progress updates). See [Row filtering design](../design/row-filtering.md) and
+[Performance & TUI responsiveness](../design/performance-tui-responsiveness.md).
 
 ## Status display
 

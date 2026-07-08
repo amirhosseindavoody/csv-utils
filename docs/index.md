@@ -2,7 +2,7 @@
 
 High-performance CSV utility with a streaming **CLI**, interactive **TUI**, and optional **web UI** — all backed by a shared Rust core library.
 
-**Last verified against:** `2026.6.30+0` (workspace version in `Cargo.toml` / `pixi.toml`).
+**Last verified against:** `2026.6.30+0` (workspace version in `Cargo.toml` / `pixi.toml`; performance proposals doc added).
 
 ## Quick start
 
@@ -59,6 +59,7 @@ Press `?` in the TUI for inline help. Type `:web` to hand off to the browser (th
 | [Large-file preview](design/large-file-preview.md) | mmap + offset index architecture |
 | [Row filtering](design/row-filtering.md) | Filter expressions and cache strategy |
 | [Settings config](design/settings-config.md) | Global + local `csv-utils.json` |
+| [Performance & TUI responsiveness](design/performance-tui-responsiveness.md) | Prioritized proposals for scan/filter/sort/draw |
 
 ## Developer docs
 

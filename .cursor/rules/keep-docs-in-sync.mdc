@@ -24,6 +24,7 @@ When you change **user-visible behavior**, **CLI/TUI contracts**, **data loading
 | [docs/reference/limitations.md](../docs/reference/limitations.md) | Known constraints |
 | [docs/development/build.md](../docs/development/build.md) | Pixi tasks, conda recipe |
 | [docs/test-data-generation.md](../docs/test-data-generation.md) | `scripts/generate_test_data.py` |
+| [docs/design/performance-tui-responsiveness.md](../docs/design/performance-tui-responsiveness.md) | Event-loop redraw, filter/sort cache, preview locking (when implementing proposals) |
 | [README.md](../README.md) | Quick start, task examples |
 
 [docs/DESIGN.md](../docs/DESIGN.md) is a redirect stub only; edit the targeted doc above.
