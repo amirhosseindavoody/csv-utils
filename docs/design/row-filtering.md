@@ -160,4 +160,5 @@ column count is at most a few hundred, so no caching is needed).
 
 - [Architecture](../architecture.md) — row-filter cache in the view model overview
 - [Data loading](../reference/data-loading.md) — background scan and row count growth
+- [Performance & TUI responsiveness](performance-tui-responsiveness.md) — incremental cache and filter eval proposals
 - [TUI](../features/tui.md) — keyboard and column info panel usage

@@ -30,3 +30,7 @@ Current constraints and intentional trade-offs.
 - No custom CSV dialect configuration (delimiter, etc.); comma-separated with standard quoting.
 
 When a limitation is removed, update this file and [principles](../principles.md#non-goals-for-now) if applicable.
+
+For prioritized ideas to address interactive lag (redraw rate, incremental
+filter cache, sort key precomputation, lock contention), see
+[Performance & TUI responsiveness](../design/performance-tui-responsiveness.md).

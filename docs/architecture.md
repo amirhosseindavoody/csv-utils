@@ -108,4 +108,5 @@ csv-utils/src/
 - [Data loading](reference/data-loading.md) — preview APIs and threading
 - [CSV parsing](reference/csv-parsing.md) — `csv` crate parsing and display rules
 - [Settings config](design/settings-config.md) — global home config + local overrides
+- [Performance & TUI responsiveness](design/performance-tui-responsiveness.md) — proposed event-loop, cache, and parse improvements
 - [Build & packaging](development/build.md) — pixi tasks and conda recipe
