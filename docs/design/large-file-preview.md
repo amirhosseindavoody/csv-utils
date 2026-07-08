@@ -80,7 +80,7 @@ in the panel.
 | Column width auto-fit | Background scan (progressive) |
 | Type inference | Background scan (progressive) |
 | Column statistics | Background scan (progressive) |
-| Filtered row index list | Once per tick in `maybe_update_column_layout`; cache invalidated on filter change or new rows |
+| Filtered row index list | On redraw in `maybe_update_column_layout`; append-only when scan grows; full rebuild on filter/hide change; sort uses precomputed keys |
 
 ## CLI path
 

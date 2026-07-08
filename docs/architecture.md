@@ -61,7 +61,14 @@ Flow:
 ### Row-filter cache
 
 `TableViewState` holds `cached_matching_rows: Option<Vec<usize>>` and `cached_row_count: usize`.
-`AppModel::matching_row_indices(&mut self) -> &[usize]` returns the cache, rebuilding it only when the loaded row count changes or a filter is mutated. Draw code uses the read-only `cached_matching_rows(&self) -> Option<&[usize]>` accessor. `maybe_update_column_layout()` (called once per event-loop tick) warms the cache before any draw. This limits the row-filter scan to **at most one pass per tick**, regardless of how many places in the render pipeline need the filtered row list. See [Row filtering design](design/row-filtering.md).
+`AppModel::matching_row_indices(&mut self) -> &[usize]` returns the cache. When the
+background scan only appends rows, new indices are evaluated and appended (O(Δ));
+a full rebuild runs when filters or hidden rows invalidate the cache. Draw code
+uses the read-only `cached_matching_rows(&self) -> Option<&[usize]>` accessor.
+`maybe_update_column_layout()` (called when the TUI redraws) warms the cache
+before any draw. Sorted scrollable rows use precomputed sort keys
+(`sort::sort_indices_by_cells`). See [Row filtering design](design/row-filtering.md)
+and [Performance & TUI responsiveness](design/performance-tui-responsiveness.md).
 
 ## CLI vs interactive loading
 

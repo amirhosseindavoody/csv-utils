@@ -1,8 +1,8 @@
 # Design: performance & TUI responsiveness
 
-Status: **proposals** (not yet implemented). Based on a review of architecture,
-preview loading, the shared view model, and the TUI event loop as of
-`2026.6.30+0`.
+Status: **partially implemented** — P0 items below are in tree; P1–P3 remain
+proposals. Based on a review of architecture, preview loading, the shared view
+model, and the TUI event loop as of `2026.6.30+0`.
 
 This note prioritizes changes that keep the interactive UI responsive while
 files are scanning, filtering, or sorting. It builds on existing mitigations
@@ -17,27 +17,27 @@ The interactive path already follows the right high-level shape:
 |-----------|--------------|
 | mmap + offset index + on-demand `csv` parse | Fast first paint; RSS tracks touched pages |
 | Background scan after first 128 rows | UI can navigate early |
-| Row-filter cache (≤1 rebuild per tick) | Avoids O(R×F) per draw call site |
-| Sorted-row cache alongside filter cache | Sort not recomputed every draw |
+| Row-filter cache (≤1 rebuild per draw) | Avoids O(R×F) per draw call site |
+| **Incremental matching-row cache** | New scan rows append in O(Δ), not O(R) |
+| Sorted-row cache + **precomputed sort keys** | One parse per row, then in-memory sort |
+| **Dirty-flag TUI redraw** | Draw on input / resize / throttled scan progress |
 | Detached drop of old `AppModel` on close | Quit/switch no longer blocks on stats free |
 | Web `ClientView` snapshot behind `RwLock` | `GET /api/state` does not hold the model lock |
-
-The remaining issues are mostly **amplifiers**: work that is acceptable once
-becomes expensive when the event loop redraws unconditionally, or when cache
-invalidation fires every tick while `row_count` grows.
 
 ## Hot path today
 
 ```text
-TUI loop (~20 Hz, always):
-  lock AppModel
-  maybe_update_column_layout()
-    → apply_fitted_column_widths()
-    → matching_row_indices()          # may O(R) or O(R×F); may re-sort
-  terminal.draw()
-    → visible_table_rows / row_fields / format_column_cell per cell
-  unlock
+TUI loop:
+  if needs_redraw:
+    lock AppModel
+    maybe_update_column_layout()
+      → apply_fitted_column_widths()
+      → matching_row_indices()   # append Δ rows, or full rebuild if invalidated
+    terminal.draw()
+    unlock
   poll(50ms)
+  on input/resize → needs_redraw = true
+  on scan progress (throttled ≥100ms) → needs_redraw = true
 ```
 
 Background scan (per indexed row):
@@ -52,122 +52,75 @@ lock ColumnLayoutState → observe_fields (width + infer + stats)
 Impact is judged by how often the cost hits the **UI thread** and how it scales
 with row count `R`, column count `C`, viewport size `V`, and active filters `F`.
 
-| Priority | Theme | Typical symptom |
-|----------|-------|-----------------|
-| **P0** | Dirty-flag / throttled redraw | Idle CPU; lag while scanning |
-| **P0** | Incremental filter/sort cache during scan | Stutter every ~50ms on large files |
-| **P0** | Sort key precomputation | `:sort` freezes on large filtered sets |
-| **P1** | Cheaper `row_fields` + less lock contention | Scroll/filter feel sticky |
-| **P1** | Filter eval micro-costs | Filter apply / scan rebuild slow |
-| **P2** | Draw-path allocations & layout locks | High CPU at steady state |
-| **P2** | Stats observe / distinct cost | Slow scan; heavy close (partially mitigated) |
-| **P3** | Web snapshot / API lock duration | Browser UI lag during scan |
+| Priority | Theme | Status |
+|----------|-------|--------|
+| **P0** | Dirty-flag / throttled redraw | **Done** (`tui/app.rs`) |
+| **P0** | Incremental filter/sort cache during scan | **Done** (`model.rs`) |
+| **P0** | Sort key precomputation | **Done** (`sort.rs` / `model.rs`) |
+| **P1** | Cheaper `row_fields` + less lock contention | Proposal |
+| **P1** | Filter eval micro-costs | Proposal |
+| **P2** | Draw-path allocations & layout locks | Proposal |
+| **P2** | Stats observe / distinct cost | Proposal |
+| **P3** | Web snapshot / API lock duration | Proposal |
 
 ---
 
-## P0 — Event loop: draw only when needed
+## P0 — Event loop: draw only when needed ✅
 
-### Problem
+### Problem (was)
 
 `csv-utils/src/tui/app.rs` redraws on **every** loop iteration. The 50ms poll
-timeout means ~20 FPS even when nothing changed. `last_redraw` is updated when
-the scan is active, but it does **not** gate drawing — so the intended throttle
-is incomplete.
+timeout meant ~20 FPS even when nothing changed. `last_redraw` was updated when
+the scan was active, but it did **not** gate drawing.
 
-### Suggestion
+### Implemented
 
-1. Introduce a `needs_redraw: bool` (or generation counter) set by:
-   - any key/mouse handler that mutates state
-   - terminal resize
-   - scan progress (row count / `scan_done` / `scan_error` changed)
-2. Draw only when `needs_redraw` is true.
-3. While scanning, refresh at a capped rate (e.g. 5–10 Hz), not every 50ms.
-4. On idle with `scan_done`, block on `event::poll` with a longer timeout (or
-   wait indefinitely) so the process sleeps.
-
-### Expected effect
-
-Cuts idle CPU and multiplies the benefit of every other optimization (filter
-rebuild, cell parse, formatting) by reducing how often they run.
-
-### Risk / notes
-
-Keep immediate redraw after input so key repeat and mouse drag stay snappy.
-Mouse drag can still set dirty every event; consider coalescing drag redraws to
-one per poll interval if needed.
+1. `needs_redraw` is set by key/mouse handlers, terminal resize, and scan
+   progress (row count / `scan_done` / `scan_error` changed).
+2. Draw + `maybe_update_column_layout` run only when `needs_redraw` is true.
+3. While scanning, progress-driven redraws are capped at **100ms** intervals.
+4. Idle poll remains 50ms so input stays responsive; no draw work runs between
+   events when the scan is done and nothing changed.
 
 ---
 
-## P0 — Incremental filter (and sort) cache while scanning
+## P0 — Incremental filter (and sort) cache while scanning ✅
 
-### Problem
+### Problem (was)
 
-`matching_row_indices` treats any `cached_row_count != preview.row_count()` as
-full invalidation. During background scan the row count grows every tick, so the
-UI rebuilds the entire matching-row `Vec` (and re-sorts if sort is active) on
-nearly every frame — even with **no** value filters (hidden-row checks still
-scan `0..R`).
+`matching_row_indices` treated any `cached_row_count != preview.row_count()` as
+full invalidation. During background scan the UI rebuilt the entire matching-row
+`Vec` (and re-sorted) on nearly every frame.
 
-### Suggestion
+### Implemented
 
-1. **Append-only rebuild when only new rows arrived:**
-   - Keep existing `cached_matching_rows` for `0..cached_row_count`.
-   - Evaluate only `cached_row_count..current_count` and append survivors.
-   - Same idea for `cached_sorted_scrollable_rows` when sort is inactive
-     (append); when sort is active, either defer full re-sort (see next item)
-     or merge new keys into a sorted structure.
-2. **Batch invalidation:** only rebuild when row count advanced by N rows or
-   after a time budget (e.g. 100–200ms), so title-bar row count can update more
-   often than the full filter list.
-3. **Fast path with no filters and no hidden rows:** store
-   `cached_matching_rows = None` meaning “identity range”, and materialize
-   `(0..count)` only when a caller needs a slice — or keep a generation flag
-   `Identity` vs `Materialized` to avoid allocating a million indices.
+1. **Append-only when only new rows arrived:** keep
+   `cached_matching_rows` for `0..cached_row_count`, evaluate
+   `cached_row_count..current_count`, append survivors.
+2. **Sorted scrollable cache:** with no sort, append new non-pinned matches;
+   with sort active, rebuild via precomputed keys (next item).
+3. Full O(R) rebuild still runs when filters/hides invalidate the cache
+   (`cached_matching_rows = None`).
 
-### Expected effect
-
-Removes the O(R) (or O(R×F) + sort) tax from every scan tick. Largest
-responsiveness win for multi-hundred-thousand-row files with filters or sort.
-
-### Risk / notes
-
-Hidden-row and pin state must still be applied correctly for newly indexed rows.
-Document the incremental contract next to the existing cache rules in
-[row filtering](row-filtering.md).
+See [row filtering](row-filtering.md) for the updated contract.
 
 ---
 
-## P0 — Sort: extract keys once, then sort indices
+## P0 — Sort: extract keys once, then sort indices ✅
 
-### Problem
+### Problem (was)
 
-`rebuild_sorted_scrollable_cache` uses `sort_by` where each comparison calls
-`row_fields` **twice**, clones the sort-column cell, and runs type-aware
-compare. For `R` rows that is roughly `O(R log R)` full-row CSV parses — the
-worst interactive path in the codebase today.
+`rebuild_sorted_scrollable_cache` used `sort_by` where each comparison called
+`row_fields` **twice** — O(R log R) full-row CSV parses on the UI thread.
 
-### Suggestion
+### Implemented
 
-1. Precompute `Vec<(SortKey, usize)>` (or parallel arrays) with **one**
-   `row_fields` / cell extract per row.
-2. Sort the keys (stable or unstable as preferred).
-3. Prefer parsing only the needed column when possible (see P1 column slice
-   API) so sort does not decode unused fields.
-4. While scanning with an active sort: either
-   - show unsorted new rows below a “sorted so far” prefix until scan settles, or
-   - re-sort on a background thread and swap the cache when ready (UI keeps
-     previous order until then).
-
-### Expected effect
-
-Turns sort from “UI freeze” into a single linear pass plus an in-memory sort of
-compact keys.
-
-### Risk / notes
-
-`SortKey` must own or intern text for string/date columns carefully to avoid
-doubling peak memory. Cross-type fallback in `sort.rs` should use the same
-precomputed keys.
+1. `sort::sort_indices_by_cells` precomputes a `SortKey` per row from a
+   caller-supplied cell list, then sorts keys in memory.
+2. `rebuild_sorted_scrollable_cache` does **one** `row_fields` per scrollable
+   row, then calls that helper.
+3. `set_sort_column` / `clear_sort` / pin toggles explicitly rebuild the sorted
+   cache (matching-row cache may still be valid).
 
 ---
 
@@ -178,8 +131,8 @@ precomputed keys.
 Every `row_fields(i)` takes the exclusive `PreviewInner` mutex, runs a fresh
 `csv::Reader` on the record slice, and allocates `Vec<String>`. Call sites
 multiply this: viewport draw (~V cells), filter rebuild (R rows), sort
-comparisons (R log R). Preview and layout both use `Mutex`, so the background
-scan’s per-row locks contend with UI reads.
+(now one pass, still R parses). Preview and layout both use `Mutex`, so the
+background scan’s per-row locks contend with UI reads.
 
 ### Suggestions
 
@@ -314,16 +267,14 @@ same filter/sort/parse costs as the TUI draw, under the `AppModel` mutex.
 
 ## Suggested implementation order
 
-Work that unlocks the rest first:
-
-1. **Dirty-flag + scan-throttled redraw** (P0) — small, localized to `tui/app.rs`.
-2. **Identity / incremental matching-row cache** (P0) — `model.rs` + row-filter docs.
-3. **Sort key precomputation** (P0) — `model.rs` / `sort.rs`.
-4. **Parsed numeric filter AST + single-column field extract** (P1).
-5. **RwLock + batched scan updates + viewport row cache** (P1).
-6. **Per-frame kind snapshot + ASCII format fast path** (P2).
-7. **Stats observe trimming** (P2).
-8. **Web snapshot throttle / unlock** (P3).
+1. ~~**Dirty-flag + scan-throttled redraw** (P0)~~ — done
+2. ~~**Identity / incremental matching-row cache** (P0)~~ — done (incremental append)
+3. ~~**Sort key precomputation** (P0)~~ — done
+4. **Parsed numeric filter AST + single-column field extract** (P1)
+5. **RwLock + batched scan updates + viewport row cache** (P1)
+6. **Per-frame kind snapshot + ASCII format fast path** (P2)
+7. **Stats observe trimming** (P2)
+8. **Web snapshot throttle / unlock** (P3)
 
 ## Measurement ideas
 

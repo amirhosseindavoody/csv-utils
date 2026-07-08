@@ -452,6 +452,10 @@ pub fn run(file: Option<&str>) -> Result<()> {
         file_picker_list: None,
     };
     let mut last_redraw = Instant::now();
+    let mut last_scan_row_count = 0usize;
+    let mut last_scan_done = true;
+    let mut last_scan_error = false;
+    let mut needs_redraw = true;
     let mut column_resize: Option<ColumnResize> = None;
     let mut sidebar_resize: Option<SidebarResize> = None;
     let mut cell_range_drag: Option<CellRangeDrag> = None;
@@ -463,24 +467,44 @@ pub fn run(file: Option<&str>) -> Result<()> {
     let mut row_context_menu: Option<RowContextMenu> = None;
     let mut pending_web_layout: Option<ViewLayout> = None;
 
+    const SCAN_REDRAW_INTERVAL: Duration = Duration::from_millis(100);
+    const IDLE_POLL_TIMEOUT: Duration = Duration::from_millis(50);
+    const SCAN_POLL_TIMEOUT: Duration = Duration::from_millis(50);
+
     while running {
-        let mut model = shared_model.lock().unwrap();
-        model.maybe_update_column_layout();
-        terminal.draw(|frame| {
-            areas = if file_picker.is_some() {
-                draw_file_picker(frame, file_picker.as_ref().unwrap())
-            } else {
-                draw(
-                    frame,
-                    &mut model,
-                    command_line.as_ref(),
-                    command_error.as_deref(),
-                    column_finder.as_ref(),
-                    column_context_menu.as_ref(),
-                    row_context_menu.as_ref(),
-                )
-            };
-        })?;
+        if needs_redraw {
+            let mut model = shared_model.lock().unwrap();
+            model.maybe_update_column_layout();
+            terminal.draw(|frame| {
+                areas = if file_picker.is_some() {
+                    draw_file_picker(frame, file_picker.as_ref().unwrap())
+                } else {
+                    draw(
+                        frame,
+                        &mut model,
+                        command_line.as_ref(),
+                        command_error.as_deref(),
+                        column_finder.as_ref(),
+                        column_context_menu.as_ref(),
+                        row_context_menu.as_ref(),
+                    )
+                };
+            })?;
+
+            if file_picker.is_none() {
+                let table_width = areas.table.width;
+                let viewport_rows = areas.table.height.saturating_sub(3) as usize;
+                let column_list_height = column_list_visible_height(areas.columns);
+                model.clamp_selection(viewport_rows.max(1), table_width);
+                model.clamp_column_list_offset(column_list_height);
+            }
+
+            last_scan_row_count = model.preview.row_count();
+            last_scan_done = model.preview.scan_done();
+            last_scan_error = model.preview.scan_error();
+            last_redraw = Instant::now();
+            needs_redraw = false;
+        }
 
         if file_picker.is_some() {
             let list_area = areas.file_picker_list.unwrap_or_default();
@@ -490,20 +514,21 @@ pub fn run(file: Option<&str>) -> Result<()> {
                 .height
                 .max(1) as usize;
 
-            drop(model);
-
-            let timeout = Duration::from_millis(50);
+            let timeout = IDLE_POLL_TIMEOUT;
             if event::poll(timeout)? {
                 let mut model = shared_model.lock().unwrap();
                 match event::read()? {
                     Event::Key(key) if key.kind == KeyEventKind::Press => {
                         if let Some(picker) = file_picker.as_mut() {
                             match picker.handle_key(key, visible_height) {
-                                FilePickerAction::Continue => {}
+                                FilePickerAction::Continue => {
+                                    needs_redraw = true;
+                                }
                                 FilePickerAction::Quit => running = false,
                                 FilePickerAction::Open(path) => {
                                     model.reopen(path)?;
                                     file_picker = None;
+                                    needs_redraw = true;
                                 }
                             }
                         }
@@ -515,16 +540,21 @@ pub fn run(file: Option<&str>) -> Result<()> {
                     {
                         if let Some(picker) = file_picker.as_mut() {
                             match picker.handle_click(mouse.row, list_area) {
-                                FilePickerAction::Continue => {}
+                                FilePickerAction::Continue => {
+                                    needs_redraw = true;
+                                }
                                 FilePickerAction::Quit => running = false,
                                 FilePickerAction::Open(path) => {
                                     model.reopen(path)?;
                                     file_picker = None;
+                                    needs_redraw = true;
                                 }
                             }
                         }
                     }
-                    Event::Resize(_, _) => {}
+                    Event::Resize(_, _) => {
+                        needs_redraw = true;
+                    }
                     _ => {}
                 }
             }
@@ -535,12 +565,17 @@ pub fn run(file: Option<&str>) -> Result<()> {
         let table_width = areas.table.width;
         let viewport_rows = areas.table.height.saturating_sub(3) as usize;
         let column_list_height = column_list_visible_height(areas.columns);
-        model.clamp_selection(viewport_rows.max(1), table_width);
-        model.clamp_column_list_offset(column_list_height);
 
-        drop(model);
+        let scan_active = {
+            let model = shared_model.lock().unwrap();
+            !model.preview.scan_done()
+        };
+        let timeout = if scan_active {
+            SCAN_POLL_TIMEOUT
+        } else {
+            IDLE_POLL_TIMEOUT
+        };
 
-        let timeout = Duration::from_millis(50);
         if event::poll(timeout)? {
             let mut model = shared_model.lock().unwrap();
             match event::read()? {
@@ -556,7 +591,9 @@ pub fn run(file: Option<&str>) -> Result<()> {
                         &mut column_context_menu,
                         &mut row_context_menu,
                     ) {
-                        MainKeyAction::Continue => {}
+                        MainKeyAction::Continue => {
+                            needs_redraw = true;
+                        }
                         MainKeyAction::Quit => running = false,
                         MainKeyAction::LaunchWeb => {
                             pending_web_layout = Some(ViewLayout {
@@ -584,6 +621,7 @@ pub fn run(file: Option<&str>) -> Result<()> {
                             column_finder = None;
                             column_context_menu = None;
                             row_context_menu = None;
+                            needs_redraw = true;
                         }
                         MainKeyAction::OpenPath(path) => {
                             let extensions = model.settings.file_picker.normalized_extensions();
@@ -595,6 +633,7 @@ pub fn run(file: Option<&str>) -> Result<()> {
                             } else {
                                 command_error =
                                     Some(format!("Path not found: {}", path.display()));
+                                needs_redraw = true;
                                 continue;
                             }
                             command_line = None;
@@ -602,6 +641,7 @@ pub fn run(file: Option<&str>) -> Result<()> {
                             column_finder = None;
                             column_context_menu = None;
                             row_context_menu = None;
+                            needs_redraw = true;
                         }
                     }
                 }
@@ -621,17 +661,25 @@ pub fn run(file: Option<&str>) -> Result<()> {
                         &mut command_error,
                         screen,
                     );
+                    needs_redraw = true;
                 }
-                Event::Resize(_, _) => {}
+                Event::Resize(_, _) => {
+                    needs_redraw = true;
+                }
                 _ => {}
             }
-        } else {
-            let scan_active = !shared_model.lock().unwrap().preview.scan_done();
-            if scan_active && last_redraw.elapsed() >= Duration::from_millis(100) {
-                last_redraw = Instant::now();
+        } else if scan_active {
+            let model = shared_model.lock().unwrap();
+            let row_count = model.preview.row_count();
+            let scan_done = model.preview.scan_done();
+            let scan_error = model.preview.scan_error();
+            let progress_changed = row_count != last_scan_row_count
+                || scan_done != last_scan_done
+                || scan_error != last_scan_error;
+            if progress_changed && last_redraw.elapsed() >= SCAN_REDRAW_INTERVAL {
+                needs_redraw = true;
             }
         }
-        let _ = size;
 
         if let Some(layout) = pending_web_layout.take() {
             if let Ok(mut web_l) = web_layout.lock() {

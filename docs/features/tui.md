@@ -59,7 +59,7 @@ Data table uses ratatui `Table`. Column sidebar uses manual `Paragraph` lines (n
 
 Settings load from `~/.config/csv-utils/csv-utils.json` (created on first open), with optional `./csv-utils.json` in the working directory overriding individual fields; see [settings config](../design/settings-config.md).
 
-Each frame: `maybe_refit_column_widths()` (when loaded row count changes), `clamp_selection(viewport_rows, table_width)`, and `clamp_column_list_offset(visible_height)`. Dragging the table row/column scrollbar decouples scroll from the selected cell until you move selection (arrows, click, or wheel on the table).
+Each frame (when the TUI redraws): `maybe_refit_column_widths()` (when loaded row count changes), `clamp_selection(viewport_rows, table_width)`, and `clamp_column_list_offset(visible_height)`. The event loop draws only when dirty — after input, resize, or throttled background-scan progress (~100ms) — so idle CPU stays low once loading finishes. Dragging the table row/column scrollbar decouples scroll from the selected cell until you move selection (arrows, click, or wheel on the table).
 
 ## Keyboard
 
