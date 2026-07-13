@@ -23,6 +23,9 @@ pub struct ClientView {
     pub show_column_info: bool,
     pub column_info: Option<ColumnInfo>,
     pub show_help: bool,
+    pub show_row_json: bool,
+    pub row_json: Option<String>,
+    pub row_json_row: Option<usize>,
     pub status_line: String,
     pub column_list_offset: usize,
     pub column_count: usize,
@@ -172,6 +175,14 @@ impl AppModel {
         } else {
             None
         };
+        let (row_json, row_json_row) = if self.view.show_row_json {
+            (
+                self.selected_row_as_json_pretty(),
+                Some(self.view.selected_row),
+            )
+        } else {
+            (None, None)
+        };
 
         ClientView {
             file: self.file_label().to_string(),
@@ -183,6 +194,9 @@ impl AppModel {
             show_column_info: self.view.show_column_info,
             column_info,
             show_help: self.view.show_help,
+            show_row_json: self.view.show_row_json,
+            row_json,
+            row_json_row,
             status_line,
             column_list_offset: self.view.column_list_offset,
             column_count: headers.len(),

@@ -73,6 +73,9 @@ pub fn empty_client_view() -> ClientView {
         show_column_info: false,
         column_info: None,
         show_help: false,
+        show_row_json: false,
+        row_json: None,
+        row_json_row: None,
         status_line: String::new(),
         column_list_offset: 0,
         column_count: 0,
@@ -190,6 +193,8 @@ fn parse_action(name: &str, value: &serde_json::Value) -> Option<ViewAction> {
         }
         "open_column_info" => Some(ViewAction::OpenColumnInfo),
         "close_column_info" => Some(ViewAction::CloseColumnInfo),
+        "open_row_json" => Some(ViewAction::OpenRowJson),
+        "close_row_json" => Some(ViewAction::CloseRowJson),
         "column_info_focus_delta" => {
             value.as_i64().map(|v| ViewAction::ColumnInfoFocusDelta(v as i32))
         }

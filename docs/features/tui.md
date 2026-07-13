@@ -72,6 +72,7 @@ Each frame (when the TUI redraws): `maybe_refit_column_widths()` (when loaded ro
 | `PgUp`/`PgDn` | Move selection ±10 rows |
 | `Home`/`End` | First / last row in navigation order (pinned rows first, then scrollable) |
 | `c` | Open column info panel |
+| `r` | Open floating panel with the selected row as pretty-printed JSON |
 | `p` | Pin or unpin selected row(s) after **↑/↓** (row axis), or column(s) when the sidebar is focused or the last arrow axis was column (**←/→**); works with multi-select |
 | `?` | Help overlay |
 | `:` | Open command line (filtered suggestions, Tab complete) |
@@ -131,11 +132,35 @@ While the panel is open, table navigation is disabled:
 
 The panel shows editable **type** options filtered by inferred data (e.g. text-only columns hide date/int/float), **representation** when numeric types apply, **decimal places** (text field, default from merged settings, e.g. `.3`), **row filter** (fuzzy text or numeric expression), plus type-specific **statistics** from loaded rows (note shown while scanning; stats accumulate during background load). A vertical scrollbar appears when content exceeds the viewport.
 
+### Row JSON (`r`)
+
+Shows the currently selected row as pretty-printed JSON (`header → value` object). While open, table navigation is disabled:
+
+| Key | Action |
+|-----|--------|
+| `↑`/`↓` or `j`/`k` | Scroll vertically |
+| `←`/`→` or `h`/`l` | Scroll horizontally |
+| `PgUp`/`PgDn` | Page vertically |
+| `Home`/`End` | Jump to start / end of content |
+| `q` or `r` | Close panel |
+
+Mouse:
+
+| Target | Action |
+|--------|--------|
+| Title bar | Drag to move the floating panel |
+| Bottom-right corner | Drag to resize (min 30×8 cells) |
+| Vertical / horizontal scrollbars | Drag thumb/track or use wheel |
+| Panel body wheel | Scroll vertically |
+
+Opening the row JSON panel closes column info (and vice versa). Panel position and size persist for the session after the first drag or resize.
+
 ## Mouse
 
 | Target | Action |
 |--------|--------|
 | Column info panel | Click type/representation rows to apply; click decimal field to focus; **PgUp/PgDn** or mouse wheel scroll |
+| Row JSON panel | Drag title to move; drag bottom-right corner to resize; wheel / scrollbars for overflow |
 | Table header border | Drag to resize column width (4–64 chars) |
 | Table header | Select column only (click, not on border); **Ctrl+click** adds column to selection; **right-click** opens column context menu |
 | Table body cell | Click to select; **drag** to select a rectangular cell range; **Ctrl+click** toggles individual cells (no fill between) |

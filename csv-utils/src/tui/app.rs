@@ -42,7 +42,9 @@ csv — keyboard shortcuts
   Space      toggle multi-select on row or column (follows last arrow axis)
   PgUp/PgDn  scroll 10 rows
   c          column info (type, stats, format)
-  PgUp/PgDn  scroll column info panel (while open)
+  r          row as JSON (floating panel; drag title, resize corner)
+  PgUp/PgDn  scroll column info / row JSON panel (while open)
+  ←/→        horizontal scroll in row JSON panel (while open)
   ?          this help
   :open      open file or browse directory by path
   :close     close file and open file picker
@@ -56,7 +58,7 @@ csv — keyboard shortcuts
   p          pin/unpin selected row(s) (↑/↓ row axis) or column(s) (sidebar / ←/→)
   :filter    filter rows on selected column, or sidebar when focused (:f)
 
-Mouse: click table cells; drag on table body to select a cell rectangle; Ctrl+click table cells to toggle individual cells; Ctrl+click column header, sidebar, or row gutter to add to selection; right-click column header, sidebar, or row gutter for context menu; drag header borders to resize columns; drag sidebar left border to resize sidebar; wheel scrolls rows/columns. Click sidebar to focus it — then ↑/↓ navigate columns.
+Mouse: click table cells; drag on table body to select a cell rectangle; Ctrl+click table cells to toggle individual cells; Ctrl+click column header, sidebar, or row gutter to add to selection; right-click column header, sidebar, or row gutter for context menu; drag header borders to resize columns; drag sidebar left border to resize sidebar; wheel scrolls rows/columns. Row JSON panel: drag title bar to move, drag bottom-right corner to resize, scrollbars/wheel for overflow. Click sidebar to focus it — then ↑/↓ navigate columns.
 
 Press q or ? to close.";
 
@@ -72,6 +74,7 @@ struct LayoutAreas {
     table: Rect,
     columns: Rect,
     column_info_popup: Option<Rect>,
+    row_json_popup: Option<Rect>,
     file_picker_list: Option<Rect>,
 }
 
@@ -109,11 +112,31 @@ enum ScrollbarDragTarget {
         viewport: u16,
         total_lines: usize,
     },
+    RowJsonVert {
+        viewport_w: u16,
+        viewport_h: u16,
+    },
+    RowJsonHoriz {
+        viewport_w: u16,
+        viewport_h: u16,
+    },
 }
 
 struct ScrollbarDrag {
     target: ScrollbarDragTarget,
     grab_offset: u16,
+}
+
+struct FloatingPanelDrag {
+    grab_x: u16,
+    grab_y: u16,
+}
+
+struct FloatingPanelResize {
+    start_mouse_x: u16,
+    start_mouse_y: u16,
+    start_w: u16,
+    start_h: u16,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -449,6 +472,7 @@ pub fn run(file: Option<&str>) -> Result<()> {
         table: Rect::default(),
         columns: Rect::default(),
         column_info_popup: None,
+        row_json_popup: None,
         file_picker_list: None,
     };
     let mut last_redraw = Instant::now();
@@ -460,6 +484,8 @@ pub fn run(file: Option<&str>) -> Result<()> {
     let mut sidebar_resize: Option<SidebarResize> = None;
     let mut cell_range_drag: Option<CellRangeDrag> = None;
     let mut scrollbar_drag: Option<ScrollbarDrag> = None;
+    let mut row_json_drag: Option<FloatingPanelDrag> = None;
+    let mut row_json_resize: Option<FloatingPanelResize> = None;
     let mut command_line: Option<CommandLineState> = None;
     let mut command_error: Option<String> = None;
     let mut column_finder: Option<ColumnFinderState> = None;
@@ -585,6 +611,7 @@ pub fn run(file: Option<&str>) -> Result<()> {
                         &mut model,
                         column_list_height,
                         areas.column_info_popup,
+                        areas.row_json_popup,
                         &mut command_line,
                         &mut command_error,
                         &mut column_finder,
@@ -656,6 +683,8 @@ pub fn run(file: Option<&str>) -> Result<()> {
                         &mut sidebar_resize,
                         &mut cell_range_drag,
                         &mut scrollbar_drag,
+                        &mut row_json_drag,
+                        &mut row_json_resize,
                         &mut column_context_menu,
                         &mut row_context_menu,
                         &mut command_error,
@@ -776,6 +805,28 @@ fn apply_scroll_position(model: &mut AppModel, target: ScrollbarDragTarget, posi
             viewport,
             total_lines,
         } => model.set_column_info_scroll_position(position, viewport, total_lines),
+        ScrollbarDragTarget::RowJsonVert {
+            viewport_w,
+            viewport_h,
+        } => {
+            model.set_row_json_scroll(
+                model.view.row_json_scroll_x as usize,
+                position,
+                viewport_w,
+                viewport_h,
+            )
+        }
+        ScrollbarDragTarget::RowJsonHoriz {
+            viewport_w,
+            viewport_h,
+        } => {
+            model.set_row_json_scroll(
+                position,
+                model.view.row_json_scroll_y as usize,
+                viewport_w,
+                viewport_h,
+            )
+        }
     }
 }
 
@@ -944,6 +995,48 @@ fn apply_scrollbar_drag(
             let position = position_from_vertical_track_y(rel_y, track.height, metrics);
             model.set_column_info_scroll_position(position, viewport, total_lines);
         }
+        ScrollbarDragTarget::RowJsonVert {
+            viewport_w,
+            viewport_h,
+        } => {
+            let popup = areas.row_json_popup.unwrap_or(areas.table);
+            let (content_h, _) = model.row_json_content_size();
+            let metrics = ScrollMetrics {
+                content_length: content_h,
+                viewport_length: viewport_h as usize,
+                position: model.view.row_json_scroll_y as usize,
+            };
+            let track = vertical_scrollbar_track(popup);
+            let rel_y = pos.y.saturating_sub(track.y).saturating_sub(drag.grab_offset);
+            let position = position_from_vertical_track_y(rel_y, track.height, metrics);
+            model.set_row_json_scroll(
+                model.view.row_json_scroll_x as usize,
+                position,
+                viewport_w,
+                viewport_h,
+            );
+        }
+        ScrollbarDragTarget::RowJsonHoriz {
+            viewport_w,
+            viewport_h,
+        } => {
+            let popup = areas.row_json_popup.unwrap_or(areas.table);
+            let (_, content_w) = model.row_json_content_size();
+            let metrics = ScrollMetrics {
+                content_length: content_w,
+                viewport_length: viewport_w as usize,
+                position: model.view.row_json_scroll_x as usize,
+            };
+            let track = horizontal_scrollbar_track(popup);
+            let rel_x = pos.x.saturating_sub(track.x).saturating_sub(drag.grab_offset);
+            let position = position_from_horizontal_track_x(rel_x, track.width, metrics);
+            model.set_row_json_scroll(
+                position,
+                model.view.row_json_scroll_y as usize,
+                viewport_w,
+                viewport_h,
+            );
+        }
     }
 }
 
@@ -1004,6 +1097,7 @@ fn handle_key(
     model: &mut AppModel,
     column_list_height: usize,
     column_info_popup: Option<Rect>,
+    row_json_popup: Option<Rect>,
     command_line: &mut Option<CommandLineState>,
     command_error: &mut Option<String>,
     column_finder: &mut Option<ColumnFinderState>,
@@ -1203,6 +1297,46 @@ fn handle_key(
         return MainKeyAction::Continue;
     }
 
+    if model.view.show_row_json {
+        let (viewport_w, viewport_h) = row_json_popup
+            .map(row_json_viewport_size)
+            .unwrap_or((40, 12));
+        match key.code {
+            KeyCode::Char('q') | KeyCode::Char('r') => model.close_row_json_pane(),
+            KeyCode::Up | KeyCode::Char('k') => {
+                model.row_json_scroll_by(0, -1, viewport_w, viewport_h)
+            }
+            KeyCode::Down | KeyCode::Char('j') => {
+                model.row_json_scroll_by(0, 1, viewport_w, viewport_h)
+            }
+            KeyCode::Left | KeyCode::Char('h') => {
+                model.row_json_scroll_by(-1, 0, viewport_w, viewport_h)
+            }
+            KeyCode::Right | KeyCode::Char('l') => {
+                model.row_json_scroll_by(1, 0, viewport_w, viewport_h)
+            }
+            KeyCode::PageUp => {
+                model.row_json_scroll_by(0, -(viewport_h as i32), viewport_w, viewport_h)
+            }
+            KeyCode::PageDown => {
+                model.row_json_scroll_by(0, viewport_h as i32, viewport_w, viewport_h)
+            }
+            KeyCode::Home => model.set_row_json_scroll(0, 0, viewport_w, viewport_h),
+            KeyCode::End => {
+                let (content_h, _) = model.row_json_content_size();
+                let max_y = content_h.saturating_sub(viewport_h as usize);
+                model.set_row_json_scroll(
+                    model.view.row_json_scroll_x as usize,
+                    max_y,
+                    viewport_w,
+                    viewport_h,
+                );
+            }
+            _ => {}
+        }
+        return MainKeyAction::Continue;
+    }
+
     if model.view.show_column_info {
         if model.view.column_info_filter_editing {
             match key.code {
@@ -1306,6 +1440,7 @@ fn handle_key(
         }
         KeyCode::Char('?') => model.view.show_help = true,
         KeyCode::Char('c') => model.open_column_info_pane(),
+        KeyCode::Char('r') => model.open_row_json_pane(),
         KeyCode::Char('p') if model.view.column_sidebar_focused
             || model.view.last_multi_select_axis == MultiSelectAxis::Column =>
         {
@@ -1386,6 +1521,8 @@ fn handle_mouse(
     sidebar_resize: &mut Option<SidebarResize>,
     cell_range_drag: &mut Option<CellRangeDrag>,
     scrollbar_drag: &mut Option<ScrollbarDrag>,
+    row_json_drag: &mut Option<FloatingPanelDrag>,
+    row_json_resize: &mut Option<FloatingPanelResize>,
     column_context_menu: &mut Option<ColumnContextMenu>,
     row_context_menu: &mut Option<RowContextMenu>,
     command_error: &mut Option<String>,
@@ -1398,6 +1535,63 @@ fn handle_mouse(
     let row = mouse.row;
     let col = mouse.column;
     let pos = Position { x: col, y: row };
+
+    if let Some(drag) = row_json_drag.as_ref() {
+        match mouse.kind {
+            MouseEventKind::Drag(crossterm::event::MouseButton::Left)
+            | MouseEventKind::Moved => {
+                if let Some(popup) = areas.row_json_popup {
+                    let width = popup.width;
+                    let height = popup.height;
+                    let max_x = screen.width.saturating_sub(width);
+                    let max_y = screen.height.saturating_sub(height);
+                    let x = col.saturating_sub(drag.grab_x).min(max_x);
+                    let y = row.saturating_sub(drag.grab_y).min(max_y);
+                    model.set_row_json_geometry(x, y, width, height);
+                }
+            }
+            MouseEventKind::Up(crossterm::event::MouseButton::Left) => {
+                *row_json_drag = None;
+            }
+            _ => {}
+        }
+        return;
+    }
+
+    if let Some(resize) = row_json_resize.as_ref() {
+        match mouse.kind {
+            MouseEventKind::Drag(crossterm::event::MouseButton::Left)
+            | MouseEventKind::Moved => {
+                if let Some(popup) = areas.row_json_popup {
+                    let dx = col as i32 - resize.start_mouse_x as i32;
+                    let dy = row as i32 - resize.start_mouse_y as i32;
+                    let width = (resize.start_w as i32 + dx)
+                        .clamp(
+                            AppModel::MIN_ROW_JSON_WIDTH as i32,
+                            screen.width.saturating_sub(popup.x) as i32,
+                        ) as u16;
+                    let height = (resize.start_h as i32 + dy)
+                        .clamp(
+                            AppModel::MIN_ROW_JSON_HEIGHT as i32,
+                            screen.height.saturating_sub(popup.y) as i32,
+                        ) as u16;
+                    model.set_row_json_geometry(popup.x, popup.y, width, height);
+                    let (viewport_w, viewport_h) = row_json_viewport_size(Rect {
+                        x: popup.x,
+                        y: popup.y,
+                        width,
+                        height,
+                    });
+                    model.clamp_row_json_scroll(viewport_w, viewport_h);
+                }
+            }
+            MouseEventKind::Up(crossterm::event::MouseButton::Left) => {
+                *row_json_resize = None;
+            }
+            _ => {}
+        }
+        return;
+    }
 
     if let Some(menu) = column_context_menu.as_ref() {
         match mouse.kind {
@@ -1460,6 +1654,92 @@ fn handle_mouse(
                 *scrollbar_drag = None;
             }
             _ => {}
+        }
+        return;
+    }
+
+    if model.view.show_row_json {
+        if let Some(popup) = areas.row_json_popup {
+            let (viewport_w, viewport_h) = row_json_viewport_size(popup);
+            let (content_h, content_w) = model.row_json_content_size();
+            let vert_metrics = ScrollMetrics {
+                content_length: content_h,
+                viewport_length: viewport_h as usize,
+                position: model.view.row_json_scroll_y as usize,
+            };
+            let horiz_metrics = ScrollMetrics {
+                content_length: content_w,
+                viewport_length: viewport_w as usize,
+                position: model.view.row_json_scroll_x as usize,
+            };
+            if let Some(hit) = vertical_scrollbar_hit(popup, pos, vert_metrics) {
+                if matches!(
+                    mouse.kind,
+                    MouseEventKind::Down(crossterm::event::MouseButton::Left)
+                        | MouseEventKind::ScrollUp
+                        | MouseEventKind::ScrollDown
+                ) {
+                    handle_vertical_scroll_hit(
+                        mouse.kind,
+                        hit,
+                        ScrollbarDragTarget::RowJsonVert {
+                            viewport_w,
+                            viewport_h,
+                        },
+                        popup,
+                        vert_metrics,
+                        model,
+                        scrollbar_drag,
+                    );
+                    return;
+                }
+            }
+            if let Some(hit) = horizontal_scrollbar_hit(popup, pos, horiz_metrics) {
+                if matches!(
+                    mouse.kind,
+                    MouseEventKind::Down(crossterm::event::MouseButton::Left)
+                        | MouseEventKind::ScrollUp
+                        | MouseEventKind::ScrollDown
+                ) {
+                    handle_horizontal_scroll_hit(
+                        mouse.kind,
+                        hit,
+                        ScrollbarDragTarget::RowJsonHoriz {
+                            viewport_w,
+                            viewport_h,
+                        },
+                        popup,
+                        horiz_metrics,
+                        model,
+                        scrollbar_drag,
+                    );
+                    return;
+                }
+            }
+            match mouse.kind {
+                MouseEventKind::ScrollUp if popup.contains(pos) => {
+                    model.row_json_scroll_by(0, -3, viewport_w, viewport_h);
+                }
+                MouseEventKind::ScrollDown if popup.contains(pos) => {
+                    model.row_json_scroll_by(0, 3, viewport_w, viewport_h);
+                }
+                MouseEventKind::Down(crossterm::event::MouseButton::Left) if popup.contains(pos) => {
+                    if row_json_resize_hit(popup, pos) {
+                        *row_json_resize = Some(FloatingPanelResize {
+                            start_mouse_x: col,
+                            start_mouse_y: row,
+                            start_w: popup.width,
+                            start_h: popup.height,
+                        });
+                    } else if row_json_title_hit(popup, pos) {
+                        *row_json_drag = Some(FloatingPanelDrag {
+                            grab_x: col.saturating_sub(popup.x),
+                            grab_y: row.saturating_sub(popup.y),
+                        });
+                    }
+                }
+                _ => {}
+            }
         }
         return;
     }
@@ -2158,6 +2438,7 @@ fn draw_file_picker(frame: &mut ratatui::Frame, picker: &FilePicker) -> LayoutAr
         table: Rect::default(),
         columns: Rect::default(),
         column_info_popup: None,
+        row_json_popup: None,
         file_picker_list: Some(layout[1]),
     }
 }
@@ -2240,7 +2521,7 @@ fn draw(
     } else if let Some(command) = command_line {
         command.draw(frame, outer[2], VIEW_COMMANDS, command_error);
     } else {
-        let hints = " q quit  p pin  Space multi-select  Ctrl+click  :hide  :unhide  / columns  :filter  c info  ? help ";
+        let hints = " q quit  p pin  Space multi-select  r JSON  :hide  :unhide  / columns  :filter  c info  ? help ";
         frame.render_widget(
             Paragraph::new(hints).style(Style::default().fg(Color::DarkGray)),
             outer[2],
@@ -2263,11 +2544,20 @@ fn draw(
     } else {
         None
     };
+    let row_json_popup = if model.view.show_row_json {
+        model.clamp_row_json_geometry(area.width, area.height);
+        let popup_area = row_json_panel_rect(model, area);
+        draw_row_json(frame, popup_area, model);
+        Some(popup_area)
+    } else {
+        None
+    };
 
     LayoutAreas {
         table: table_area,
         columns: columns_area,
         column_info_popup,
+        row_json_popup,
         file_picker_list: None,
     }
 }
@@ -2675,6 +2965,85 @@ fn draw_help(frame: &mut ratatui::Frame, area: Rect) {
     );
 }
 
+fn row_json_panel_rect(model: &AppModel, screen: Rect) -> Rect {
+    let default = centered_rect(60, 50, screen);
+    let width = model
+        .view
+        .row_json_width
+        .unwrap_or(default.width)
+        .clamp(AppModel::MIN_ROW_JSON_WIDTH, screen.width.max(AppModel::MIN_ROW_JSON_WIDTH));
+    let height = model
+        .view
+        .row_json_height
+        .unwrap_or(default.height)
+        .clamp(AppModel::MIN_ROW_JSON_HEIGHT, screen.height.max(AppModel::MIN_ROW_JSON_HEIGHT));
+    let max_x = screen.width.saturating_sub(width);
+    let max_y = screen.height.saturating_sub(height);
+    let x = model.view.row_json_x.unwrap_or(default.x).min(max_x);
+    let y = model.view.row_json_y.unwrap_or(default.y).min(max_y);
+    Rect {
+        x,
+        y,
+        width,
+        height,
+    }
+}
+
+fn row_json_viewport_size(area: Rect) -> (u16, u16) {
+    let inner = Block::default().borders(Borders::ALL).inner(area);
+    (
+        inner.width.saturating_sub(1).max(1),
+        inner.height.saturating_sub(1).max(1),
+    )
+}
+
+fn row_json_title_hit(area: Rect, pos: Position) -> bool {
+    pos.y == area.y && pos.x >= area.x && pos.x < area.x.saturating_add(area.width)
+}
+
+fn row_json_resize_hit(area: Rect, pos: Position) -> bool {
+    let right = area.x.saturating_add(area.width.saturating_sub(1));
+    let bottom = area.y.saturating_add(area.height.saturating_sub(1));
+    pos.x >= right.saturating_sub(1) && pos.y >= bottom.saturating_sub(1) && area.contains(pos)
+}
+
+fn draw_row_json(frame: &mut ratatui::Frame, popup_area: Rect, model: &mut AppModel) {
+    frame.render_widget(Clear, popup_area);
+    let lines = model.row_json_lines();
+    let (content_h, content_w) = model.row_json_content_size();
+    let (viewport_w, viewport_h) = row_json_viewport_size(popup_area);
+    model.clamp_row_json_scroll(viewport_w, viewport_h);
+    let scroll_x = model.view.row_json_scroll_x;
+    let scroll_y = model.view.row_json_scroll_y;
+    let row_idx = model.view.selected_row;
+    let title = format!(" Row {} JSON  drag title · resize corner · q close ", row_idx + 1);
+    let block = Block::default()
+        .title(title)
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(Color::Cyan));
+    let text_lines: Vec<Line> = lines.into_iter().map(Line::from).collect();
+    frame.render_widget(
+        Paragraph::new(text_lines)
+            .block(block)
+            .scroll((scroll_y, scroll_x)),
+        popup_area,
+    );
+    render_vertical_scrollbar(
+        frame,
+        popup_area,
+        content_h,
+        viewport_h as usize,
+        scroll_y as usize,
+    );
+    render_horizontal_scrollbar(
+        frame,
+        popup_area,
+        content_w,
+        viewport_w as usize,
+        scroll_x as usize,
+    );
+}
+
 fn render_vertical_scrollbar(
     frame: &mut ratatui::Frame,
     area: Rect,
@@ -2775,11 +3144,13 @@ mod tests {
         Option<SidebarResize>,
         Option<CellRangeDrag>,
         Option<ScrollbarDrag>,
+        Option<FloatingPanelDrag>,
+        Option<FloatingPanelResize>,
         Option<ColumnContextMenu>,
         Option<RowContextMenu>,
         Option<String>,
     ) {
-        (None, None, None, None, None, None, None)
+        (None, None, None, None, None, None, None, None, None)
     }
 
     #[test]
@@ -2793,6 +3164,7 @@ mod tests {
             table: table_area,
             columns: Rect::default(),
             column_info_popup: None,
+            row_json_popup: None,
             file_picker_list: None,
         };
         let screen = Rect::new(0, 0, 80, 30);
@@ -2809,6 +3181,8 @@ mod tests {
             mut sidebar_resize,
             mut cell_range_drag,
             mut scrollbar_drag,
+            mut row_json_drag,
+            mut row_json_resize,
             mut column_context_menu,
             mut row_context_menu,
             mut command_error,
@@ -2828,6 +3202,8 @@ mod tests {
             &mut sidebar_resize,
             &mut cell_range_drag,
             &mut scrollbar_drag,
+            &mut row_json_drag,
+            &mut row_json_resize,
             &mut column_context_menu,
             &mut row_context_menu,
             &mut command_error,
@@ -2850,6 +3226,8 @@ mod tests {
             &mut sidebar_resize,
             &mut cell_range_drag,
             &mut scrollbar_drag,
+            &mut row_json_drag,
+            &mut row_json_resize,
             &mut column_context_menu,
             &mut row_context_menu,
             &mut command_error,
@@ -2874,6 +3252,7 @@ mod tests {
             table: table_area,
             columns: columns_area,
             column_info_popup: None,
+            row_json_popup: None,
             file_picker_list: None,
         };
         let screen = Rect::new(0, 0, 80, 30);
@@ -2894,6 +3273,8 @@ mod tests {
             mut sidebar_resize,
             mut cell_range_drag,
             mut scrollbar_drag,
+            mut row_json_drag,
+            mut row_json_resize,
             mut column_context_menu,
             mut row_context_menu,
             mut command_error,
@@ -2913,6 +3294,8 @@ mod tests {
             &mut sidebar_resize,
             &mut cell_range_drag,
             &mut scrollbar_drag,
+            &mut row_json_drag,
+            &mut row_json_resize,
             &mut column_context_menu,
             &mut row_context_menu,
             &mut command_error,
@@ -2934,6 +3317,8 @@ mod tests {
             &mut sidebar_resize,
             &mut cell_range_drag,
             &mut scrollbar_drag,
+            &mut row_json_drag,
+            &mut row_json_resize,
             &mut column_context_menu,
             &mut row_context_menu,
             &mut command_error,
@@ -2966,6 +3351,8 @@ mod tests {
             &mut sidebar_resize,
             &mut cell_range_drag,
             &mut scrollbar_drag,
+            &mut row_json_drag,
+            &mut row_json_resize,
             &mut column_context_menu,
             &mut row_context_menu,
             &mut command_error,
@@ -2992,6 +3379,8 @@ mod tests {
             &mut sidebar_resize,
             &mut cell_range_drag,
             &mut scrollbar_drag,
+            &mut row_json_drag,
+            &mut row_json_resize,
             &mut column_context_menu,
             &mut row_context_menu,
             &mut command_error,
@@ -3021,6 +3410,8 @@ mod tests {
             &mut sidebar_resize,
             &mut cell_range_drag,
             &mut scrollbar_drag,
+            &mut row_json_drag,
+            &mut row_json_resize,
             &mut column_context_menu,
             &mut row_context_menu,
             &mut command_error,
@@ -3043,6 +3434,7 @@ mod tests {
             table: table_area,
             columns: Rect::default(),
             column_info_popup: None,
+            row_json_popup: None,
             file_picker_list: None,
         };
         let screen = Rect::new(0, 0, 80, 30);
@@ -3055,6 +3447,8 @@ mod tests {
             mut sidebar_resize,
             mut cell_range_drag,
             mut scrollbar_drag,
+            mut row_json_drag,
+            mut row_json_resize,
             mut column_context_menu,
             mut row_context_menu,
             mut command_error,
@@ -3074,6 +3468,8 @@ mod tests {
             &mut sidebar_resize,
             &mut cell_range_drag,
             &mut scrollbar_drag,
+            &mut row_json_drag,
+            &mut row_json_resize,
             &mut column_context_menu,
             &mut row_context_menu,
             &mut command_error,
@@ -3096,6 +3492,7 @@ mod tests {
             table: table_area,
             columns: Rect::default(),
             column_info_popup: None,
+            row_json_popup: None,
             file_picker_list: None,
         };
         let screen = Rect::new(0, 0, 80, 30);
@@ -3108,6 +3505,8 @@ mod tests {
             mut sidebar_resize,
             mut cell_range_drag,
             mut scrollbar_drag,
+            mut row_json_drag,
+            mut row_json_resize,
             mut column_context_menu,
             mut row_context_menu,
             mut command_error,
@@ -3127,6 +3526,8 @@ mod tests {
             &mut sidebar_resize,
             &mut cell_range_drag,
             &mut scrollbar_drag,
+            &mut row_json_drag,
+            &mut row_json_resize,
             &mut column_context_menu,
             &mut row_context_menu,
             &mut command_error,
