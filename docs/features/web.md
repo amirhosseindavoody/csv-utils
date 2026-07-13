@@ -24,14 +24,14 @@ Same logical regions as the TUI: title/meta bar, data table, column sidebar, hin
 
 ## Keyboard
 
-Mirrors the TUI: `↑↓←→`, `PgUp`/`PgDn`, `Home`/`End`, `c` (column info), `r` (row JSON), `?`, `q` (close panel).
+Mirrors the TUI: `↑↓←→`, `PgUp`/`PgDn`, `Home`/`End`, `c` (column info), `r` (row JSON), `f` (row JSON fullscreen while open), `?`, `q` (close panel).
 
 ## Mouse
 
 - Click table cells or column list items to select
 - Wheel on table / column list scrolls rows / sidebar
 - Column info panel scrolls when content exceeds the viewport (wheel or scrollbar)
-- Row JSON panel: drag the title to move, resize from the corner, scroll overflow with wheel/scrollbars
+- Row JSON panel: drag the title to move, resize from the corner, scroll overflow with wheel/scrollbars; syntax-highlighted; `f` toggles a borderless full-page text view without changing the panel size
 - Table and column sidebar show scroll indicators when row/column lists extend past the viewport; drag the thumb or track to scroll (wheel still drives navigation via the API)
 - Drag column header **right edge** to resize (4–64 chars); synced on mouse release via API
 
@@ -53,6 +53,7 @@ Example action:
 {"action": "close_column_info"}
 {"action": "open_row_json"}
 {"action": "close_row_json"}
+{"action": "toggle_row_json_fullscreen"}
 {"action": "column_info_focus_delta", "value": 1}
 {"action": "column_info_apply"}
 {"action": "set_column_kind", "value": {"col": 0, "kind": "float"}}

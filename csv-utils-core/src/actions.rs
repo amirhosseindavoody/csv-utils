@@ -46,6 +46,7 @@ pub enum ViewAction {
     SetColumnInfoScroll { scroll: usize, viewport: u16 },
     OpenRowJson,
     CloseRowJson,
+    ToggleRowJsonFullscreen,
     SetRowJsonScroll {
         scroll_x: usize,
         scroll_y: usize,
@@ -150,6 +151,7 @@ impl AppModel {
             }
             ViewAction::OpenRowJson => self.open_row_json_pane(),
             ViewAction::CloseRowJson => self.close_row_json_pane(),
+            ViewAction::ToggleRowJsonFullscreen => self.toggle_row_json_fullscreen(),
             ViewAction::SetRowJsonScroll {
                 scroll_x,
                 scroll_y,
