@@ -192,6 +192,42 @@
       display: none; align-items: center; justify-content: center; z-index: 11;
     }
     .info-overlay.open { display: flex; }
+    .row-json-overlay {
+      position: fixed; inset: 0; background: transparent;
+      display: none; z-index: 12; pointer-events: none;
+    }
+    .row-json-overlay.open { display: block; }
+    .row-json-box {
+      position: absolute;
+      background: var(--panel); border: 1px solid var(--border);
+      min-width: 280px; min-height: 160px;
+      max-width: 95vw; max-height: 90vh;
+      display: flex; flex-direction: column;
+      box-shadow: 0 8px 28px rgba(0,0,0,0.25);
+      pointer-events: auto;
+      resize: both;
+      overflow: hidden;
+    }
+    .row-json-title {
+      cursor: move; user-select: none;
+      padding: 0.45rem 0.75rem;
+      border-bottom: 1px solid var(--border);
+      font-weight: 600; font-size: 0.9rem;
+      background: var(--surface-muted);
+      display: flex; justify-content: space-between; gap: 0.5rem;
+    }
+    .row-json-title button {
+      border: none; background: transparent; color: var(--muted);
+      cursor: pointer; font-size: 0.85rem;
+    }
+    .row-json-body {
+      margin: 0; padding: 0.75rem 1rem;
+      overflow: auto; flex: 1;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: 12px; line-height: 1.45;
+      white-space: pre;
+      scrollbar-width: thin;
+    }
     .info-box {
       background: var(--panel); border: 1px solid var(--border);
       padding: 1rem 1.25rem; min-width: 300px; max-width: 440px;
@@ -314,6 +350,15 @@
   </div>
   <div id="help" class="help-overlay"><div class="help-box" id="help-text"></div></div>
   <div id="info" class="info-overlay"><div class="info-box" id="info-box"></div></div>
+  <div id="row-json" class="row-json-overlay">
+    <div class="row-json-box" id="row-json-box">
+      <div class="row-json-title" id="row-json-title">
+        <span id="row-json-heading">Row JSON</span>
+        <button type="button" id="row-json-close" aria-label="Close">q close</button>
+      </div>
+      <pre class="row-json-body" id="row-json-body"></pre>
+    </div>
+  </div>
   <script>
     const HELP = `csv-utils — browser UI
 
@@ -321,6 +366,7 @@
   ←/→        previous / next column
   PgUp/PgDn  scroll 10 rows
   c          column info (type, format, stats)
+  r          row as JSON (drag title; resize corner; scroll overflow)
   ?          help
   q          close panel / help
 
@@ -641,6 +687,7 @@ Theme button (header): System · Light · Dark.`;
       document.getElementById('help-text').textContent = HELP;
 
       renderInfoPane(state);
+      renderRowJsonPane(state);
 
       requestAnimationFrame(() => {
         updateVScroll(document.getElementById('table-vscroll'), state.table_rows_scroll);
@@ -649,6 +696,30 @@ Theme button (header): System · Light · Dark.`;
       });
 
       schedulePoll(state);
+    }
+
+    function renderRowJsonPane(state) {
+      const overlay = document.getElementById('row-json');
+      const box = document.getElementById('row-json-box');
+      const body = document.getElementById('row-json-body');
+      const heading = document.getElementById('row-json-heading');
+      overlay.classList.toggle('open', !!state.show_row_json);
+      if (!state.show_row_json) {
+        body.textContent = '';
+        return;
+      }
+      const rowLabel = (state.row_json_row ?? state.selected_row) + 1;
+      heading.textContent = `Row ${rowLabel} JSON`;
+      body.textContent = state.row_json || '{}';
+      if (!box.dataset.placed) {
+        const width = Math.min(520, Math.max(320, window.innerWidth * 0.45));
+        const height = Math.min(420, Math.max(220, window.innerHeight * 0.45));
+        box.style.width = `${width}px`;
+        box.style.height = `${height}px`;
+        box.style.left = `${Math.max(16, (window.innerWidth - width) / 2)}px`;
+        box.style.top = `${Math.max(16, (window.innerHeight - height) / 2)}px`;
+        box.dataset.placed = '1';
+      }
     }
 
     function renderInfoPane(state) {
@@ -740,6 +811,9 @@ Theme button (header): System · Light · Dark.`;
     }
 
     document.addEventListener('keydown', (e) => {
+      if (lastState?.show_row_json) {
+        if (e.key === 'q' || e.key === 'r') { e.preventDefault(); postAction('close_row_json', null); return; }
+      }
       if (lastState?.show_column_info) {
         if (e.key === 'q') { e.preventDefault(); postAction('close_column_info', null); return; }
         if (e.key === 'ArrowUp') { e.preventDefault(); postAction('column_info_focus_delta', -1); return; }
@@ -758,8 +832,36 @@ Theme button (header): System · Light · Dark.`;
       else if (e.key === 'Home') { e.preventDefault(); postAction('go_home', null); }
       else if (e.key === 'End') { e.preventDefault(); postAction('go_end', null); }
       else if (e.key === 'c') { e.preventDefault(); postAction('open_column_info', null); }
+      else if (e.key === 'r') { e.preventDefault(); postAction('open_row_json', null); }
       else if (e.key === '?') { e.preventDefault(); postAction('toggle_help', null); }
     });
+
+    (() => {
+      const title = document.getElementById('row-json-title');
+      const box = document.getElementById('row-json-box');
+      let drag = null;
+      title.addEventListener('mousedown', (e) => {
+        if (e.target.closest('button')) return;
+        drag = {
+          startX: e.clientX,
+          startY: e.clientY,
+          left: box.offsetLeft,
+          top: box.offsetTop,
+        };
+        e.preventDefault();
+      });
+      window.addEventListener('mousemove', (e) => {
+        if (!drag) return;
+        const dx = e.clientX - drag.startX;
+        const dy = e.clientY - drag.startY;
+        box.style.left = `${Math.max(0, drag.left + dx)}px`;
+        box.style.top = `${Math.max(0, drag.top + dy)}px`;
+      });
+      window.addEventListener('mouseup', () => { drag = null; });
+      document.getElementById('row-json-close').addEventListener('click', () => {
+        postAction('close_row_json', null);
+      });
+    })();
 
     document.getElementById('table-wrap').addEventListener('wheel', (e) => {
       e.preventDefault();

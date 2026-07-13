@@ -67,6 +67,17 @@ pub struct TableViewState {
     pub column_info_filter_draft: String,
     /// Scroll offset (lines) for the column info panel content.
     pub column_info_scroll: u16,
+    /// Floating panel showing the selected row as pretty-printed JSON.
+    pub show_row_json: bool,
+    /// Vertical scroll offset (lines) for the row JSON panel.
+    pub row_json_scroll_y: u16,
+    /// Horizontal scroll offset (columns) for the row JSON panel.
+    pub row_json_scroll_x: u16,
+    /// Optional persisted panel geometry (`None` = centered default).
+    pub row_json_x: Option<u16>,
+    pub row_json_y: Option<u16>,
+    pub row_json_width: Option<u16>,
+    pub row_json_height: Option<u16>,
     /// Cached result of the row-filter scan. `None` means stale — recompute on next access.
     pub(crate) cached_matching_rows: Option<Vec<usize>>,
     /// Row count at the time the cache was built, used to detect new rows arriving.
@@ -137,6 +148,13 @@ impl Default for TableViewState {
             column_info_filter_editing: false,
             column_info_filter_draft: String::new(),
             column_info_scroll: 0,
+            show_row_json: false,
+            row_json_scroll_y: 0,
+            row_json_scroll_x: 0,
+            row_json_x: None,
+            row_json_y: None,
+            row_json_width: None,
+            row_json_height: None,
             cached_matching_rows: None,
             cached_row_count: 0,
             column_status: Vec::new(),
@@ -1298,6 +1316,7 @@ impl AppModel {
     }
 
     pub fn open_column_info_pane(&mut self) {
+        self.close_row_json_pane();
         let col = self.view.selected_col;
         self.view.show_column_info = true;
         self.view.column_info_decimal_editing = false;
@@ -1320,6 +1339,106 @@ impl AppModel {
         self.view.column_info_filter_editing = false;
         self.view.column_info_filter_draft.clear();
         self.view.column_info_scroll = 0;
+    }
+
+    pub const MIN_ROW_JSON_WIDTH: u16 = 30;
+    pub const MIN_ROW_JSON_HEIGHT: u16 = 8;
+
+    pub fn selected_row_as_json_pretty(&self) -> Option<String> {
+        let headers = self.preview.headers();
+        let fields = self.preview.row_fields(self.view.selected_row)?;
+        Some(crate::json_view::format_row_pretty(&headers, &fields))
+    }
+
+    pub fn row_json_lines(&self) -> Vec<String> {
+        self.selected_row_as_json_pretty()
+            .map(|text| text.lines().map(str::to_string).collect())
+            .unwrap_or_else(|| vec!["{}".to_string()])
+    }
+
+    pub fn row_json_content_size(&self) -> (usize, usize) {
+        let lines = self.row_json_lines();
+        let height = lines.len().max(1);
+        let width = lines
+            .iter()
+            .map(|line| line.chars().count())
+            .max()
+            .unwrap_or(1)
+            .max(1);
+        (height, width)
+    }
+
+    pub fn open_row_json_pane(&mut self) {
+        self.close_column_info_pane();
+        self.view.show_help = false;
+        self.view.show_row_json = true;
+        self.view.row_json_scroll_x = 0;
+        self.view.row_json_scroll_y = 0;
+    }
+
+    pub fn close_row_json_pane(&mut self) {
+        self.view.show_row_json = false;
+        self.view.row_json_scroll_x = 0;
+        self.view.row_json_scroll_y = 0;
+    }
+
+    pub fn set_row_json_scroll(&mut self, scroll_x: usize, scroll_y: usize, viewport_w: u16, viewport_h: u16) {
+        self.view.row_json_scroll_x = scroll_x as u16;
+        self.view.row_json_scroll_y = scroll_y as u16;
+        self.clamp_row_json_scroll(viewport_w, viewport_h);
+    }
+
+    pub fn row_json_scroll_by(&mut self, dx: i32, dy: i32, viewport_w: u16, viewport_h: u16) {
+        let next_x = (self.view.row_json_scroll_x as i32 + dx).max(0) as u16;
+        let next_y = (self.view.row_json_scroll_y as i32 + dy).max(0) as u16;
+        self.view.row_json_scroll_x = next_x;
+        self.view.row_json_scroll_y = next_y;
+        self.clamp_row_json_scroll(viewport_w, viewport_h);
+    }
+
+    pub fn clamp_row_json_scroll(&mut self, viewport_w: u16, viewport_h: u16) {
+        let (content_h, content_w) = self.row_json_content_size();
+        let max_y = content_h.saturating_sub(viewport_h.max(1) as usize);
+        let max_x = content_w.saturating_sub(viewport_w.max(1) as usize);
+        self.view.row_json_scroll_y = (self.view.row_json_scroll_y as usize).min(max_y) as u16;
+        self.view.row_json_scroll_x = (self.view.row_json_scroll_x as usize).min(max_x) as u16;
+    }
+
+    pub fn set_row_json_geometry(&mut self, x: u16, y: u16, width: u16, height: u16) {
+        self.view.row_json_x = Some(x);
+        self.view.row_json_y = Some(y);
+        self.view.row_json_width = Some(width.max(Self::MIN_ROW_JSON_WIDTH));
+        self.view.row_json_height = Some(height.max(Self::MIN_ROW_JSON_HEIGHT));
+    }
+
+    pub fn clamp_row_json_geometry(&mut self, screen_width: u16, screen_height: u16) {
+        if !self.view.show_row_json {
+            return;
+        }
+        let width = self
+            .view
+            .row_json_width
+            .unwrap_or(screen_width.saturating_mul(60) / 100)
+            .clamp(Self::MIN_ROW_JSON_WIDTH, screen_width.max(Self::MIN_ROW_JSON_WIDTH));
+        let height = self
+            .view
+            .row_json_height
+            .unwrap_or(screen_height.saturating_mul(50) / 100)
+            .clamp(Self::MIN_ROW_JSON_HEIGHT, screen_height.max(Self::MIN_ROW_JSON_HEIGHT));
+        let max_x = screen_width.saturating_sub(width);
+        let max_y = screen_height.saturating_sub(height);
+        if let Some(x) = self.view.row_json_x {
+            self.view.row_json_x = Some(x.min(max_x));
+        }
+        if let Some(y) = self.view.row_json_y {
+            self.view.row_json_y = Some(y.min(max_y));
+        }
+        if self.view.row_json_width.is_some() {
+            self.view.row_json_width = Some(width);
+        }
+        if self.view.row_json_height.is_some() {
+            self.view.row_json_height = Some(height);
+        }
     }
 
     fn column_info_kind_shows_repr(&self, col: usize, kind: ColumnKind) -> bool {
@@ -2326,6 +2445,31 @@ mod tests {
         model.view.column_list_offset = 90;
         model.clamp_column_list_offset(10);
         assert_eq!(model.view.column_list_offset, 90);
+    }
+
+    #[test]
+    fn row_json_pane_opens_with_pretty_json_and_geometry() {
+        let path = PathBuf::from("test-data/generated/test_1000x100.csv");
+        if !path.exists() {
+            return;
+        }
+        let mut model = AppModel::open(Some(path)).expect("open csv");
+        model.open_column_info_pane();
+        assert!(model.view.show_column_info);
+        model.open_row_json_pane();
+        assert!(model.view.show_row_json);
+        assert!(!model.view.show_column_info);
+        let text = model.selected_row_as_json_pretty().expect("json");
+        assert!(text.contains('{'));
+        assert!(text.contains('\n'));
+        model.set_row_json_geometry(5, 4, 40, 12);
+        assert_eq!(model.view.row_json_x, Some(5));
+        assert_eq!(model.view.row_json_width, Some(40));
+        model.row_json_scroll_by(2, 3, 20, 8);
+        assert_eq!(model.view.row_json_scroll_x, 2);
+        assert_eq!(model.view.row_json_scroll_y, 3);
+        model.close_row_json_pane();
+        assert!(!model.view.show_row_json);
     }
 
     #[test]

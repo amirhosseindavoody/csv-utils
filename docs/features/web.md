@@ -24,13 +24,14 @@ Same logical regions as the TUI: title/meta bar, data table, column sidebar, hin
 
 ## Keyboard
 
-Mirrors the TUI: `↑↓←→`, `PgUp`/`PgDn`, `Home`/`End`, `c` (column info), `?`, `q` (close panel).
+Mirrors the TUI: `↑↓←→`, `PgUp`/`PgDn`, `Home`/`End`, `c` (column info), `r` (row JSON), `?`, `q` (close panel).
 
 ## Mouse
 
 - Click table cells or column list items to select
 - Wheel on table / column list scrolls rows / sidebar
 - Column info panel scrolls when content exceeds the viewport (wheel or scrollbar)
+- Row JSON panel: drag the title to move, resize from the corner, scroll overflow with wheel/scrollbars
 - Table and column sidebar show scroll indicators when row/column lists extend past the viewport; drag the thumb or track to scroll (wheel still drives navigation via the API)
 - Drag column header **right edge** to resize (4–64 chars); synced on mouse release via API
 
@@ -50,6 +51,8 @@ Example action:
 {"action": "set_column_width", "value": {"col": 0, "width": 24}}
 {"action": "open_column_info"}
 {"action": "close_column_info"}
+{"action": "open_row_json"}
+{"action": "close_row_json"}
 {"action": "column_info_focus_delta", "value": 1}
 {"action": "column_info_apply"}
 {"action": "set_column_kind", "value": {"col": 0, "kind": "float"}}

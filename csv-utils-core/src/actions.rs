@@ -44,6 +44,14 @@ pub enum ViewAction {
     SetColOffset(usize),
     SetColumnListOffset(usize),
     SetColumnInfoScroll { scroll: usize, viewport: u16 },
+    OpenRowJson,
+    CloseRowJson,
+    SetRowJsonScroll {
+        scroll_x: usize,
+        scroll_y: usize,
+        viewport_w: u16,
+        viewport_h: u16,
+    },
 }
 
 impl AppModel {
@@ -140,6 +148,14 @@ impl AppModel {
                 let total = self.column_info_content_line_count(col);
                 self.set_column_info_scroll_position(scroll, viewport, total);
             }
+            ViewAction::OpenRowJson => self.open_row_json_pane(),
+            ViewAction::CloseRowJson => self.close_row_json_pane(),
+            ViewAction::SetRowJsonScroll {
+                scroll_x,
+                scroll_y,
+                viewport_w,
+                viewport_h,
+            } => self.set_row_json_scroll(scroll_x, scroll_y, viewport_w, viewport_h),
         }
         self.tick(layout);
     }
