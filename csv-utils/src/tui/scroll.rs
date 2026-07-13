@@ -15,6 +15,21 @@ impl ScrollMetrics {
     pub fn max_position(self) -> usize {
         self.content_length.saturating_sub(self.viewport_length)
     }
+
+    /// `ScrollbarState::content_length` so the thumb reaches the track end at
+    /// [`Self::max_position`]. Ratatui treats `content_length - 1` as the last
+    /// position, so we pass `max_position + 1`.
+    pub fn scrollbar_state_content_length(self) -> usize {
+        self.max_position().saturating_add(1)
+    }
+}
+
+/// Round half away from zero the same way ratatui's scrollbar does.
+const fn rounding_divide(numerator: usize, denominator: usize) -> usize {
+    if denominator == 0 {
+        return 0;
+    }
+    (numerator + denominator / 2) / denominator
 }
 
 pub fn vertical_scrollbar_track(area: Rect) -> Rect {
@@ -45,21 +60,29 @@ pub fn horizontal_scrollbar_track(area: Rect) -> Rect {
     }
 }
 
+/// Thumb start and length matching ratatui's `Scrollbar::part_lengths` when the
+/// state uses [`ScrollMetrics::scrollbar_state_content_length`].
 pub fn vertical_thumb_bounds(track_len: usize, metrics: ScrollMetrics) -> (usize, usize) {
     if track_len == 0 || !metrics.needs_scrollbar() {
         return (0, track_len.max(1));
     }
-    let track_length = track_len as f64;
-    let viewport_length = metrics.viewport_length as f64;
-    let max_position = metrics.content_length.saturating_sub(1) as f64;
-    let start_position = (metrics.position as f64).clamp(0.0, max_position);
-    let max_viewport_position = max_position + viewport_length;
-    let end_position = start_position + viewport_length;
-    let thumb_start = start_position * track_length / max_viewport_position;
-    let thumb_end = end_position * track_length / max_viewport_position;
-    let thumb_start = thumb_start.round().clamp(0.0, track_length - 1.0) as usize;
-    let thumb_end = thumb_end.round().clamp(0.0, track_length) as usize;
-    let thumb_length = thumb_end.saturating_sub(thumb_start).max(1);
+    let max_position = metrics.max_position();
+    let start_position = metrics.position.min(max_position);
+    let viewport_length = metrics.viewport_length;
+    let max_viewport_position = max_position.saturating_add(viewport_length);
+    if max_viewport_position == 0 {
+        return (0, track_len);
+    }
+    let thumb_length = rounding_divide(
+        viewport_length.saturating_mul(track_len),
+        max_viewport_position,
+    )
+    .clamp(1, track_len);
+    let thumb_start = rounding_divide(
+        start_position.saturating_mul(track_len),
+        max_viewport_position,
+    )
+    .min(track_len.saturating_sub(thumb_length));
     (thumb_start, thumb_length)
 }
 
@@ -85,13 +108,22 @@ pub fn thumb_rect(track: Rect, thumb_start: usize, thumb_len: usize, vertical: b
     }
 }
 
+/// Map a thumb-top track coordinate to a scroll position.
+///
+/// Uses the thumb travel range (`track_len - thumb_len`) so dragging the thumb
+/// to either end of the track reaches `0` and [`ScrollMetrics::max_position`].
 pub fn position_from_vertical_track_y(rel_y: u16, track_len: u16, metrics: ScrollMetrics) -> usize {
     let max_pos = metrics.max_position();
-    if track_len <= 1 {
-        return rel_y.min(max_pos as u16) as usize;
+    if max_pos == 0 || track_len == 0 {
+        return 0;
     }
-    let ratio = (rel_y as f64 / f64::from(track_len.saturating_sub(1))).clamp(0.0, 1.0);
-    (ratio * max_pos as f64).round() as usize
+    let (_, thumb_len) = vertical_thumb_bounds(track_len as usize, metrics);
+    let thumb_travel = (track_len as usize).saturating_sub(thumb_len);
+    if thumb_travel == 0 {
+        return 0;
+    }
+    let thumb_top = (rel_y as usize).min(thumb_travel);
+    rounding_divide(thumb_top.saturating_mul(max_pos), thumb_travel).min(max_pos)
 }
 
 pub fn position_from_horizontal_track_x(rel_x: u16, track_len: u16, metrics: ScrollMetrics) -> usize {
@@ -188,4 +220,77 @@ pub enum HorizontalScrollHit {
     PageRight,
     Thumb { grab_offset: u16 },
     Track { rel_x: u16 },
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn metrics(content: usize, viewport: usize, position: usize) -> ScrollMetrics {
+        ScrollMetrics {
+            content_length: content,
+            viewport_length: viewport,
+            position,
+        }
+    }
+
+    #[test]
+    fn thumb_reaches_track_end_at_max_position() {
+        let m = metrics(100, 20, 80);
+        assert_eq!(m.max_position(), 80);
+        let track_len = 40;
+        let (start, len) = vertical_thumb_bounds(track_len, m);
+        assert_eq!(start + len, track_len, "thumb must sit flush with track end");
+    }
+
+    #[test]
+    fn thumb_starts_at_track_start_at_zero() {
+        let m = metrics(100, 20, 0);
+        let (start, len) = vertical_thumb_bounds(40, m);
+        assert_eq!(start, 0);
+        assert!(len >= 1);
+        assert!(len < 40);
+    }
+
+    #[test]
+    fn drag_to_track_end_reaches_max_position() {
+        let m = metrics(100, 20, 0);
+        let track_len = 40u16;
+        let (_, thumb_len) = vertical_thumb_bounds(track_len as usize, m);
+        let thumb_travel = track_len as usize - thumb_len;
+        let position =
+            position_from_vertical_track_y(thumb_travel as u16, track_len, m);
+        assert_eq!(position, m.max_position());
+    }
+
+    #[test]
+    fn drag_to_track_start_reaches_zero() {
+        let m = metrics(100, 20, 40);
+        assert_eq!(position_from_vertical_track_y(0, 40, m), 0);
+    }
+
+    #[test]
+    fn thumb_position_round_trips_near_ends() {
+        let m0 = metrics(200, 25, 0);
+        let track = 50usize;
+        let (start0, len0) = vertical_thumb_bounds(track, m0);
+        assert_eq!(start0, 0);
+
+        let max = m0.max_position();
+        let m_end = metrics(200, 25, max);
+        let (start_end, len_end) = vertical_thumb_bounds(track, m_end);
+        assert_eq!(start_end + len_end, track);
+        assert_eq!(len0, len_end, "thumb size must be stable across positions");
+
+        let recovered = position_from_vertical_track_y(start_end as u16, track as u16, m_end);
+        assert_eq!(recovered, max);
+    }
+
+    #[test]
+    fn scrollbar_state_content_length_lets_thumb_reach_end() {
+        let m = metrics(100, 20, 80);
+        // Ratatui clamps position to content_length - 1.
+        assert_eq!(m.scrollbar_state_content_length(), 81);
+        assert_eq!(m.position.min(m.scrollbar_state_content_length() - 1), 80);
+    }
 }

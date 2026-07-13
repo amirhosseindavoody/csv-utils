@@ -744,14 +744,11 @@ fn table_row_scroll_metrics(model: &AppModel, area: Rect) -> ScrollMetrics {
 
 fn table_col_scroll_metrics(model: &AppModel, area: Rect) -> ScrollMetrics {
     let table_width = table_data_width(model, area);
-    let visible = model.visible_table_columns(table_width);
+    // Use the stable fit-from-start count (same basis as max_col_offset) so the
+    // thumb size does not jitter as variable-width columns enter/leave view.
     ScrollMetrics {
         content_length: model.scrollable_table_columns().len(),
-        viewport_length: visible
-            .iter()
-            .filter(|&&c| !model.is_column_pinned(c))
-            .count()
-            .max(1),
+        viewport_length: model.scrollable_visible_count(table_width).max(1),
         position: model.view.col_offset,
     }
 }
@@ -826,17 +823,16 @@ fn handle_vertical_scroll_hit(
             }
             VerticalScrollHit::Track { rel_y } => {
                 let track = vertical_scrollbar_track(area);
-                let position =
-                    position_from_vertical_track_y(rel_y, track.height, metrics);
-                apply_scroll_position(model, target, position);
                 let (_, thumb_len) =
-                    super::scroll::vertical_thumb_bounds(track.height as usize, ScrollMetrics {
-                        position,
-                        ..metrics
-                    });
+                    super::scroll::vertical_thumb_bounds(track.height as usize, metrics);
+                let grab_offset = (thumb_len / 2) as u16;
+                let thumb_top = rel_y.saturating_sub(grab_offset);
+                let position =
+                    position_from_vertical_track_y(thumb_top, track.height, metrics);
+                apply_scroll_position(model, target, position);
                 *scrollbar_drag = Some(ScrollbarDrag {
                     target,
-                    grab_offset: (thumb_len / 2) as u16,
+                    grab_offset,
                 });
             }
         },
@@ -853,46 +849,55 @@ fn handle_horizontal_scroll_hit(
     model: &mut AppModel,
     scrollbar_drag: &mut Option<ScrollbarDrag>,
 ) {
-    if !matches!(kind, MouseEventKind::Down(crossterm::event::MouseButton::Left)) {
-        return;
-    }
-    match hit {
-        HorizontalScrollHit::PageLeft => {
+    match kind {
+        MouseEventKind::ScrollUp => {
+            apply_scroll_position(model, target, metrics.position.saturating_sub(3));
+        }
+        MouseEventKind::ScrollDown => {
             apply_scroll_position(
                 model,
                 target,
-                metrics.position.saturating_sub(metrics.viewport_length.max(1)),
+                (metrics.position + 3).min(metrics.max_position()),
             );
         }
-        HorizontalScrollHit::PageRight => {
-            apply_scroll_position(
-                model,
-                target,
-                (metrics.position + metrics.viewport_length.max(1))
-                    .min(metrics.max_position()),
-            );
-        }
-        HorizontalScrollHit::Thumb { grab_offset } => {
-            *scrollbar_drag = Some(ScrollbarDrag {
-                target,
-                grab_offset,
-            });
-        }
-        HorizontalScrollHit::Track { rel_x } => {
-            let track = horizontal_scrollbar_track(area);
-            let position =
-                position_from_horizontal_track_x(rel_x, track.width, metrics);
-            apply_scroll_position(model, target, position);
-            let (_, thumb_len) =
-                super::scroll::horizontal_thumb_bounds(track.width as usize, ScrollMetrics {
-                    position,
-                    ..metrics
+        MouseEventKind::Down(crossterm::event::MouseButton::Left) => match hit {
+            HorizontalScrollHit::PageLeft => {
+                apply_scroll_position(
+                    model,
+                    target,
+                    metrics.position.saturating_sub(metrics.viewport_length.max(1)),
+                );
+            }
+            HorizontalScrollHit::PageRight => {
+                apply_scroll_position(
+                    model,
+                    target,
+                    (metrics.position + metrics.viewport_length.max(1))
+                        .min(metrics.max_position()),
+                );
+            }
+            HorizontalScrollHit::Thumb { grab_offset } => {
+                *scrollbar_drag = Some(ScrollbarDrag {
+                    target,
+                    grab_offset,
                 });
-            *scrollbar_drag = Some(ScrollbarDrag {
-                target,
-                grab_offset: (thumb_len / 2) as u16,
-            });
-        }
+            }
+            HorizontalScrollHit::Track { rel_x } => {
+                let track = horizontal_scrollbar_track(area);
+                let (_, thumb_len) =
+                    super::scroll::horizontal_thumb_bounds(track.width as usize, metrics);
+                let grab_offset = (thumb_len / 2) as u16;
+                let thumb_left = rel_x.saturating_sub(grab_offset);
+                let position =
+                    position_from_horizontal_track_x(thumb_left, track.width, metrics);
+                apply_scroll_position(model, target, position);
+                *scrollbar_drag = Some(ScrollbarDrag {
+                    target,
+                    grab_offset,
+                });
+            }
+        },
+        _ => {}
     }
 }
 
@@ -1525,6 +1530,8 @@ fn handle_mouse(
     if matches!(
         mouse.kind,
         MouseEventKind::Down(crossterm::event::MouseButton::Left)
+            | MouseEventKind::ScrollUp
+            | MouseEventKind::ScrollDown
     ) && areas.table.contains(pos)
     {
         let row_metrics = table_row_scroll_metrics(model, areas.table);
@@ -1558,6 +1565,8 @@ fn handle_mouse(
     if matches!(
         mouse.kind,
         MouseEventKind::Down(crossterm::event::MouseButton::Left)
+            | MouseEventKind::ScrollUp
+            | MouseEventKind::ScrollDown
     ) && areas.columns.contains(pos)
     {
         let metrics = column_list_scroll_metrics(model, areas.columns);
@@ -2331,28 +2340,25 @@ fn draw_table(frame: &mut ratatui::Frame, area: Rect, model: &AppModel) {
     let empty: &[usize] = &[];
     let matching = model.cached_matching_rows().unwrap_or(empty);
     let scrollable_rows = model.scrollable_table_rows(matching);
-    let scrollable_visible = visible_row_indices
-        .iter()
-        .filter(|&&r| !model.is_row_pinned(r))
-        .count();
+    let viewport = area.height.saturating_sub(3) as usize;
+    let scrollable_visible = model.scrollable_row_visible_count(viewport).max(1);
     render_vertical_scrollbar(
         frame,
         area,
         scrollable_rows.len(),
-        scrollable_visible.max(1),
+        scrollable_visible,
         model.view.row_offset,
     );
 
     let table_cols = model.scrollable_table_columns();
-    let scrollable_visible = col_indices
-        .iter()
-        .filter(|&&c| !model.is_column_pinned(c))
-        .count();
+    let scrollable_visible = model
+        .scrollable_visible_count(table_data_width(model, area))
+        .max(1);
     render_horizontal_scrollbar(
         frame,
         area,
         table_cols.len(),
-        scrollable_visible.max(1),
+        scrollable_visible,
         model.view.col_offset,
     );
 }
@@ -2679,9 +2685,16 @@ fn render_vertical_scrollbar(
     if content_length <= viewport_length || viewport_length == 0 {
         return;
     }
-    let mut state = ScrollbarState::new(content_length)
+    let metrics = ScrollMetrics {
+        content_length,
+        viewport_length,
+        position,
+    };
+    // Ratatui treats content_length-1 as the last thumb position; pass
+    // max_scroll+1 so the thumb sits flush at the track end when scrolled fully.
+    let mut state = ScrollbarState::new(metrics.scrollbar_state_content_length())
         .viewport_content_length(viewport_length)
-        .position(position);
+        .position(position.min(metrics.max_position()));
     frame.render_stateful_widget(
         Scrollbar::new(ScrollbarOrientation::VerticalRight)
             .begin_symbol(Some("▲"))
@@ -2704,9 +2717,14 @@ fn render_horizontal_scrollbar(
     if content_length <= viewport_length || viewport_length == 0 {
         return;
     }
-    let mut state = ScrollbarState::new(content_length)
+    let metrics = ScrollMetrics {
+        content_length,
+        viewport_length,
+        position,
+    };
+    let mut state = ScrollbarState::new(metrics.scrollbar_state_content_length())
         .viewport_content_length(viewport_length)
-        .position(position);
+        .position(position.min(metrics.max_position()));
     frame.render_stateful_widget(
         Scrollbar::new(ScrollbarOrientation::HorizontalBottom)
             .begin_symbol(Some("◀"))

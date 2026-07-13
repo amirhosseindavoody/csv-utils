@@ -59,7 +59,7 @@ Data table uses ratatui `Table`. Column sidebar uses manual `Paragraph` lines (n
 
 Settings load from `~/.config/csv-utils/csv-utils.json` (created on first open), with optional `./csv-utils.json` in the working directory overriding individual fields; see [settings config](../design/settings-config.md).
 
-Each frame (when the TUI redraws): `maybe_refit_column_widths()` (when loaded row count changes), `clamp_selection(viewport_rows, table_width)`, and `clamp_column_list_offset(visible_height)`. The event loop draws only when dirty — after input, resize, or throttled background-scan progress (~100ms) — so idle CPU stays low once loading finishes. Dragging the table row/column scrollbar decouples scroll from the selected cell until you move selection (arrows, click, or wheel on the table).
+Each frame (when the TUI redraws): `maybe_refit_column_widths()` (when loaded row count changes), `clamp_selection(viewport_rows, table_width)`, and `clamp_column_list_offset(visible_height)`. The event loop draws only when dirty — after input, resize, or throttled background-scan progress (~100ms) — so idle CPU stays low once loading finishes. Dragging the table row/column scrollbar decouples scroll from the selected cell until you move selection (arrows, click, or wheel on the table). Scrollbar thumb size and drag mapping use a stable viewport length (rows: scrollable rows that fit; columns: fit-from-start count matching `max_col_offset`) so the thumb does not jitter while dragging, and the thumb sits flush with the track end at max scroll.
 
 ## Keyboard
 
@@ -141,7 +141,7 @@ The panel shows editable **type** options filtered by inferred data (e.g. text-o
 | Table body cell | Click to select; **drag** to select a rectangular cell range; **Ctrl+click** toggles individual cells (no fill between) |
 | Row gutter (`▸`/`▐`) **right-click** | Open context menu: **Select**, **Hide** / **Unhide**, **Pin** / **Unpin** |
 | Table wheel | Move `selected_row` ±3 |
-| Table / column sidebar / column info | Scrollbars (▲▼ / ◀▶) when content exceeds the viewport; drag thumb or track |
+| Table / column sidebar / column info | Scrollbars (▲▼ / ◀▶) when content exceeds the viewport; drag thumb or track (thumb reaches the track end at max scroll); wheel over a scrollbar scrolls that pane |
 | Column list click | Select column; **Ctrl+click** adds column to selection |
 | Column list **right-click** | Open context menu: **Select**, **Hide** / **Unhide**, **Info**, **Pin** / **Unpin**, **Sort ascending** / **Sort descending**, **Clear sort** |
 | Column list left border | Drag to resize sidebar width (16–80 chars) |
