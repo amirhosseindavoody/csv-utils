@@ -1,17 +1,16 @@
 # CLI
 
-Streaming commands for large CSV files. Implementation: `csv-utils-core/src/engine.rs`.
+Streaming commands for large CSV files.
 
-Running `csv` with no arguments launches the [TUI](tui.md) file picker.
-`csv <file.csv>` opens the file in the TUI directly (`csv tui <file.csv>` is the same).
+Running `csv` with no arguments opens the [TUI](tui.md) file picker. `csv <file.csv>` opens that file in the TUI (`csv tui <file.csv>` is the same).
 
-Global flags: `-h` / `--help`, `-V` / `--version` (prints package version from `Cargo.toml`).
+Global flags: `-h` / `--help`, `-V` / `--version`.
 
 ## Commands
 
 | Command | Usage | Default limit | Behavior |
 |---------|--------|---------------|----------|
-| `stats` | `stats <file.csv>` | — | Per-column row/null/non-null counts and `max_width` |
+| `stats` | `stats <file.csv>` | — | Per-column row / null / non-null counts and `max_width` |
 | `unique` | `unique <file> <col1[,col2,...]> [limit]` | 50 | Distinct value combinations as JSON objects |
 | `json` | `json <file> [limit]` | 20 | Rows as JSON objects |
 | `filter` | `filter <file> <expr> [limit]` | 50 | Matching rows as JSON objects |
@@ -30,16 +29,12 @@ pixi run csv -- json sample.csv 10
 
 ## Filter expressions
 
-Parser: `csv-utils-core/predicate.rs`
-
 - Operators: `=`, `!=`, `>`, `<`, `contains`, `in`
-- Comma-separated **AND** between conditions
+- Comma-separated conditions are **AND**ed
 - Examples: `city=Tehran`, `age>30`, `name contains Ali`, `city in Tehran|Paris`
 
 ## Loading model
 
-CLI reads the file sequentially and calls `schema::split_row` on every data line.
-TUI/web preview mmap the file, index records in the background, and parse only
-visible rows on demand.
+CLI commands read the file sequentially and parse every data line. TUI/web preview mmap the file, index records in the background, and parse visible rows on demand.
 
 See [data loading](../reference/data-loading.md) for the interactive path.

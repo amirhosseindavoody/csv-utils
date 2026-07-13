@@ -1,7 +1,5 @@
 # Design: large-file CSV preview
 
-Status: **implemented** in `csv-utils-core` (TUI and web preview path).
-
 The TUI and web UIs load CSV files through a preview pipeline that maps the file
 read-only, indexes record byte offsets, and parses rows on demand with the Rust
 [`csv`](https://docs.rs/csv) crate.
@@ -88,10 +86,10 @@ CLI commands (`engine.rs`, `unique.rs`) still stream the file line-by-line and
 use `schema::split_row` (backed by the `csv` crate). They do not use mmap or the
 offset index.
 
-## Future option: Apache Arrow
+## Optional direction: Apache Arrow
 
-[Apache Arrow](https://arrow.apache.org/) may be useful later for **vectorized
-batch statistics** over fixed-size row segments. It is not part of the preview
+[Apache Arrow](https://arrow.apache.org/) could support vectorized batch
+statistics over fixed-size row segments later. It is not part of the preview
 loader; the interactive path stays mmap + index + on-demand `csv` parsing.
 
 ## Caveats
@@ -106,5 +104,5 @@ loader; the interactive path stays mmap + index + on-demand `csv` parsing.
 - [Data loading](../reference/data-loading.md)
 - [Architecture](../architecture.md)
 - [Row filtering design](row-filtering.md) — filter cache and its interaction with the background scan
-- [Performance & TUI responsiveness](performance-tui-responsiveness.md) — proposed scan/lock/redraw improvements
+- [Performance & TUI responsiveness](performance-tui-responsiveness.md) — hot path and remaining opportunities
 - [Known limitations](../reference/limitations.md)

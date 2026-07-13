@@ -6,21 +6,21 @@ Browser table explorer backed by the same `AppModel` as the TUI. Start it from t
 
 1. Open a CSV in the TUI: `pixi run csv test-data/generated/test_1000x100.csv`
 2. Type **`:web`** and press Enter
-3. The terminal view closes; the URL is printed (e.g. `http://127.0.0.1:54321/`)
-4. Open that URL in your browser
+3. The terminal view closes; the URL is printed (for example `http://127.0.0.1:54321/`)
+4. Open that URL in a browser
 5. Press **Ctrl+C** in the terminal to stop the server
 
-The server binds to `127.0.0.1` on a free port chosen by the OS. Layout dimensions are taken from the terminal viewport at handoff time.
+The server binds to `127.0.0.1` on a free port. Layout dimensions are taken from the terminal viewport at handoff time.
 
 ## Page layout
 
-Same logical regions as the TUI: title/meta bar, data table, column sidebar, hint footer.
+Same logical regions as the TUI: title bar, data table, column sidebar, and hint footer.
 
 ## Theme
 
-- **Default:** follows OS light/dark via `prefers-color-scheme`
-- **Header Theme button:** cycles **System → Light → Dark**
-- Stored in `localStorage` (`csv-utils-theme`) until set back to System
+- **Default:** OS light/dark via `prefers-color-scheme`
+- **Theme button:** cycles System → Light → Dark
+- Stored in `localStorage` (`csv-utils-theme`) until returned to System
 
 ## Keyboard
 
@@ -29,21 +29,21 @@ Mirrors the TUI: `↑↓←→`, `PgUp`/`PgDn`, `Home`/`End`, `c` (column info),
 ## Mouse
 
 - Click table cells or column list items to select
-- Wheel on table / column list scrolls rows / sidebar
-- Column info panel scrolls when content exceeds the viewport (wheel or scrollbar)
-- Row JSON panel: drag the title to move, resize from the corner, scroll overflow with wheel/scrollbars
-- Table and column sidebar show scroll indicators when row/column lists extend past the viewport; drag the thumb or track to scroll (wheel still drives navigation via the API)
-- Drag column header **right edge** to resize (4–64 chars); synced on mouse release via API
+- Wheel on the table or column list scrolls rows or the sidebar
+- Column info and row JSON panels scroll when content overflows
+- Row JSON: drag the title to move, resize from the corner
+- Table and sidebar scroll indicators support thumb/track drag
+- Drag a column header’s **right edge** to resize (4–64 chars); synced on mouse release
 
 ## JSON API
 
 | Route | Method | Purpose |
 |-------|--------|---------|
-| `/` | GET | Single-page browser UI |
+| `/` | GET | Single-page UI |
 | `/api/state` | GET | Current `ClientView` JSON |
 | `/api/action` | POST | Apply a `ViewAction` |
 
-Example action:
+Example actions:
 
 ```json
 {"action": "row_delta", "value": -1}
@@ -63,11 +63,11 @@ Example action:
 {"action": "set_column_list_offset", "value": 12}
 ```
 
-The page polls `/api/state` while the background scan runs (`scan_done: false`). Pinned columns appear in the table’s fixed left segment; pinned rows appear at the top of the table (same as the TUI). Sidebar items include a `pinned` boolean; table rows include `pinned` as well. Horizontal and vertical scroll metadata count only unpinned columns and rows respectively.
+The page polls `/api/state` while the background scan runs (`scan_done: false`). Pinned columns and rows match the TUI. Scroll metadata counts only unpinned columns and rows.
 
 Implementation: `csv-utils/src/web/server.rs`, embedded UI in `csv-utils/src/web/index.html`.
 
 ## Related
 
 - [Architecture](../architecture.md#shared-view-model)
-- [TUI](tui.md) — terminal counterpart (`:web` command)
+- [TUI](tui.md)

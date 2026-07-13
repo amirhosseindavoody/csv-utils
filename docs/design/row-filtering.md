@@ -1,10 +1,8 @@
 # Design: row filtering
 
-Status: **implemented** in `csv-utils-core` (TUI path).
-
-Row filters let the user narrow visible table rows to those where a selected
-column's value satisfies an expression. This doc covers the evaluation model,
-caching strategy, and the performance constraints that motivated the design.
+Row filters narrow visible table rows to those where a selected column’s value
+satisfies an expression. This note covers evaluation, caching, and the
+performance constraints that shaped the design.
 
 ## Overview
 
@@ -166,5 +164,5 @@ column count is at most a few hundred, so no caching is needed).
 
 - [Architecture](../architecture.md) — row-filter cache in the view model overview
 - [Data loading](../reference/data-loading.md) — background scan and row count growth
-- [Performance & TUI responsiveness](performance-tui-responsiveness.md) — incremental cache and filter eval proposals
+- [Performance & TUI responsiveness](performance-tui-responsiveness.md) — hot-path behavior and remaining opportunities
 - [TUI](../features/tui.md) — keyboard and column info panel usage

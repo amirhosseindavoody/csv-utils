@@ -1,7 +1,5 @@
 # Design: settings config file
 
-Status: **implemented**.
-
 csv-utils loads settings from a **global** file in the user config directory, then
 applies optional **local** overrides from the process working directory. Local
 fields win over global fields at each JSON key (deep merge for nested objects).
@@ -198,16 +196,12 @@ files continue to override it when you launch csv-utils from that directory.
 To promote a project file to global defaults, copy its contents to
 `~/.config/csv-utils/csv-utils.json` and trim any keys you do not want globally.
 
-## Future extensions
+## Possible extensions
 
-The JSON schema is intentionally small. Likely additions:
-
-- Persist per-column overrides under a `columns` key
-- Theme / TUI defaults
-- CLI default limits
-- Explicit `settings save` command to write session changes back to global or local
-
-New fields should use `#[serde(default)]` so older config files keep working.
+The JSON schema is intentionally small. Natural additions include per-column
+overrides, theme defaults, CLI default limits, and an explicit command to write
+session changes back to global or local config. New fields should use
+`#[serde(default)]` so older config files keep working.
 
 ## Related
 

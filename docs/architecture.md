@@ -50,7 +50,7 @@ Interactive UIs do not duplicate CSV state. They use:
 | `ViewAction` | `actions.rs` | Keyboard/mouse-style mutations (row/col delta, resize, etc.) |
 | `ViewLayout` | `actions.rs` | Viewport dimensions for clamping (rows, table width, sidebar height) |
 | `ClientView` | `client_view.rs` | JSON snapshot for browser clients |
-| `ViewSnapshot` | `model.rs` | Richer in-memory snapshot (future/alternate clients) |
+| `ViewSnapshot` | `model.rs` | Richer in-memory snapshot used by some internal paths |
 
 Flow:
 
@@ -115,5 +115,5 @@ csv-utils/src/
 - [Data loading](reference/data-loading.md) — preview APIs and threading
 - [CSV parsing](reference/csv-parsing.md) — `csv` crate parsing and display rules
 - [Settings config](design/settings-config.md) — global home config + local overrides
-- [Performance & TUI responsiveness](design/performance-tui-responsiveness.md) — proposed event-loop, cache, and parse improvements
+- [Performance & TUI responsiveness](design/performance-tui-responsiveness.md) — shipped hot path and remaining opportunities
 - [Build & packaging](development/build.md) — pixi tasks and conda recipe
