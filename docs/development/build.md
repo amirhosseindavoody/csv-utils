@@ -1,6 +1,6 @@
 # Build & packaging
 
-Development uses [Pixi](https://pixi.sh/latest/) for the Rust toolchain and task runner. The system `cargo` on many machines is too old for this workspace (edition 2024 / Rust ≥ 1.96); always prefer `pixi run …`.
+Development uses [Pixi](https://pixi.sh/latest/) for the Rust toolchain and task runner. Prefer `pixi run …` — system `cargo` on many machines is older than this workspace needs (edition 2024 / Rust ≥ 1.96).
 
 ## Prerequisites
 

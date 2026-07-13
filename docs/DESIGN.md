@@ -1,8 +1,6 @@
 # Design documentation
 
-Design and behavior docs have moved to the structured guide.
-
-**Start here:** [index.md](index.md)
+Design topics live in the structured guide. Prefer the [documentation hub](index.md).
 
 | Topic | Document |
 |-------|----------|
@@ -11,3 +9,4 @@ Design and behavior docs have moved to the structured guide.
 | Large-file preview | [design/large-file-preview.md](design/large-file-preview.md) |
 | Row filtering | [design/row-filtering.md](design/row-filtering.md) |
 | Settings config | [design/settings-config.md](design/settings-config.md) |
+| Performance & TUI responsiveness | [design/performance-tui-responsiveness.md](design/performance-tui-responsiveness.md) |

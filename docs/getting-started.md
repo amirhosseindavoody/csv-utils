@@ -3,7 +3,7 @@
 ## Prerequisites
 
 - [Pixi](https://pixi.sh/latest/)
-- [rustup](https://rustup.rs/) for local `cargo` builds (pixi tasks source `$HOME/.cargo/env`)
+- Optional: [rustup](https://rustup.rs/) if you run bare `cargo` outside Pixi (Pixi tasks source `$HOME/.cargo/env` when present)
 
 ## Setup
 
@@ -12,13 +12,11 @@ pixi install
 pixi run build
 ```
 
-## Binaries
+## Binary
 
 | Binary | Path | Purpose |
 |--------|------|---------|
 | `csv` | `target/release/csv` | CLI + TUI (+ browser UI via `:web`) |
-
-With pixi:
 
 ```bash
 pixi run csv -- stats sample.csv
@@ -29,7 +27,7 @@ pixi run csv test-data/generated/test_1000x100.csv
 
 ```
 csv [subcommand]
-csv [file.csv]              # open file in TUI (file picker if omitted)
+csv [file.csv]              # TUI (file picker if omitted)
 csv stats <file.csv>
 csv unique <file.csv> <col1[,col2,...]> [limit]
 csv json <file.csv> [limit]
@@ -37,19 +35,17 @@ csv filter <file.csv> <expr> [limit]
 csv tui [file.csv]          # alias for csv [file.csv]
 ```
 
-- **`csv`** or **`csv <file>`** — launches the TUI (file picker when no path is given).
-- **`tui`** — alias for `csv [file]` (optional CSV path).
-- **`:web`** (inside the TUI) — opens browser UI on a free local port and exits the terminal view (Ctrl+C stops the server).
+- **`csv`** / **`csv <file>`** — TUI (picker when no path is given)
+- **`csv tui`** — same as above
+- **`:web`** (inside the TUI) — open the browser UI on a free local port and exit the terminal view (Ctrl+C stops the server)
 
-Pixi tasks run from the **repo root**; extra args are forwarded (`pixi run csv file.csv`, `pixi run csv -- stats file.csv`).
+Pixi tasks run from the **repo root**. Extra args are forwarded (`pixi run csv file.csv`, `pixi run csv -- stats file.csv`).
 
 ## Settings
 
-User defaults live in `~/.config/csv-utils/csv-utils.json` (created on first TUI or web
-launch). Optional project overrides go in `./csv-utils.json` in the working directory;
-local fields override global ones. See [settings config](design/settings-config.md).
+Defaults live in `~/.config/csv-utils/csv-utils.json` (created on first TUI or web launch). Optional project overrides go in `./csv-utils.json` in the working directory; local fields override global ones. See [settings config](design/settings-config.md).
 
-## Generate test data
+## Test data
 
 ```bash
 pixi run gen-test-data

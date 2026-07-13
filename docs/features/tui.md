@@ -1,190 +1,142 @@
 # TUI
 
-Full-screen terminal table explorer. Stack: **ratatui** 0.29 + **crossterm**. Frontend: `csv-utils/src/tui/app.rs`.
+Full-screen terminal table explorer (`csv-utils/src/tui/app.rs`, ratatui + crossterm).
 
 ## Screen layout
 
 ```
-┌─ csv │ file.csv │ N rows [loading…] ─────────────────────┐
-│ ┌───────────────────────────────┐ ┌─ Columns (X–Y/Z) ────────┐ │
-│ │ header + visible rows         │ │ idx: name                │ │
-│ │ resizable cells, col scroll   │ │ independent list scroll  │ │
-│ └───────────────────────────────┘ └──────────────────────────┘ │
-│ q quit  ↑↓ rows  ←→ cols  drag resize  c info  ? help          │
-└─────────────────────────────────────────────────────────────────┘
+┌─ csv │ file.csv │ N rows [loading…] ─────────────────────────┐
+│ ┌───────────────────────────────┐ ┌─ Columns (X–Y/Z) ──────┐ │
+│ │ header + visible rows         │ │ name list              │ │
+│ │ scroll, resize, pin/hide      │ │ independent scroll     │ │
+│ └───────────────────────────────┘ └────────────────────────┘ │
+│ q quit  ↑↓ rows  ←→ cols  c info  r JSON  ? help             │
+└──────────────────────────────────────────────────────────────┘
 ```
 
 | Region | Description |
 |--------|-------------|
-| **Title** | File basename, live row count, `loading…` or `ERROR` |
-| **Data table** | Horizontal window (`col_offset`) + vertical window (`row_offset`). Selected column dim gray stripe (full height); selected row dimmed; active cell yellow |
-| **Columns pane** | Resizable width (drag left border, 16–80 chars); title `Columns (X–Y/Z)`; selected line `▸` + magenta |
-| **Help** | Centered overlay; `?` opens; `q` / `?` closes |
-| **Column info** | Centered overlay; `c` opens; edit type/representation and view statistics; `q` closes |
+| **Title** | File basename, live row count, `loading…` / `ERROR`, and `visible/total` when filters or hidden rows apply |
+| **Data table** | Scrollable rows and columns; yellow active cell; pinned rows/columns stay fixed |
+| **Columns pane** | Sidebar of column names (drag left border to resize, 16–80 chars) |
+| **Help** | Centered overlay (`?`) |
+| **Column info** | Centered overlay (`c`) for type, format, filter, and stats |
+| **Row JSON** | Floating panel (`r`) with the selected row as pretty-printed JSON |
 
-Data table uses ratatui `Table`. Column sidebar uses manual `Paragraph` lines (not ratatui `List`; see [column list scrolling](#column-list-scrolling)).
+Settings load from `~/.config/csv-utils/csv-utils.json`, with optional `./csv-utils.json` overrides. See [settings config](../design/settings-config.md).
 
-## View state
-
-`TableViewState` in `csv-utils-core/src/model.rs`:
-
-| Field | Role |
-|-------|------|
-| `selected_row`, `selected_col` | Active cell (0-based). Row max = loaded body lines − 1 |
-| `row_offset` | First body row in table viewport |
-| `col_offset` | First column in table viewport |
-| `column_list_offset` | First column shown in sidebar (independent of selection) |
-| `column_widths` | Per-column cell width in characters (auto-fit 4–64; manual drag locks column) |
-| `column_kinds` | Per-column type override (`Auto` = infer from loaded rows) |
-| `column_numeric_repr` | General vs scientific formatting for numeric columns |
-| `column_widths_user_set` | Manual resize lock per column |
-| `show_column_info` | Column info overlay visible |
-| `column_info_focus` | Highlighted option in info panel (type, representation, decimal places) |
-| `column_info_decimal_editing` | TUI: editing decimal format text |
-| `show_help` | Help overlay visible |
-| `show_column_borders` | Draw column `│` lines and a header `─` rule in the table gaps (initialized from config; toggled with `:toggle-borders`). Gaps stay as whitespace when off |
-| `column_name_filter` | Fuzzy name filter for the column sidebar (`/` finder) |
-| `column_value_filters` | Per-column row value filters (`:filter` on selected column) |
-| `column_sidebar_focused` | When true, `:filter` applies to the sidebar instead of row values; **↑/↓** navigate columns |
-| `column_sidebar_width` | Column sidebar pane width in terminal columns (default 32; drag left border to resize) |
-| `column_status` | Per-column table status: `normal` (default), `pinned`, or `hidden` (mutually exclusive; hidden columns stay in the sidebar) |
-| `column_pin_order` | Chronological list of pinned column indices (left-to-right in the table and top of the sidebar; horizontal scroll applies only to normal columns) |
-| `multi_selected_cols` | Ctrl+click multi-selection for bulk `:hide` (empty = use `selected_col` only); cleared when row **Space** multi-select or cell range starts |
-| `row_status` | Per-row table status: `normal`, `pinned`, or `hidden` (mutually exclusive; session-only) |
-| `row_pin_order` | Chronological list of pinned row indices (fixed at the top of the table; vertical scroll applies only to normal rows) |
-| `multi_selected_rows` | **Space** toggles individual rows for bulk row `:hide`; cleared when column multi-select or cell range starts |
-| `cell_range_anchor` / `cell_range_focus` | Inclusive corners for click-drag rectangular cell selection; `:hide` uses the row span |
-| `multi_selected_cells` | Individual `(row, col)` pairs toggled with Ctrl+click; `:hide` uses their distinct rows |
-| `sort_column` / `sort_direction` | Session-only row sort on one column (`asc` or `desc`); pinned rows stay above the sorted block |
-
-Settings load from `~/.config/csv-utils/csv-utils.json` (created on first open), with optional `./csv-utils.json` in the working directory overriding individual fields; see [settings config](../design/settings-config.md).
-
-Each frame (when the TUI redraws): `maybe_refit_column_widths()` (when loaded row count changes), `clamp_selection(viewport_rows, table_width)`, and `clamp_column_list_offset(visible_height)`. The event loop draws only when dirty — after input, resize, or throttled background-scan progress (~100ms) — so idle CPU stays low once loading finishes. Dragging the table row/column scrollbar decouples scroll from the selected cell until you move selection (arrows, click, or wheel on the table). Scrollbar thumb size and drag mapping use a stable viewport length (rows: scrollable rows that fit; columns: fit-from-start count matching `max_col_offset`) so the thumb does not jitter while dragging, and the thumb sits flush with the track end at max scroll.
+The event loop redraws only when dirty (input, resize, or throttled scan progress), so idle CPU stays low after loading finishes.
 
 ## Keyboard
 
 | Key | Action |
 |-----|--------|
-| `q` | Close open panel; with a file loaded, return to file picker; from file picker, quit |
-| `↑`/`↓` or `j`/`k` | Previous / next row (pinned rows first in pin order, then scrollable rows); when the **sidebar is focused** (click or scroll it), previous / next column |
-| `←`/`→` or `h`/`l` | Previous / next **visible** column (pinned columns first in pin order, then scrollable columns; hidden columns are skipped) |
+| `q` | Close open panel; with a file loaded, return to the file picker; from the picker, quit |
+| `↑`/`↓` or `j`/`k` | Previous / next row (or column when the sidebar is focused) |
+| `←`/`→` or `h`/`l` | Previous / next visible column |
 | `Space` | Toggle multi-select on the current row or column (follows the last arrow axis) |
 | `PgUp`/`PgDn` | Move selection ±10 rows |
-| `Home`/`End` | First / last row in navigation order (pinned rows first, then scrollable) |
-| `c` | Open column info panel |
-| `r` | Open floating panel with the selected row as pretty-printed JSON |
-| `p` | Pin or unpin selected row(s) after **↑/↓** (row axis), or column(s) when the sidebar is focused or the last arrow axis was column (**←/→**); works with multi-select |
-| `?` | Help overlay |
-| `:` | Open command line (filtered suggestions, Tab complete) |
-| `/` | Open column finder (fuzzy-match column names; filters sidebar live) |
-| `:` then `:open <path>` | Open another file, or browse a directory in the file picker |
-| `:` then `:close` | Close file and return to file picker (in last file's directory) |
-| `:` then `:toggle-borders` | Show or hide `│` border lines between table columns for this session |
-| `:` then `:hide` / `:h` | Hide selected column(s) after **←/→** or sidebar focus, or selected row(s) after **↑/↓**; Ctrl+click column header/sidebar for column multi-select |
-| `:` then `:unhide` / `:u` | Unhide using the same row/column axis as `:hide`; with no hidden targets in the selection, unhide **all** hidden rows or columns for that axis |
-| `:` then `:sort` | Sort rows by the selected column (ascending → descending → clear); `:sort asc`, `:sort desc`, or `:sort clear` for explicit control |
-| `:` then `:web` | Open browser UI on a free local port and exit the terminal view (Ctrl+C stops the server) |
-| `:` then `:filter <text>` / `:f <text>` | Filter **rows** on the selected column (text: fuzzy; numeric: `>10`, `(>=10) & (<20)`, etc.) |
-| `:` then `:filter` / `:f` | Clear row filter on the selected column |
-| Sidebar focused + `:filter <text>` | Filter the column **sidebar** by name (click or scroll sidebar to focus) |
+| `Home`/`End` | First / last row in navigation order |
+| `c` | Column info panel |
+| `r` | Row as JSON (floating panel) |
+| `p` | Pin/unpin selected row(s) or column(s) (follows row vs column axis) |
+| `?` | Help |
+| `:` | Command line |
+| `/` | Fuzzy column finder (filters the sidebar live) |
 
-Command line keys: **↑/↓** select suggestion, **Tab** complete, **Enter** run (for `:open` and `:filter`, Enter selects the command first, then type the argument and press **Enter** again), **Esc** cancel.
+### Commands (`:`)
 
-Column finder keys (**`/`**): type to fuzzy-filter the sidebar, **↑/↓** pick a match, **Enter** jump to that column (filter stays active), **Esc** cancel and clear the filter.
+| Command | Action |
+|---------|--------|
+| `:open <path>` | Open a file or browse a directory |
+| `:close` | Close the file and return to the file picker |
+| `:toggle-borders` | Show or hide `│` between table columns |
+| `:hide` / `:h` | Hide selected columns or rows (axis follows focus / last arrows) |
+| `:unhide` / `:u` | Unhide selection, or all hidden on that axis if none are selected-hidden |
+| `:sort` | Cycle sort on the selected column (asc → desc → clear) |
+| `:sort asc\|desc\|clear` | Set or clear sort explicitly |
+| `:filter <text>` / `:f <text>` | Filter rows on the selected column, or the sidebar when it is focused |
+| `:filter` / `:f` | Clear the active filter |
+| `:web` | Open the browser UI and exit the terminal view |
 
-Filtered columns show `*` in the table header and column sidebar. Sorted columns show `↑` (ascending) or `↓` (descending) in the header. The title bar shows `visible/total rows` when any row filter is active. Edit or clear filters in the column info panel (**c** → **Row filter**).
+Command line: **↑/↓** pick a suggestion, **Tab** complete, **Enter** run (for `:open` / `:filter`, Enter selects the command first, then type the argument), **Esc** cancel.
 
-### File picker (no file on launch)
+Column finder (`/`): type to filter, **↑/↓** pick a match, **Enter** jump (filter stays), **Esc** cancel and clear.
 
-Shown when `csv` or `csv tui` is run without a path. By default **all** files and
-directories are listed. To filter by extension, add `file_picker.file_extensions` to
-settings (global or local `csv-utils.json`); then **`:filter`** / **`:f`** applies
-that filter and **`:all`** / **`:a`** shows every file again.
+Filtered columns show `*` in the header and sidebar. Sorted columns show `↑` / `↓`. Edit or clear row filters from column info (**c** → **Row filter**).
+
+### File picker
+
+Shown when `csv` starts without a path. All files and directories are listed by default. Set `file_picker.file_extensions` in settings to enable extension filtering (`:filter` / `:all`).
 
 | Key | Action |
 |-----|--------|
-| `↑`/`↓` or `j`/`k` | Previous / next entry |
-| `/` | Fuzzy-filter files and folders by name (live; **Esc** clears) |
-| `PgUp`/`PgDn` | Move selection by one page |
-| `→` | Enter selected directory or open file |
-| `←` | Parent directory (highlights the directory you came from) |
-| `Enter` | Enter directory or open file |
-| `:` then `:open <path>` | Open file by relative or absolute path |
-| `:` then `:all` / `:a` | Show all files (when an extension filter is active) |
-| `:` then `:filter` / `:f` | Apply extension filter from settings (when `file_picker.file_extensions` is configured) |
-| `q` / `Esc` | Quit (Esc cancels a command) |
-| Click | Select entry (same as `Enter`) |
-
-Command line keys: **↑/↓** select suggestion, **Tab** complete, **Enter** run (for `:open`, Enter selects the command first, then type/paste the path and press **Enter** again), **Esc** cancel.
+| `↑`/`↓` or `j`/`k` | Move selection |
+| `/` | Fuzzy name filter (**Esc** clears) |
+| `PgUp`/`PgDn` | Page |
+| `→` / `Enter` | Enter directory or open file |
+| `←` | Parent directory |
+| `:open <path>` | Open by path |
+| `:all` / `:a` | Show all files (when an extension filter is active) |
+| `:filter` / `:f` | Apply extension filter from settings |
+| `q` / `Esc` | Quit (Esc also cancels a command) |
+| Click | Same as Enter |
 
 ### Column info (`c`)
 
-While the panel is open, table navigation is disabled:
+While open, table navigation is disabled.
 
 | Key | Action |
 |-----|--------|
-| `↑`/`↓` or `j`/`k` | Move highlight between type, representation, and decimal places |
-| `PgUp`/`PgDn` | Scroll panel when statistics extend past the viewport |
-| `Enter` | Apply highlighted option; on **Decimal places** or **Row filter**, start edit or apply typed value |
-| Type directly | When decimal row is focused, type a format (e.g. `.5`) |
-| `Backspace` | While editing decimal format, delete a character |
-| `q` | Close panel |
+| `↑`/`↓` or `j`/`k` | Move among type, representation, decimal places, and row filter |
+| `PgUp`/`PgDn` | Scroll when content exceeds the viewport |
+| `Enter` | Apply the highlighted option, or start/finish editing decimal / filter |
+| Type / `Backspace` | Edit decimal format or filter when that row is focused |
+| `q` | Close |
 
-The panel shows editable **type** options filtered by inferred data (e.g. text-only columns hide date/int/float), **representation** when numeric types apply, **decimal places** (text field, default from merged settings, e.g. `.3`), **row filter** (fuzzy text or numeric expression), plus type-specific **statistics** from loaded rows (note shown while scanning; stats accumulate during background load). A vertical scrollbar appears when content exceeds the viewport.
+Shows type options (filtered by inferred data), numeric representation when relevant, decimal places, a per-column row filter, and progressive statistics.
 
 ### Row JSON (`r`)
 
-Shows the currently selected row as pretty-printed JSON (`header → value` object). While open, table navigation is disabled:
+Shows the selected row as a pretty-printed JSON object. While open, table navigation is disabled.
 
 | Key | Action |
 |-----|--------|
-| `↑`/`↓` or `j`/`k` | Scroll vertically |
-| `←`/`→` or `h`/`l` | Scroll horizontally |
+| `↑`/`↓` / `j`/`k` | Scroll vertically |
+| `←`/`→` / `h`/`l` | Scroll horizontally |
 | `PgUp`/`PgDn` | Page vertically |
-| `Home`/`End` | Jump to start / end of content |
-| `q` or `r` | Close panel |
+| `Home`/`End` | Jump to start / end |
+| `q` or `r` | Close |
 
-Mouse:
-
-| Target | Action |
-|--------|--------|
-| Title bar | Drag to move the floating panel |
-| Bottom-right corner | Drag to resize (min 30×8 cells) |
-| Vertical / horizontal scrollbars | Drag thumb/track or use wheel |
-| Panel body wheel | Scroll vertically |
-
-Opening the row JSON panel closes column info (and vice versa). Panel position and size persist for the session after the first drag or resize.
+Mouse: drag the **title bar** to move, drag the **bottom-right corner** to resize (min 30×8), use scrollbars or wheel for overflow. Opening row JSON closes column info (and vice versa). Position and size persist for the session after the first drag or resize.
 
 ## Mouse
 
 | Target | Action |
 |--------|--------|
-| Column info panel | Click type/representation rows to apply; click decimal field to focus; **PgUp/PgDn** or mouse wheel scroll |
-| Row JSON panel | Drag title to move; drag bottom-right corner to resize; wheel / scrollbars for overflow |
-| Table header border | Drag to resize column width (4–64 chars) |
-| Table header | Select column only (click, not on border); **Ctrl+click** adds column to selection; **right-click** opens column context menu |
-| Table body cell | Click to select; **drag** to select a rectangular cell range; **Ctrl+click** toggles individual cells (no fill between) |
-| Row gutter (`▸`/`▐`) **right-click** | Open context menu: **Select**, **Hide** / **Unhide**, **Pin** / **Unpin** |
-| Table wheel | Move `selected_row` ±3 |
-| Table / column sidebar / column info | Scrollbars (▲▼ / ◀▶) when content exceeds the viewport; drag thumb or track (thumb reaches the track end at max scroll); wheel over a scrollbar scrolls that pane |
-| Column list click | Select column; **Ctrl+click** adds column to selection |
-| Column list **right-click** | Open context menu: **Select**, **Hide** / **Unhide**, **Info**, **Pin** / **Unpin**, **Sort ascending** / **Sort descending**, **Clear sort** |
-| Column list left border | Drag to resize sidebar width (16–80 chars) |
-| Column list wheel | Scroll sidebar ±3 via `column_list_offset` |
+| Table header border | Drag to resize column width (4–64) |
+| Table header | Select column; **Ctrl+click** multi-select; **right-click** context menu |
+| Table body | Click to select; **drag** for a cell rectangle; **Ctrl+click** toggles individual cells |
+| Row gutter | **Right-click** context menu (select / hide / pin) |
+| Table wheel | Move selected row ±3 |
+| Scrollbars | Drag thumb or track; wheel over a scrollbar scrolls that pane |
+| Column list | Click / Ctrl+click / right-click context menu; drag left border to resize; wheel scrolls the list |
+| Column info / row JSON | As described above |
 
-Multi-selected columns show a blue highlight down the full column (`◆` prefix in the sidebar). Multi-selected rows use a blue row background. **Drag** on table body cells highlights a blue rectangle; **Ctrl+click** on cells toggles individual blue cells (without filling the area between them). With only the cursor on a cell (no row/column/cell multi-select), the **column header** and a **`▸` row gutter** mark the current row/column — body cells are not striped. The active cell keeps the yellow highlight. Row/column multi-select (**Space** or Ctrl+click on headers/sidebar/gutter) and cell selection (drag or Ctrl+click) are mutually exclusive — starting one clears the others. Arrow keys and plain clicks move focus without clearing the other selection mode. Hidden columns remain in the sidebar with a dim `·` prefix at the **end** of the list (after pinned and visible unpinned columns) but are omitted from the table and skipped by `←`/`→`. Pinned columns show a cyan `▐` prefix in the sidebar, are listed first in chronological pin order (matching their fixed left position in the table), and stay visible while unpinned columns scroll horizontally. Pinned rows show a cyan `▐` in the row gutter, stay fixed at the top of the table in chronological pin order, and unpinned rows scroll vertically beneath them. Select a hidden column in the sidebar and run `:unhide` to show it again; run `:unhide` on the table to restore hidden rows. Hidden rows are omitted from the table entirely. At least one column and one row must stay visible; `:hide` reports an error if the selection would hide every column or every row. With an active cell range or Ctrl+selected cells, `:hide` on the table hides every row spanned by the selection.
+### Selection and visibility
 
-Context menu keys (after right-click on the column sidebar, table header, or row gutter): **↑/↓** move highlight, **Enter** activate, **Esc** / **q** dismiss; left-click an item to activate. **Ctrl+right-click** adds the column or row to a multi-selection (same as Ctrl+click). **Select** selects the clicked column or row on the first use; on later uses it adds to the existing selection (seeding the previously-selected column/row when building the first multi-select). Other menu actions preserve an existing multi-select and include the clicked column or row in bulk operations. Plain click (no Ctrl) on the sidebar, table header, or row gutter still replaces the selection with a single column or row.
+- Multi-selected columns use a blue column highlight (`◆` in the sidebar); multi-selected rows use a blue row background.
+- Cell ranges and Ctrl+selected cells highlight in blue; the active cell stays yellow.
+- Row/column multi-select and cell selection are mutually exclusive — starting one clears the other.
+- Hidden columns stay in the sidebar with a dim `·` prefix (at the end of the list) but are omitted from the table.
+- Pinned columns show `▐` and stay on the left; pinned rows show `▐` and stay at the top.
+- At least one column and one row must remain visible; `:hide` errors if it would hide everything.
 
-Hit-testing: `hit_test_table` / `hit_test_column_resize` in `app.rs` (variable-width columns plus a one-character gap between columns; gap shows `│` when column borders are enabled).
+Context menus (sidebar, header, or row gutter): **↑/↓**, **Enter**, **Esc**/`q`, or click an item. **Ctrl+right-click** adds to multi-select.
 
 ## Column list scrolling
 
-Sidebar uses `column_list_offset` independent of selection. ratatui `List` was avoided because it resets offset each frame to keep the selected item visible, which blocked wheel scrolling past the current selection.
-
-- Scroll max: `headers.len() − visible_height`
-- Wheel updates offset only
-- Selection changes call `ensure_column_list_shows_selection`
+The sidebar uses its own `column_list_offset`, independent of table selection, so wheel scrolling is not forced to keep the selected column in view.
 
 ## Run
 
@@ -192,16 +144,12 @@ Sidebar uses `column_list_offset` independent of selection. ratatui `List` was a
 pixi run csv
 pixi run csv test-data/generated/test_1000x100.csv
 ./target/release/csv
-./target/release/csv test-data/generated/test_1000x100.csv
-./target/release/csv tui file.csv   # same as above
+./target/release/csv tui file.csv
 ```
-
-With no file argument, the TUI opens a **file picker** starting in the current working directory. All files and directories are shown by default. Configure `file_picker.file_extensions` in settings to enable extension filtering (`:filter` / `:all`). Navigate with `→` / `←` for directories, select a file with `Enter`, or quit with `q`.
-
-Press `?` in the TUI for inline help.
 
 ## Related
 
 - [Data loading](../reference/data-loading.md)
 - [CSV parsing & column types](../reference/csv-parsing.md)
-- [Web UI](web.md) — parallel behavior in the browser
+- [Web UI](web.md)
+- [Architecture](../architecture.md) — `TableViewState` and shared model

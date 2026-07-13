@@ -24,7 +24,7 @@ When you change **user-visible behavior**, **CLI/TUI contracts**, **data loading
 | [docs/reference/limitations.md](../docs/reference/limitations.md) | Known constraints |
 | [docs/development/build.md](../docs/development/build.md) | Pixi tasks, conda recipe |
 | [docs/test-data-generation.md](../docs/test-data-generation.md) | `scripts/generate_test_data.py` |
-| [docs/design/performance-tui-responsiveness.md](../docs/design/performance-tui-responsiveness.md) | Event-loop redraw, filter/sort cache, preview locking (when implementing proposals) |
+| [docs/design/performance-tui-responsiveness.md](../docs/design/performance-tui-responsiveness.md) | Event-loop redraw, filter/sort cache, preview locking |
 | [README.md](../README.md) | Quick start, task examples |
 
 [docs/DESIGN.md](../docs/DESIGN.md) is a redirect stub only; edit the targeted doc above.
@@ -50,4 +50,4 @@ Skip doc updates only for pure refactors with **no** behavior, CLI, TUI, or task
 
 - Factual, present tense; tables for bindings and flags
 - Prefer editing the section doc over duplicating content in multiple files
-- Bump “Last verified against” in [docs/index.md](../docs/index.md) when materially refreshing docs
+- Keep the version line in [docs/index.md](../docs/index.md) aligned with the workspace version when docs are materially refreshed
