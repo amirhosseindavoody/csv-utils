@@ -2,7 +2,7 @@
 
 High-performance CSV utility with a streaming **CLI**, interactive **TUI**, and optional **web UI** — all backed by a shared Rust core library.
 
-**Last verified against:** `2026.6.30+0` (workspace version in `Cargo.toml` / `pixi.toml`; row JSON floating panel via `r`).
+**Last verified against:** `2026.6.30+0` (workspace version in `Cargo.toml` / `pixi.toml`; Row JSON syntax highlighting and `f` borderless fullscreen).
 
 ## Quick start
 

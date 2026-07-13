@@ -42,6 +42,8 @@ Data table uses ratatui `Table`. Column sidebar uses manual `Paragraph` lines (n
 | `column_info_focus` | Highlighted option in info panel (type, representation, decimal places) |
 | `column_info_decimal_editing` | TUI: editing decimal format text |
 | `show_help` | Help overlay visible |
+| `show_row_json` | Row JSON floating panel / fullscreen view visible |
+| `row_json_fullscreen` | Borderless full-terminal Row JSON text view (`f` toggle; does not change panel geometry) |
 | `show_column_borders` | Draw column `│` lines and a header `─` rule in the table gaps (initialized from config; toggled with `:toggle-borders`). Gaps stay as whitespace when off |
 | `column_name_filter` | Fuzzy name filter for the column sidebar (`/` finder) |
 | `column_value_filters` | Per-column row value filters (`:filter` on selected column) |
@@ -72,7 +74,7 @@ Each frame (when the TUI redraws): `maybe_refit_column_widths()` (when loaded ro
 | `PgUp`/`PgDn` | Move selection ±10 rows |
 | `Home`/`End` | First / last row in navigation order (pinned rows first, then scrollable) |
 | `c` | Open column info panel |
-| `r` | Open floating panel with the selected row as pretty-printed JSON |
+| `r` | Open floating panel with the selected row as pretty-printed JSON (syntax-highlighted) |
 | `p` | Pin or unpin selected row(s) after **↑/↓** (row axis), or column(s) when the sidebar is focused or the last arrow axis was column (**←/→**); works with multi-select |
 | `?` | Help overlay |
 | `:` | Open command line (filtered suggestions, Tab complete) |
@@ -134,7 +136,7 @@ The panel shows editable **type** options filtered by inferred data (e.g. text-o
 
 ### Row JSON (`r`)
 
-Shows the currently selected row as pretty-printed JSON (`header → value` object). While open, table navigation is disabled:
+Shows the currently selected row as pretty-printed JSON (`header → value` object) with syntax highlighting (keys cyan, strings green, numbers yellow, literals magenta). While open, table navigation is disabled:
 
 | Key | Action |
 |-----|--------|
@@ -142,16 +144,19 @@ Shows the currently selected row as pretty-printed JSON (`header → value` obje
 | `←`/`→` or `h`/`l` | Scroll horizontally |
 | `PgUp`/`PgDn` | Page vertically |
 | `Home`/`End` | Jump to start / end of content |
+| `f` | Toggle borderless full-screen text view (like `less`/`bat`; does **not** resize the floating panel) |
 | `q` or `r` | Close panel |
 
 Mouse:
 
 | Target | Action |
 |--------|--------|
-| Title bar | Drag to move the floating panel |
-| Bottom-right corner | Drag to resize (min 30×8 cells) |
-| Vertical / horizontal scrollbars | Drag thumb/track or use wheel |
-| Panel body wheel | Scroll vertically |
+| Title bar | Drag to move the floating panel (panel mode only) |
+| Bottom-right corner | Drag to resize (min 30×8 cells; panel mode only) |
+| Vertical / horizontal scrollbars | Drag thumb/track or use wheel (panel mode only) |
+| Panel / fullscreen body wheel | Scroll vertically |
+
+**Fullscreen (`f`):** replaces the UI with a borderless full-terminal text view and a single dim status line at the bottom (`f leave fullscreen · q close`). Floating panel position and size are preserved and restored when leaving fullscreen. Drag, resize, and scrollbars are disabled while fullscreen.
 
 Opening the row JSON panel closes column info (and vice versa). Panel position and size persist for the session after the first drag or resize.
 
@@ -160,7 +165,7 @@ Opening the row JSON panel closes column info (and vice versa). Panel position a
 | Target | Action |
 |--------|--------|
 | Column info panel | Click type/representation rows to apply; click decimal field to focus; **PgUp/PgDn** or mouse wheel scroll |
-| Row JSON panel | Drag title to move; drag bottom-right corner to resize; wheel / scrollbars for overflow |
+| Row JSON panel | Drag title to move; drag bottom-right corner to resize; wheel / scrollbars for overflow; `f` toggles borderless fullscreen (panel geometry unchanged) |
 | Table header border | Drag to resize column width (4–64 chars) |
 | Table header | Select column only (click, not on border); **Ctrl+click** adds column to selection; **right-click** opens column context menu |
 | Table body cell | Click to select; **drag** to select a rectangular cell range; **Ctrl+click** toggles individual cells (no fill between) |

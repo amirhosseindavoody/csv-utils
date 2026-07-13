@@ -69,6 +69,9 @@ pub struct TableViewState {
     pub column_info_scroll: u16,
     /// Floating panel showing the selected row as pretty-printed JSON.
     pub show_row_json: bool,
+    /// When true, Row JSON takes the full terminal as a borderless text view
+    /// (like `less`/`bat`). Does not change the floating panel geometry.
+    pub row_json_fullscreen: bool,
     /// Vertical scroll offset (lines) for the row JSON panel.
     pub row_json_scroll_y: u16,
     /// Horizontal scroll offset (columns) for the row JSON panel.
@@ -149,6 +152,7 @@ impl Default for TableViewState {
             column_info_filter_draft: String::new(),
             column_info_scroll: 0,
             show_row_json: false,
+            row_json_fullscreen: false,
             row_json_scroll_y: 0,
             row_json_scroll_x: 0,
             row_json_x: None,
@@ -1372,14 +1376,25 @@ impl AppModel {
         self.close_column_info_pane();
         self.view.show_help = false;
         self.view.show_row_json = true;
+        self.view.row_json_fullscreen = false;
         self.view.row_json_scroll_x = 0;
         self.view.row_json_scroll_y = 0;
     }
 
     pub fn close_row_json_pane(&mut self) {
         self.view.show_row_json = false;
+        self.view.row_json_fullscreen = false;
         self.view.row_json_scroll_x = 0;
         self.view.row_json_scroll_y = 0;
+    }
+
+    /// Toggle borderless full-screen Row JSON view without changing panel size.
+    pub fn toggle_row_json_fullscreen(&mut self) {
+        if self.view.show_row_json {
+            self.view.row_json_fullscreen = !self.view.row_json_fullscreen;
+            self.view.row_json_scroll_x = 0;
+            self.view.row_json_scroll_y = 0;
+        }
     }
 
     pub fn set_row_json_scroll(&mut self, scroll_x: usize, scroll_y: usize, viewport_w: u16, viewport_h: u16) {
@@ -1412,7 +1427,7 @@ impl AppModel {
     }
 
     pub fn clamp_row_json_geometry(&mut self, screen_width: u16, screen_height: u16) {
-        if !self.view.show_row_json {
+        if !self.view.show_row_json || self.view.row_json_fullscreen {
             return;
         }
         let width = self
@@ -2458,6 +2473,7 @@ mod tests {
         assert!(model.view.show_column_info);
         model.open_row_json_pane();
         assert!(model.view.show_row_json);
+        assert!(!model.view.row_json_fullscreen);
         assert!(!model.view.show_column_info);
         let text = model.selected_row_as_json_pretty().expect("json");
         assert!(text.contains('{'));
@@ -2468,8 +2484,18 @@ mod tests {
         model.row_json_scroll_by(2, 3, 20, 8);
         assert_eq!(model.view.row_json_scroll_x, 2);
         assert_eq!(model.view.row_json_scroll_y, 3);
+        model.toggle_row_json_fullscreen();
+        assert!(model.view.row_json_fullscreen);
+        assert_eq!(model.view.row_json_scroll_x, 0);
+        assert_eq!(model.view.row_json_scroll_y, 0);
+        // Fullscreen must not rewrite floating panel geometry.
+        assert_eq!(model.view.row_json_x, Some(5));
+        assert_eq!(model.view.row_json_width, Some(40));
+        model.toggle_row_json_fullscreen();
+        assert!(!model.view.row_json_fullscreen);
         model.close_row_json_pane();
         assert!(!model.view.show_row_json);
+        assert!(!model.view.row_json_fullscreen);
     }
 
     #[test]

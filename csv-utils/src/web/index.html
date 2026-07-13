@@ -197,6 +197,10 @@
       display: none; z-index: 12; pointer-events: none;
     }
     .row-json-overlay.open { display: block; }
+    .row-json-overlay.fullscreen {
+      background: var(--bg, #0d1117);
+      pointer-events: auto;
+    }
     .row-json-box {
       position: absolute;
       background: var(--panel); border: 1px solid var(--border);
@@ -207,6 +211,34 @@
       pointer-events: auto;
       resize: both;
       overflow: hidden;
+    }
+    .row-json-overlay.fullscreen .row-json-box {
+      inset: 0;
+      width: 100% !important;
+      height: 100% !important;
+      max-width: none;
+      max-height: none;
+      min-width: 0;
+      min-height: 0;
+      border: none;
+      box-shadow: none;
+      border-radius: 0;
+      resize: none;
+      background: var(--bg, #0d1117);
+    }
+    .row-json-overlay.fullscreen .row-json-title {
+      display: none;
+    }
+    .row-json-fullscreen-status {
+      display: none;
+      padding: 0.35rem 0.75rem;
+      color: var(--muted);
+      font-size: 0.85rem;
+      border-top: none;
+      background: transparent;
+    }
+    .row-json-overlay.fullscreen .row-json-fullscreen-status {
+      display: block;
     }
     .row-json-title {
       cursor: move; user-select: none;
@@ -228,6 +260,14 @@
       white-space: pre;
       scrollbar-width: thin;
     }
+    .row-json-overlay.fullscreen .row-json-body {
+      padding: 0.5rem 1rem;
+    }
+    .json-key { color: #39c5cf; font-weight: 600; }
+    .json-string { color: #3fb950; }
+    .json-number { color: #d29922; }
+    .json-literal { color: #d2a8ff; }
+    .json-punct { color: var(--muted); }
     .info-box {
       background: var(--panel); border: 1px solid var(--border);
       padding: 1rem 1.25rem; min-width: 300px; max-width: 440px;
@@ -357,6 +397,7 @@
         <button type="button" id="row-json-close" aria-label="Close">q close</button>
       </div>
       <pre class="row-json-body" id="row-json-body"></pre>
+      <div class="row-json-fullscreen-status" id="row-json-fullscreen-status"></div>
     </div>
   </div>
   <script>
@@ -366,7 +407,8 @@
   ←/→        previous / next column
   PgUp/PgDn  scroll 10 rows
   c          column info (type, format, stats)
-  r          row as JSON (drag title; resize corner; scroll overflow)
+  r          row as JSON (drag title; resize corner; f fullscreen)
+  f          while Row JSON open: borderless full-screen text view
   ?          help
   q          close panel / help
 
@@ -698,19 +740,107 @@ Theme button (header): System · Light · Dark.`;
       schedulePoll(state);
     }
 
+    function escapeHtml(s) {
+      return String(s)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;');
+    }
+
+    function highlightJsonLine(line) {
+      const out = [];
+      let i = 0;
+      while (i < line.length) {
+        const ch = line[i];
+        if (/\s/.test(ch)) {
+          let j = i + 1;
+          while (j < line.length && /\s/.test(line[j])) j++;
+          out.push(['', line.slice(i, j)]);
+          i = j;
+          continue;
+        }
+        if (ch === '"') {
+          let j = i + 1;
+          while (j < line.length) {
+            if (line[j] === '\\') { j += 2; continue; }
+            if (line[j] === '"') { j++; break; }
+            j++;
+          }
+          const text = line.slice(i, j);
+          let k = j;
+          while (k < line.length && /\s/.test(line[k])) k++;
+          const cls = line[k] === ':' ? 'json-key' : 'json-string';
+          out.push([cls, text]);
+          i = j;
+          continue;
+        }
+        if (ch === '-' || /[0-9]/.test(ch)) {
+          let j = i + (ch === '-' ? 1 : 0);
+          while (j < line.length && /[0-9]/.test(line[j])) j++;
+          if (line[j] === '.') {
+            j++;
+            while (j < line.length && /[0-9]/.test(line[j])) j++;
+          }
+          if (line[j] === 'e' || line[j] === 'E') {
+            j++;
+            if (line[j] === '+' || line[j] === '-') j++;
+            while (j < line.length && /[0-9]/.test(line[j])) j++;
+          }
+          out.push(['json-number', line.slice(i, j)]);
+          i = j;
+          continue;
+        }
+        if ('{}[]:,'.includes(ch)) {
+          out.push(['json-punct', ch]);
+          i++;
+          continue;
+        }
+        if (line.startsWith('true', i) || line.startsWith('null', i)) {
+          out.push(['json-literal', line.slice(i, i + 4)]);
+          i += 4;
+          continue;
+        }
+        if (line.startsWith('false', i)) {
+          out.push(['json-literal', 'false']);
+          i += 5;
+          continue;
+        }
+        out.push(['', ch]);
+        i++;
+      }
+      return out.map(([cls, text]) =>
+        cls
+          ? `<span class="${cls}">${escapeHtml(text)}</span>`
+          : escapeHtml(text)
+      ).join('');
+    }
+
+    function highlightJson(text) {
+      return String(text || '{}')
+        .split('\n')
+        .map(highlightJsonLine)
+        .join('\n');
+    }
+
     function renderRowJsonPane(state) {
       const overlay = document.getElementById('row-json');
       const box = document.getElementById('row-json-box');
       const body = document.getElementById('row-json-body');
       const heading = document.getElementById('row-json-heading');
+      const status = document.getElementById('row-json-fullscreen-status');
+      const fullscreen = !!state.row_json_fullscreen;
       overlay.classList.toggle('open', !!state.show_row_json);
+      overlay.classList.toggle('fullscreen', fullscreen);
       if (!state.show_row_json) {
         body.textContent = '';
+        status.textContent = '';
         return;
       }
       const rowLabel = (state.row_json_row ?? state.selected_row) + 1;
       heading.textContent = `Row ${rowLabel} JSON`;
-      body.textContent = state.row_json || '{}';
+      body.innerHTML = highlightJson(state.row_json || '{}');
+      status.textContent = `Row ${rowLabel} JSON  ·  f leave fullscreen  ·  q close`;
       if (!box.dataset.placed) {
         const width = Math.min(520, Math.max(320, window.innerWidth * 0.45));
         const height = Math.min(420, Math.max(220, window.innerHeight * 0.45));
@@ -719,6 +849,29 @@ Theme button (header): System · Light · Dark.`;
         box.style.left = `${Math.max(16, (window.innerWidth - width) / 2)}px`;
         box.style.top = `${Math.max(16, (window.innerHeight - height) / 2)}px`;
         box.dataset.placed = '1';
+      }
+      if (fullscreen) {
+        if (!box.dataset.savedPanel) {
+          box.dataset.savedPanel = JSON.stringify({
+            left: box.style.left,
+            top: box.style.top,
+            width: box.style.width,
+            height: box.style.height,
+          });
+        }
+        box.style.left = '0';
+        box.style.top = '0';
+        box.style.width = '100%';
+        box.style.height = '100%';
+      } else if (box.dataset.savedPanel) {
+        try {
+          const saved = JSON.parse(box.dataset.savedPanel);
+          box.style.left = saved.left;
+          box.style.top = saved.top;
+          box.style.width = saved.width;
+          box.style.height = saved.height;
+        } catch (_) { /* ignore */ }
+        delete box.dataset.savedPanel;
       }
     }
 
@@ -813,6 +966,7 @@ Theme button (header): System · Light · Dark.`;
     document.addEventListener('keydown', (e) => {
       if (lastState?.show_row_json) {
         if (e.key === 'q' || e.key === 'r') { e.preventDefault(); postAction('close_row_json', null); return; }
+        if (e.key === 'f') { e.preventDefault(); postAction('toggle_row_json_fullscreen', null); return; }
       }
       if (lastState?.show_column_info) {
         if (e.key === 'q') { e.preventDefault(); postAction('close_column_info', null); return; }
@@ -841,6 +995,7 @@ Theme button (header): System · Light · Dark.`;
       const box = document.getElementById('row-json-box');
       let drag = null;
       title.addEventListener('mousedown', (e) => {
+        if (lastState?.row_json_fullscreen) return;
         if (e.target.closest('button')) return;
         drag = {
           startX: e.clientX,

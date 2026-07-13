@@ -6,6 +6,7 @@ use crossterm::terminal::{
 use crossterm::ExecutableCommand;
 use csv_utils_core::column::{ColumnKind, NumericRepr};
 use csv_utils_core::display::truncate_middle;
+use csv_utils_core::json_view::JsonTokenKind;
 use csv_utils_core::model::{AppModel, MultiSelectAxis, MAX_COLUMN_WIDTH, MIN_COLUMN_WIDTH};
 use csv_utils_core::ViewLayout;
 use ratatui::backend::CrosstermBackend;
@@ -42,7 +43,8 @@ csv — keyboard shortcuts
   Space      toggle multi-select on row or column (follows last arrow axis)
   PgUp/PgDn  scroll 10 rows
   c          column info (type, stats, format)
-  r          row as JSON (floating panel; drag title, resize corner)
+  r          row as JSON (floating panel; drag title, resize corner; f fullscreen)
+  f          while Row JSON open: borderless full-screen text view (toggle)
   PgUp/PgDn  scroll column info / row JSON panel (while open)
   ←/→        horizontal scroll in row JSON panel (while open)
   ?          this help
@@ -58,7 +60,7 @@ csv — keyboard shortcuts
   p          pin/unpin selected row(s) (↑/↓ row axis) or column(s) (sidebar / ←/→)
   :filter    filter rows on selected column, or sidebar when focused (:f)
 
-Mouse: click table cells; drag on table body to select a cell rectangle; Ctrl+click table cells to toggle individual cells; Ctrl+click column header, sidebar, or row gutter to add to selection; right-click column header, sidebar, or row gutter for context menu; drag header borders to resize columns; drag sidebar left border to resize sidebar; wheel scrolls rows/columns. Row JSON panel: drag title bar to move, drag bottom-right corner to resize, scrollbars/wheel for overflow. Click sidebar to focus it — then ↑/↓ navigate columns.
+Mouse: click table cells; drag on table body to select a cell rectangle; Ctrl+click table cells to toggle individual cells; Ctrl+click column header, sidebar, or row gutter to add to selection; right-click column header, sidebar, or row gutter for context menu; drag header borders to resize columns; drag sidebar left border to resize sidebar; wheel scrolls rows/columns. Row JSON panel: drag title bar to move, drag bottom-right corner to resize, scrollbars/wheel for overflow; `f` opens a borderless full-screen text view (does not resize the panel). Click sidebar to focus it — then ↑/↓ navigate columns.
 
 Press q or ? to close.";
 
@@ -1299,10 +1301,11 @@ fn handle_key(
 
     if model.view.show_row_json {
         let (viewport_w, viewport_h) = row_json_popup
-            .map(row_json_viewport_size)
+            .map(|area| row_json_viewport_size(area, model.view.row_json_fullscreen))
             .unwrap_or((40, 12));
         match key.code {
             KeyCode::Char('q') | KeyCode::Char('r') => model.close_row_json_pane(),
+            KeyCode::Char('f') => model.toggle_row_json_fullscreen(),
             KeyCode::Up | KeyCode::Char('k') => {
                 model.row_json_scroll_by(0, -1, viewport_w, viewport_h)
             }
@@ -1537,60 +1540,71 @@ fn handle_mouse(
     let pos = Position { x: col, y: row };
 
     if let Some(drag) = row_json_drag.as_ref() {
-        match mouse.kind {
-            MouseEventKind::Drag(crossterm::event::MouseButton::Left)
-            | MouseEventKind::Moved => {
-                if let Some(popup) = areas.row_json_popup {
-                    let width = popup.width;
-                    let height = popup.height;
-                    let max_x = screen.width.saturating_sub(width);
-                    let max_y = screen.height.saturating_sub(height);
-                    let x = col.saturating_sub(drag.grab_x).min(max_x);
-                    let y = row.saturating_sub(drag.grab_y).min(max_y);
-                    model.set_row_json_geometry(x, y, width, height);
+        if model.view.row_json_fullscreen {
+            *row_json_drag = None;
+        } else {
+            match mouse.kind {
+                MouseEventKind::Drag(crossterm::event::MouseButton::Left)
+                | MouseEventKind::Moved => {
+                    if let Some(popup) = areas.row_json_popup {
+                        let width = popup.width;
+                        let height = popup.height;
+                        let max_x = screen.width.saturating_sub(width);
+                        let max_y = screen.height.saturating_sub(height);
+                        let x = col.saturating_sub(drag.grab_x).min(max_x);
+                        let y = row.saturating_sub(drag.grab_y).min(max_y);
+                        model.set_row_json_geometry(x, y, width, height);
+                    }
                 }
+                MouseEventKind::Up(crossterm::event::MouseButton::Left) => {
+                    *row_json_drag = None;
+                }
+                _ => {}
             }
-            MouseEventKind::Up(crossterm::event::MouseButton::Left) => {
-                *row_json_drag = None;
-            }
-            _ => {}
+            return;
         }
-        return;
     }
 
     if let Some(resize) = row_json_resize.as_ref() {
-        match mouse.kind {
-            MouseEventKind::Drag(crossterm::event::MouseButton::Left)
-            | MouseEventKind::Moved => {
-                if let Some(popup) = areas.row_json_popup {
-                    let dx = col as i32 - resize.start_mouse_x as i32;
-                    let dy = row as i32 - resize.start_mouse_y as i32;
-                    let width = (resize.start_w as i32 + dx)
-                        .clamp(
-                            AppModel::MIN_ROW_JSON_WIDTH as i32,
-                            screen.width.saturating_sub(popup.x) as i32,
-                        ) as u16;
-                    let height = (resize.start_h as i32 + dy)
-                        .clamp(
-                            AppModel::MIN_ROW_JSON_HEIGHT as i32,
-                            screen.height.saturating_sub(popup.y) as i32,
-                        ) as u16;
-                    model.set_row_json_geometry(popup.x, popup.y, width, height);
-                    let (viewport_w, viewport_h) = row_json_viewport_size(Rect {
-                        x: popup.x,
-                        y: popup.y,
-                        width,
-                        height,
-                    });
-                    model.clamp_row_json_scroll(viewport_w, viewport_h);
+        if model.view.row_json_fullscreen {
+            *row_json_resize = None;
+        } else {
+            match mouse.kind {
+                MouseEventKind::Drag(crossterm::event::MouseButton::Left)
+                | MouseEventKind::Moved => {
+                    if let Some(popup) = areas.row_json_popup {
+                        let dx = col as i32 - resize.start_mouse_x as i32;
+                        let dy = row as i32 - resize.start_mouse_y as i32;
+                        let width = (resize.start_w as i32 + dx)
+                            .clamp(
+                                AppModel::MIN_ROW_JSON_WIDTH as i32,
+                                screen.width.saturating_sub(popup.x) as i32,
+                            ) as u16;
+                        let height = (resize.start_h as i32 + dy)
+                            .clamp(
+                                AppModel::MIN_ROW_JSON_HEIGHT as i32,
+                                screen.height.saturating_sub(popup.y) as i32,
+                            ) as u16;
+                        model.set_row_json_geometry(popup.x, popup.y, width, height);
+                        let (viewport_w, viewport_h) = row_json_viewport_size(
+                            Rect {
+                                x: popup.x,
+                                y: popup.y,
+                                width,
+                                height,
+                            },
+                            false,
+                        );
+                        model.clamp_row_json_scroll(viewport_w, viewport_h);
+                    }
                 }
+                MouseEventKind::Up(crossterm::event::MouseButton::Left) => {
+                    *row_json_resize = None;
+                }
+                _ => {}
             }
-            MouseEventKind::Up(crossterm::event::MouseButton::Left) => {
-                *row_json_resize = None;
-            }
-            _ => {}
+            return;
         }
-        return;
     }
 
     if let Some(menu) = column_context_menu.as_ref() {
@@ -1660,7 +1674,8 @@ fn handle_mouse(
 
     if model.view.show_row_json {
         if let Some(popup) = areas.row_json_popup {
-            let (viewport_w, viewport_h) = row_json_viewport_size(popup);
+            let fullscreen = model.view.row_json_fullscreen;
+            let (viewport_w, viewport_h) = row_json_viewport_size(popup, fullscreen);
             let (content_h, content_w) = model.row_json_content_size();
             let vert_metrics = ScrollMetrics {
                 content_length: content_h,
@@ -1672,48 +1687,51 @@ fn handle_mouse(
                 viewport_length: viewport_w as usize,
                 position: model.view.row_json_scroll_x as usize,
             };
-            if let Some(hit) = vertical_scrollbar_hit(popup, pos, vert_metrics) {
-                if matches!(
-                    mouse.kind,
-                    MouseEventKind::Down(crossterm::event::MouseButton::Left)
-                        | MouseEventKind::ScrollUp
-                        | MouseEventKind::ScrollDown
-                ) {
-                    handle_vertical_scroll_hit(
+            // Fullscreen is a borderless text view: scroll with wheel only (no drag/resize/scrollbars).
+            if !fullscreen {
+                if let Some(hit) = vertical_scrollbar_hit(popup, pos, vert_metrics) {
+                    if matches!(
                         mouse.kind,
-                        hit,
-                        ScrollbarDragTarget::RowJsonVert {
-                            viewport_w,
-                            viewport_h,
-                        },
-                        popup,
-                        vert_metrics,
-                        model,
-                        scrollbar_drag,
-                    );
-                    return;
+                        MouseEventKind::Down(crossterm::event::MouseButton::Left)
+                            | MouseEventKind::ScrollUp
+                            | MouseEventKind::ScrollDown
+                    ) {
+                        handle_vertical_scroll_hit(
+                            mouse.kind,
+                            hit,
+                            ScrollbarDragTarget::RowJsonVert {
+                                viewport_w,
+                                viewport_h,
+                            },
+                            popup,
+                            vert_metrics,
+                            model,
+                            scrollbar_drag,
+                        );
+                        return;
+                    }
                 }
-            }
-            if let Some(hit) = horizontal_scrollbar_hit(popup, pos, horiz_metrics) {
-                if matches!(
-                    mouse.kind,
-                    MouseEventKind::Down(crossterm::event::MouseButton::Left)
-                        | MouseEventKind::ScrollUp
-                        | MouseEventKind::ScrollDown
-                ) {
-                    handle_horizontal_scroll_hit(
+                if let Some(hit) = horizontal_scrollbar_hit(popup, pos, horiz_metrics) {
+                    if matches!(
                         mouse.kind,
-                        hit,
-                        ScrollbarDragTarget::RowJsonHoriz {
-                            viewport_w,
-                            viewport_h,
-                        },
-                        popup,
-                        horiz_metrics,
-                        model,
-                        scrollbar_drag,
-                    );
-                    return;
+                        MouseEventKind::Down(crossterm::event::MouseButton::Left)
+                            | MouseEventKind::ScrollUp
+                            | MouseEventKind::ScrollDown
+                    ) {
+                        handle_horizontal_scroll_hit(
+                            mouse.kind,
+                            hit,
+                            ScrollbarDragTarget::RowJsonHoriz {
+                                viewport_w,
+                                viewport_h,
+                            },
+                            popup,
+                            horiz_metrics,
+                            model,
+                            scrollbar_drag,
+                        );
+                        return;
+                    }
                 }
             }
             match mouse.kind {
@@ -1723,7 +1741,9 @@ fn handle_mouse(
                 MouseEventKind::ScrollDown if popup.contains(pos) => {
                     model.row_json_scroll_by(0, 3, viewport_w, viewport_h);
                 }
-                MouseEventKind::Down(crossterm::event::MouseButton::Left) if popup.contains(pos) => {
+                MouseEventKind::Down(crossterm::event::MouseButton::Left)
+                    if !fullscreen && popup.contains(pos) =>
+                {
                     if row_json_resize_hit(popup, pos) {
                         *row_json_resize = Some(FloatingPanelResize {
                             start_mouse_x: col,
@@ -2546,7 +2566,11 @@ fn draw(
     };
     let row_json_popup = if model.view.show_row_json {
         model.clamp_row_json_geometry(area.width, area.height);
-        let popup_area = row_json_panel_rect(model, area);
+        let popup_area = if model.view.row_json_fullscreen {
+            area
+        } else {
+            row_json_panel_rect(model, area)
+        };
         draw_row_json(frame, popup_area, model);
         Some(popup_area)
     } else {
@@ -2989,12 +3013,20 @@ fn row_json_panel_rect(model: &AppModel, screen: Rect) -> Rect {
     }
 }
 
-fn row_json_viewport_size(area: Rect) -> (u16, u16) {
-    let inner = Block::default().borders(Borders::ALL).inner(area);
-    (
-        inner.width.saturating_sub(1).max(1),
-        inner.height.saturating_sub(1).max(1),
-    )
+fn row_json_viewport_size(area: Rect, fullscreen: bool) -> (u16, u16) {
+    if fullscreen {
+        // Reserve one bottom status line; no borders or scrollbar gutter.
+        (
+            area.width.max(1),
+            area.height.saturating_sub(1).max(1),
+        )
+    } else {
+        let inner = Block::default().borders(Borders::ALL).inner(area);
+        (
+            inner.width.saturating_sub(1).max(1),
+            inner.height.saturating_sub(1).max(1),
+        )
+    }
 }
 
 fn row_json_title_hit(area: Rect, pos: Position) -> bool {
@@ -3007,21 +3039,70 @@ fn row_json_resize_hit(area: Rect, pos: Position) -> bool {
     pos.x >= right.saturating_sub(1) && pos.y >= bottom.saturating_sub(1) && area.contains(pos)
 }
 
+fn json_token_style(kind: JsonTokenKind) -> Style {
+    match kind {
+        JsonTokenKind::Key => Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD),
+        JsonTokenKind::String => Style::default().fg(Color::Green),
+        JsonTokenKind::Number => Style::default().fg(Color::Yellow),
+        JsonTokenKind::Literal => Style::default().fg(Color::Magenta),
+        JsonTokenKind::Punctuation => Style::default().fg(Color::DarkGray),
+        JsonTokenKind::Whitespace | JsonTokenKind::Other => Style::default(),
+    }
+}
+
+fn highlighted_json_lines(lines: &[String]) -> Vec<Line<'static>> {
+    lines
+        .iter()
+        .map(|line| {
+            let spans: Vec<Span<'static>> = csv_utils_core::json_view::highlight_json_line(line)
+                .into_iter()
+                .map(|(kind, text)| Span::styled(text.to_string(), json_token_style(kind)))
+                .collect();
+            Line::from(spans)
+        })
+        .collect()
+}
+
 fn draw_row_json(frame: &mut ratatui::Frame, popup_area: Rect, model: &mut AppModel) {
     frame.render_widget(Clear, popup_area);
     let lines = model.row_json_lines();
     let (content_h, content_w) = model.row_json_content_size();
-    let (viewport_w, viewport_h) = row_json_viewport_size(popup_area);
+    let fullscreen = model.view.row_json_fullscreen;
+    let (viewport_w, viewport_h) = row_json_viewport_size(popup_area, fullscreen);
     model.clamp_row_json_scroll(viewport_w, viewport_h);
     let scroll_x = model.view.row_json_scroll_x;
     let scroll_y = model.view.row_json_scroll_y;
     let row_idx = model.view.selected_row;
-    let title = format!(" Row {} JSON  drag title · resize corner · q close ", row_idx + 1);
+    let text_lines = highlighted_json_lines(&lines);
+
+    if fullscreen {
+        let chunks = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([Constraint::Min(1), Constraint::Length(1)])
+            .split(popup_area);
+        frame.render_widget(
+            Paragraph::new(text_lines).scroll((scroll_y, scroll_x)),
+            chunks[0],
+        );
+        let status = format!(
+            " Row {} JSON  ·  f leave fullscreen  ·  q close  ·  arrows scroll ",
+            row_idx + 1
+        );
+        frame.render_widget(
+            Paragraph::new(status).style(Style::default().fg(Color::DarkGray)),
+            chunks[1],
+        );
+        return;
+    }
+
+    let title = format!(
+        " Row {} JSON  drag title · resize corner · f fullscreen · q close ",
+        row_idx + 1
+    );
     let block = Block::default()
         .title(title)
         .borders(Borders::ALL)
         .border_style(Style::default().fg(Color::Cyan));
-    let text_lines: Vec<Line> = lines.into_iter().map(Line::from).collect();
     frame.render_widget(
         Paragraph::new(text_lines)
             .block(block)
