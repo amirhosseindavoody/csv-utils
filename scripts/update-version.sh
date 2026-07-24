@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
-# Bump project version (Cargo semver) in Cargo.toml and pixi.toml.
+# Bump project version in Cargo.toml, pixi.toml, and recipe/recipe.yaml.
 #
-# Semver stored in files:  YYYY.M.D+N   (e.g. 2026.6.24+0)
-# Human / calver meaning: YYYY.MM.DD.N (e.g. 2026.06.24.0)
+# Scheme (Cargo-compatible SemVer + date sense):
+#   YYYY.MMDD.N   e.g. 2026.630.1  (2026-06-30, first release that day)
 #
-# N is 0 on the first bump of a calendar day; further runs the same day increment N.
-# Cargo requires semver; a fourth dotted segment (2026.06.24.0) is invalid.
+# MMDD is month*100+day (no leading zeros; unique per calendar day).
+# N starts at 1 on the first bump of a calendar day; further runs the same day increment N.
 
 set -euo pipefail
 
@@ -14,29 +14,13 @@ CARGO_TOML="$ROOT/Cargo.toml"
 PIXI_TOML="$ROOT/pixi.toml"
 RECIPE_YAML="$ROOT/recipe/recipe.yaml"
 
-today_semver() {
-  local year month day
+today_prefix() {
+  local year month day mmdd
   year="$(date +%Y)"
   month=$((10#$(date +%m)))
   day=$((10#$(date +%d)))
-  echo "${year}.${month}.${day}"
-}
-
-today_human() {
-  date +%Y.%m.%d
-}
-
-human_label() {
-  local version="$1"
-  if [[ "$version" =~ ^([0-9]{4})\.([0-9]{1,2})\.([0-9]{1,2})\+([0-9]+)$ ]]; then
-    printf "%04d.%02d.%02d.%s" "${BASH_REMATCH[1]}" "${BASH_REMATCH[2]}" "${BASH_REMATCH[3]}" "${BASH_REMATCH[4]}"
-    return
-  fi
-  if [[ "$version" =~ ^([0-9]{4})\.([0-9]{2})\.([0-9]{2})\.([0-9]+)$ ]]; then
-    echo "$version"
-    return
-  fi
-  echo "$version"
+  mmdd=$((month * 100 + day))
+  echo "${year}.${mmdd}"
 }
 
 read_workspace_version() {
@@ -53,34 +37,57 @@ read_workspace_version() {
   ' "$CARGO_TOML"
 }
 
-next_version() {
-  local current="$1"
-  local prefix="${2:?}"
-  local build=0
-
-  if [[ "$current" =~ ^([0-9]{4})\.([0-9]{1,2})\.([0-9]{1,2})\+([0-9]+)$ ]]; then
-    local date_part="${BASH_REMATCH[1]}.${BASH_REMATCH[2]}.${BASH_REMATCH[3]}"
-    build="${BASH_REMATCH[4]}"
-    if [[ "$date_part" == "$prefix" ]]; then
-      echo "${prefix}+$((build + 1))"
-      return
-    fi
+# Convert legacy schemes to YYYY.MMDD.N when interpreting "same day".
+normalize_to_mmdd_version() {
+  local version="$1"
+  # Already YYYY.MMDD.N
+  if [[ "$version" =~ ^([0-9]{4})\.([0-9]{3,4})\.([0-9]+)$ ]]; then
+    echo "$version"
+    return
   fi
-
-  # Legacy invalid calver written before semver fix (YYYY.MM.DD.N).
-  if [[ "$current" =~ ^([0-9]{4})\.([0-9]{2})\.([0-9]{2})\.([0-9]+)$ ]]; then
+  # Legacy Cargo: YYYY.M.D+N
+  if [[ "$version" =~ ^([0-9]{4})\.([0-9]{1,2})\.([0-9]{1,2})\+([0-9]+)$ ]]; then
     local year="${BASH_REMATCH[1]}"
     local month=$((10#${BASH_REMATCH[2]}))
     local day=$((10#${BASH_REMATCH[3]}))
-    build="${BASH_REMATCH[4]}"
-    local legacy_semver="${year}.${month}.${day}"
-    if [[ "$legacy_semver" == "$prefix" ]]; then
-      echo "${prefix}+$((build + 1))"
+    local n="${BASH_REMATCH[4]}"
+    # Old scheme used N starting at 0; map 0 -> 1 for first release of the day.
+    if [[ "$n" -eq 0 ]]; then
+      n=1
+    fi
+    echo "${year}.$((month * 100 + day)).${n}"
+    return
+  fi
+  # Legacy padded: YYYY.MM.DD.N
+  if [[ "$version" =~ ^([0-9]{4})\.([0-9]{2})\.([0-9]{2})\.([0-9]+)$ ]]; then
+    local year="${BASH_REMATCH[1]}"
+    local month=$((10#${BASH_REMATCH[2]}))
+    local day=$((10#${BASH_REMATCH[3]}))
+    local n="${BASH_REMATCH[4]}"
+    if [[ "$n" -eq 0 ]]; then
+      n=1
+    fi
+    echo "${year}.$((month * 100 + day)).${n}"
+    return
+  fi
+  echo "$version"
+}
+
+next_version() {
+  local current="$1"
+  local prefix="${2:?}"
+  local normalized n
+
+  normalized="$(normalize_to_mmdd_version "$current")"
+  if [[ "$normalized" =~ ^([0-9]{4}\.[0-9]{3,4})\.([0-9]+)$ ]]; then
+    if [[ "${BASH_REMATCH[1]}" == "$prefix" ]]; then
+      n="${BASH_REMATCH[2]}"
+      echo "${prefix}.$((n + 1))"
       return
     fi
   fi
 
-  echo "${prefix}+0"
+  echo "${prefix}.1"
 }
 
 update_cargo_version() {
@@ -130,9 +137,14 @@ main() {
   fi
 
   local prefix current new_version
-  prefix="$(today_semver)"
+  prefix="$(today_prefix)"
   current="$(read_workspace_version || true)"
-  new_version="$(next_version "$current" "$prefix")"
+
+  if [[ "${1:-}" == "--set" ]]; then
+    new_version="${2:?usage: update-version.sh --set YYYY.MMDD.N}"
+  else
+    new_version="$(next_version "$current" "$prefix")"
+  fi
 
   local cargo_tmp pixi_tmp recipe_tmp
   cargo_tmp="$(mktemp)"
@@ -153,14 +165,10 @@ main() {
   # Keep Cargo.lock in sync so `cargo build --locked` works (e.g. git source builds).
   cargo update -p csv-utils -p csv-utils-core --quiet 2>/dev/null || true
 
-  local current_label new_label
-  current_label="$(human_label "$current")"
-  new_label="$(human_label "$new_version")"
-
   if [[ "$current" == "$new_version" ]]; then
-    echo "Version unchanged: ${new_label} (${new_version})"
+    echo "Version unchanged: ${new_version}"
   else
-    echo "Version: ${current_label:-(unset)} (${current:-unset}) -> ${new_label} (${new_version})"
+    echo "Version: ${current:-unset} -> ${new_version}"
   fi
 }
 

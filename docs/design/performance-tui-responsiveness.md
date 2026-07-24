@@ -2,7 +2,7 @@
 
 Status: **partially implemented** — P0 items below are in tree; P1–P3 remain
 proposals. Based on a review of architecture, preview loading, the shared view
-model, and the TUI event loop as of `2026.6.30+0`.
+model, and the TUI event loop as of `2026.630.1`.
 
 This note prioritizes changes that keep the interactive UI responsive while
 files are scanning, filtering, or sorting. It builds on existing mitigations

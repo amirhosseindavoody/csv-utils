@@ -3,6 +3,6 @@ resolver = "2"
 members = ["csv-utils-core", "csv-utils"]
 
 [workspace.package]
-version = "2026.6.30+0"
+version = "2026.630.1"
 edition = "2021"
 license = "MIT"

@@ -73,7 +73,7 @@ Build a `.conda` artifact that installs the `csv` binary:
 pixi run conda-package
 ```
 
-Output: `dist/csv-utils-*.conda`. The recipe lives in `recipe/recipe.yaml` and uses `pixi-build-rattler-build` with the workspace `Cargo.lock`.
+Output: `dist/csv-utils-*.conda`. The recipe lives in `recipe/recipe.yaml`: same build/test layout as conda-forge (`cargo auditable install`, `THIRDPARTY.yml`, `package_contents`), but `source` is `path: ..` so local packaging uses the working tree. The conda-forge copy uses a tagged GitHub tarball + `sha256` instead — keep the rest in sync with [staged-recipes `recipes/csv-utils/recipe.yaml`](https://github.com/amirhosseindavoody/staged-recipes/blob/add-csv-utils/recipes/csv-utils/recipe.yaml) (and later the feedstock).
 
 Install from another pixi workspace:
 
