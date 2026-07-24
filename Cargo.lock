@@ -263,7 +263,7 @@ dependencies = [
 
 [[package]]
 name = "csv-utils"
-version = "2026.630.1"
+version = "2026.630.2"
 dependencies = [
  "anyhow",
  "axum",
@@ -278,7 +278,7 @@ dependencies = [
 
 [[package]]
 name = "csv-utils-core"
-version = "2026.630.1"
+version = "2026.630.2"
 dependencies = [
  "csv",
  "memmap2",

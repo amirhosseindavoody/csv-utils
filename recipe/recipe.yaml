@@ -1,5 +1,5 @@
 context:
-  version: "2026.630.1"
+  version: 2026.630.2
 
 package:
   name: csv-utils
